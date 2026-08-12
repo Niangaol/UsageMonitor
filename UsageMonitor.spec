@@ -1,11 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
-
+# UsageMonitor.spec — PyInstaller 打包配置（monitor.py 多工具入口）
+# 构建：python -m PyInstaller UsageMonitor.spec --noconfirm
 
 a = Analysis(
     ['monitor.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[
+        ('assets/icon.ico', 'assets'),
+        ('assets/tray.ico', 'assets'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,4 +39,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='assets/icon.ico',
 )

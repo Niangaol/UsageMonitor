@@ -20,3 +20,5 @@ aliases.json
 *.bak
 install_err.txt
 *.log
+# 演示数据（make_demo_data.py 可随时重新生成）
+demo_data/

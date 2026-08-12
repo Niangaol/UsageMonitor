@@ -170,6 +170,24 @@ _data_root = "D:\\电脑使用情况监控"
 
 
 # ---- 托盘图标 ----
+IMAGE_ICON = 1
+LR_LOADFROMFILE = 0x00000010
+user32.LoadImageW.restype = wt.HANDLE
+user32.LoadImageW.argtypes = [wt.HINSTANCE, wt.LPCWSTR, wt.UINT, ctypes.c_int, ctypes.c_int, wt.UINT]
+
+
+def _tray_icon_handle():
+    """优先加载 assets/tray.ico（打包 exe 内 / 脚本目录），失败回退系统图标。"""
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+    for rel in (os.path.join("assets", "tray.ico"), "tray.ico"):
+        p = os.path.join(base, rel)
+        if os.path.isfile(p):
+            h = user32.LoadImageW(None, p, IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
+            if h:
+                return h
+    return user32.LoadIconW(None, ctypes.cast(IDI_APPLICATION, wt.LPCWSTR))
+
+
 def _add_icon(hwnd: int) -> None:
     nid = NOTIFYICONDATAW()
     nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
@@ -177,7 +195,7 @@ def _add_icon(hwnd: int) -> None:
     nid.uID = ID_TRAY
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
     nid.uCallbackMessage = WM_TRAY
-    nid.hIcon = user32.LoadIconW(None, ctypes.cast(IDI_APPLICATION, wt.LPCWSTR))
+    nid.hIcon = _tray_icon_handle()
     nid.szTip = TRAY_TIP
     if not shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid)):
         raise RuntimeError("Shell_NotifyIconW(NIM_ADD) failed — 当前会话可能无托盘")

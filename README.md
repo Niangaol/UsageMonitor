@@ -1,4 +1,20 @@
-# 电脑使用情况监控
+<p align="center">
+  <img src="assets/icon.png" alt="UsageMonitor" width="140">
+</p>
+
+<h1 align="center">电脑使用情况监控 · UsageMonitor</h1>
+
+<p align="center">
+  <b>Windows 本地使用情况监控</b> · 纯本地 · 零依赖 · 静默低占用<br>
+  Python 3.10+ · Windows 10/11 x64 · MIT License
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+  <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey" alt="Platform">
+  <img src="https://img.shields.io/badge/dependencies-zero-orange" alt="Zero deps">
+</p>
 
 独立的 Windows 后台监控工具：常驻运行、性能占用极低，自动记录你每天在电脑上
 使用了哪些软件、各用了多久；微信/QQ/钉钉跟谁聊了多久；浏览器看了多久视频 / 写了多久代码 / 学了多久习；
@@ -7,6 +23,14 @@
 **纯本地存储，不上传任何云端；不截屏、不录屏、不读聊天内容、不记录键盘输入。**
 
 对应需求文档：《项目需求与开发文档.md》（v1.0），已实现 **Phase 1 + Phase 2 + Phase 3 大部分**。
+
+## 截图
+
+| 网页仪表盘 | 每日汇总日报 |
+|---|---|
+| <img src="docs/screenshots/dashboard.png" width="480" alt="仪表盘"> | <img src="docs/screenshots/report.png" width="480" alt="日报"> |
+
+> 截图使用 `python make_demo_data.py` 生成的**虚构演示数据**，不含任何真实使用记录。
 
 ## 功能特性
 
@@ -149,6 +173,9 @@ install.ps1 注册两个计划任务：
 ├─ install.ps1 / uninstall.ps1   # 安装 / 卸载（计划任务注册）
 ├─ config.json             # 配置（分类/阈值/黑名单；data_root 为空=脚本目录）
 ├─ aliases.example.json    # 联系人别名模板（真实 aliases.json 不入库）
+├─ make_demo_data.py       # 生成虚构演示数据（截图/试用，可复现）
+├─ assets/                 # 图标资产（icon.ico/png 3D 图标 + tray.ico 扁平托盘图标）
+├─ docs/screenshots/       # 项目截图（仪表盘/日报，演示数据）
 ├─ UsageMonitor.spec       # PyInstaller 打包配置（复现 exe 构建）
 ├─ LICENSE                 # MIT
 ├─ .gitignore              # 排除运行数据/构建产物/本地配置
