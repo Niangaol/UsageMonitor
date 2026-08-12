@@ -1,0 +1,35 @@
+name: build
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build exe (UsageMonitor.spec)
+        run: python -m PyInstaller UsageMonitor.spec --noconfirm --distpath dist --workpath build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UsageMonitor-windows
+          path: dist/UsageMonitor.exe
+
+      - name: Create GitHub Release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/UsageMonitor.exe
+          generate_release_notes: true

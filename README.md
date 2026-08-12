@@ -32,6 +32,46 @@
 
 > 截图使用 `python make_demo_data.py` 生成的**虚构演示数据**，不含任何真实使用记录。
 
+## 目录
+
+- [功能特性](#功能特性)
+- [架构](#架构)
+- [快速开始](#快速开始需要-python-31064-位-windows-1011)
+- [打包为 exe（免 Python 运行）](#打包为-exe免-python-运行)
+- [安装与自启](#安装与自启)
+- [配置文件说明](#配置文件说明)
+- [数据说明](#数据说明)
+- [隐私与仓库说明（GitHub）](#隐私与仓库说明github)
+- [性能实测](#性能实测本机基准)
+- [测试](#测试)
+- [FAQ](#faq)
+- [已知局限](#已知局限)
+- [路线图](#路线图)
+
+## 架构
+
+```
+┌────────────┐   每 5 秒轮询   ┌──────────────┐   状态变化才写   ┌──────────────────┐
+│ 守护进程     │ ─────────────► │ Win32 采集     │ ──────────────► │ 每日数据           │
+│ monitor.py │                │ win32core.py  │                  │ YYYY-MM-DD/       │
+│ (exe/托盘)  │                │ 前台窗口/进程树  │                  │ usage.jsonl       │
+└────────────┘                │ 空闲检测/窗口状态 │                  │ software_*.json   │
+        │                     └──────────────┘                  └────────┬─────────┘
+        │ 分类/联系人/AI/子分类                                                │
+        ▼                     ┌──────────────┐   ┌──────────────┐            ▼
+┌────────────┐   ┌──────────► │ 分类引擎      │   │ 浏览器历史解析  │   ┌──────────────┐
+│ 启动/跨天    │   │           │ classifier.py│   │ browser_     │   │ 日报/周报/月报  │
+│ 清单刷新     │──┘           └──────────────┘   │ history.py   │──►│ report.py     │
+└────────────┘                                  └──────────────┘   │ report.md/csv │
+        ▲                                                            └──────┬───────┘
+        │ 开机自启（计划任务）                                                ▼
+┌────────────┐                                                  ┌──────────────┐
+│ install.ps1│                                                  │ 网页仪表盘     │
+│ 每晚 19:30 │                                                  │ dashboard.py │
+│ 报告任务    │                                                  │ 127.0.0.1    │
+└────────────┘                                                  └──────────────┘
+```
+
 ## 功能特性
 
 - **前台应用计时**：每 5 秒轮询一次前台窗口，仅在状态变化时写一条（静止零写入，CPU 占用 ≈ 0%）
@@ -80,9 +120,12 @@ python inventory.py --once
 
 ```powershell
 pip install pyinstaller
-python -m PyInstaller --noconfirm --clean --onefile --noconsole --name UsageMonitor monitor.py
-# 产物：dist\UsageMonitor.exe（约 10 MB 单文件）
+python -m PyInstaller UsageMonitor.spec --noconfirm
+# 产物：dist\UsageMonitor.exe（约 10 MB 单文件，内置图标与托盘图标资源）
 ```
+
+> `UsageMonitor.spec` 已配置 exe 图标（`assets/icon.ico`）与内置资源（`assets/tray.ico`）；
+> GitHub Actions 会在打 tag 时自动构建并发布 exe（见 `.github/workflows/build.yml`）。
 
 单个 exe 内置全部三个子工具，按首个参数自动分派：
 
@@ -302,6 +345,34 @@ test_all.py 通过猴子补丁模拟前台窗口/空闲/进程树，覆盖：切
 
 **验收要点**：切换 3 个软件各 1 分钟 → 日报给出各自时长；锁屏 10 分钟 → 不计时；
 重启后计划任务自动拉起；静态 CPU 占用 < 0.1%。
+
+## FAQ
+
+**Q: 数据存在哪里？会不会上传？**
+A: 存在 `data_root`（config.json 为空时=项目脚本目录）下的日期文件夹；**纯本地，无任何联网上传**。
+
+**Q: 为什么日报里"浏览器停留时长"比"活跃时长"大很多？**
+A: 两个口径不同：浏览器停留时长是**标签页前台计时**（页面开着就算，含挂机/多标签叠加，可能超过 24 小时）；
+活跃时长是 monitor 按**键鼠输入**统计（3 分钟无输入即截断）。真实人工使用时长以活跃时长为准。
+
+**Q: 修改了 config.json 的分类规则，历史数据还是旧的？**
+A: 用 `python report.py --day YYYY-MM-DD --reclassify` 按新规则重归类历史记录（自动备份 `.bak`）。
+
+**Q: 管理员权限运行的窗口标题读不到？**
+A: 普通权限无法读取提权窗口标题（Windows 安全限制）；需完整数据请以管理员模式运行监控。
+
+**Q: 托盘没有图标 / exe 没反应？**
+A: 守护进程会降级为静默运行（托盘不可用时），数据记录不受影响；检查 `errors.log` 看托盘初始化错误。
+
+**Q: 支持 Firefox 吗？**
+A: 浏览器 URL 级解析目前支持 Chromium 系（Chrome/Edge/Tabbit 等，自动探测）；
+Firefox 用 places.sqlite 结构不同，暂不支持；其他浏览器可在 config 的 `browser_history` 配 user_data 路径。
+
+**Q: 杀毒软件误报？**
+A: 打包的 exe 建议代码签名；可将 `data_root` 目录加入杀软白名单。
+
+**Q: 数据保留多久？**
+A: 默认 90 天（`config.json` 的 `retention_days`），超期日期文件夹自动清理。
 
 ## 已知局限
 

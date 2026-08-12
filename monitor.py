@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import classifier  # noqa: E402
 import report  # noqa: E402
+import version  # noqa: E402
 import win32core  # noqa: E402
 
 _pause = threading.Event()      # 暂停监控（托盘使用）
@@ -477,6 +478,7 @@ def main(argv: list[str] | None = None) -> int:
         return dashboard.main(args_list)
 
     parser = argparse.ArgumentParser(prog="monitor.py", description="电脑使用情况监控守护进程")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {version.VERSION}")
     parser.add_argument("--test", type=int, metavar="N", help="测试模式：运行 N 秒后退出并打印汇总")
     parser.add_argument("--tray", action="store_true", help="启用托盘图标（不可用时降级为静默守护）")
     parser.add_argument("--foreground", action="store_true", help="前台模式：把写入记录打印到控制台")

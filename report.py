@@ -18,6 +18,8 @@ import sys
 import time
 import types
 import datetime
+
+import version  # noqa: E402
 from collections import OrderedDict
 
 CATEGORY_ORDER = [
@@ -675,6 +677,7 @@ def reclassify_day(date_str: str, data_root: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="report.py", description="电脑使用情况日报/周报/月报")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {version.VERSION}")
     parser.add_argument("--day", metavar="YYYY-MM-DD", help="指定日期日报")
     parser.add_argument("--today", action="store_true", help="今天日报")
     parser.add_argument("--week", action="store_true", help="最近 7 天周报")

@@ -1,0 +1,4 @@
+# -*- coding: utf-8 -*-
+"""统一版本号（monitor / report / dashboard 共用，发布时在此递增）。"""
+
+VERSION = "1.0.0"

@@ -32,6 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import report  # noqa: E402
+import version  # noqa: E402
 
 DEFAULT_PORT = 8765
 DEFAULT_DATA_ROOT = "D:\\电脑使用情况监控"
@@ -880,6 +881,7 @@ def create_server(data_root: str, port: int = DEFAULT_PORT) -> ThreadingHTTPServ
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="dashboard.py", description="本地网页仪表盘（仅 127.0.0.1）")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {version.VERSION}")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"监听端口（默认 {DEFAULT_PORT}）")
     parser.add_argument("--open", action="store_true", help="启动后自动打开浏览器")
     parser.add_argument("--data-root", default=None, help="数据根目录（默认取 config.json）")
