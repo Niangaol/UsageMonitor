@@ -1,0 +1,22 @@
+# ===== 运行数据（隐私！请勿提交）=====
+# 每天的日期文件夹（含 usage.jsonl / report.md / 浏览器访问明细等个人数据）
+# 同时覆盖 YYYY-MM（月度报表目录）与 YYYY-MM-DD（每日目录）
+20*-*/
+20*-*
+# SQLite 附加库（如启用）
+usage.db
+usage.db-*
+
+# ===== 构建产物 =====
+build/
+dist/
+*.pyc
+__pycache__/
+
+# ===== 本地私有配置（含真实联系人别名，勿提交）=====
+aliases.json
+
+# ===== 杂项 =====
+*.bak
+install_err.txt
+*.log
