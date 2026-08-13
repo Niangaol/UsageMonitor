@@ -31,6 +31,7 @@ import classifier  # noqa: E402
 import report  # noqa: E402
 import version  # noqa: E402
 import win32core  # noqa: E402
+import paths  # noqa: E402
 
 _pause = threading.Event()      # 暂停监控（托盘使用）
 stop_event = threading.Event()  # 停止守护（托盘退出时置位）
@@ -85,11 +86,20 @@ def _log_error(data_root: str, day_str: str, exc: BaseException, context: str = 
 
 
 def append_session_record(day_str: str, record: dict, data_root: str) -> None:
-    """JSON Lines 追加写一条会话记录到 当日文件夹/usage.jsonl。"""
+    """JSON Lines 追加写一条会话记录到 当日文件夹/usage.jsonl。
+
+    写入后 flush + fsync，最大限度避免断电/崩溃留下半行 JSON
+    （低频写入场景下 fsync 开销可忽略）。
+    """
     day_dir = os.path.join(data_root, day_str)
     os.makedirs(day_dir, exist_ok=True)
     with open(os.path.join(day_dir, "usage.jsonl"), "a", encoding="utf-8", newline="\n") as fh:
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        fh.flush()
+        try:
+            os.fsync(fh.fileno())
+        except OSError:  # noqa: BLE001 —— 部分文件系统不支持 fsync
+            pass
 
 
 def _round_sec(dt: datetime.datetime) -> datetime.datetime:
@@ -274,7 +284,7 @@ def run_daemon(config: dict, test_seconds: int | None = None, verbose: bool = Fa
 
     仅在 (exe, 标题, 类别, 联系人, AI工具, 浏览器分类) 变化时写一条；静止零写入。
     """
-    data_root = config.get("data_root") or "D:\\电脑使用情况监控"
+    data_root = config.get("data_root") or paths.default_data_root()
     poll_interval = max(1, int(config.get("poll_interval_s", DEFAULT_POLL_INTERVAL)))
     idle_threshold = max(0, int(config.get("idle_threshold_s", DEFAULT_IDLE_THRESHOLD)))
     retention = max(0, int(config.get("retention_days", DEFAULT_RETENTION)))
@@ -391,7 +401,7 @@ def run_daemon(config: dict, test_seconds: int | None = None, verbose: bool = Fa
 # ---------------------------------------------------------------------------
 def overview_text(data_root: str | None = None) -> str:
     """生成"今日概览"文本：按应用聚合今天已记录的活跃时长。"""
-    root = data_root or (load_config().get("data_root") or "D:\\电脑使用情况监控")
+    root = data_root or (load_config().get("data_root") or paths.default_data_root())
     today = datetime.date.today().isoformat()
     by_app: dict[str, int] = {}
     for s in report.read_sessions(today, root):
@@ -506,7 +516,7 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
     if args.data_root:
         config["data_root"] = args.data_root
-    data_root = config.get("data_root") or "D:\\电脑使用情况监控"
+    data_root = config.get("data_root") or paths.default_data_root()
     os.makedirs(data_root, exist_ok=True)
 
     # 单实例保护：守护模式（非 --test）下已有实例在运行则直接退出，

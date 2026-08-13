@@ -6,8 +6,20 @@ on:
   workflow_dispatch:
 
 jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run integration tests
+        run: python test_all.py
+        timeout-minutes: 10
+
   build:
     runs-on: windows-latest
+    needs: test
     permissions:
       contents: write
     steps:
@@ -22,6 +34,9 @@ jobs:
 
       - name: Build exe (UsageMonitor.spec)
         run: python -m PyInstaller UsageMonitor.spec --noconfirm --distpath dist --workpath build
+
+      - name: Smoke test (exe --version)
+        run: .\dist\UsageMonitor.exe --version
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

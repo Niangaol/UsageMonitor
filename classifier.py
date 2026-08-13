@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import paths  # noqa: E402
 import sys
 
 CATEGORY_ORDER = [
@@ -38,760 +39,36 @@ CATEGORY_ORDER = [
 # 浏览器/影音娱乐 优先于 社交聊天（避免 qqbrowser/qqmusic 命中 "qq"）。
 _CATEGORY_ORDER_FOR_MATCH = CATEGORY_ORDER
 
-DEFAULT_CONFIG: dict = {
-    "poll_interval_s": 5,
-    "idle_threshold_s": 180,
-    "retention_days": 90,
-    "data_root": "D:\\电脑使用情况监控",
-    "apps": {
-        "code.exe": "VS Code",
-        "wechat.exe": "微信",
-        "weixin.exe": "微信",
-        "qq.exe": "QQ",
-        "tim.exe": "TIM",
-        "dingtalk.exe": "钉钉",
-        "chrome.exe": "Chrome",
-        "msedge.exe": "Edge",
-        "firefox.exe": "Firefox",
-        "windowsterminal.exe": "Windows Terminal",
-        "wt.exe": "Windows Terminal",
-        "cmd.exe": "命令提示符",
-        "powershell.exe": "PowerShell",
-        "pwsh.exe": "PowerShell",
-        "explorer.exe": "文件资源管理器",
-        "opencode.exe": "opencode",
-        "chatgpt.exe": "ChatGPT",
-        "cursor.exe": "Cursor",
-        "windsurf.exe": "Windsurf",
-        "trae.exe": "Trae",
-        "claude.exe": "Claude",
-        "potplayer.exe": "PotPlayer",
-        "notepad.exe": "记事本",
-        "cyberpunk2077.exe": "赛博朋克2077",
-        "baidunetdisk.exe": "百度网盘",
-        "thunder.exe": "迅雷",
-        "xunlei.exe": "迅雷",
-        "clash-verge.exe": "Clash Verge",
-        "verge.exe": "Clash Verge",
-        "mihomo.exe": "Mihomo",
-        "huorong.exe": "火绒安全",
-        "huorongusysdaemon.exe": "火绒安全",
-        "dism++x64.exe": "Dism++",
-        "dism++x86.exe": "Dism++",
-        "bcuninstaller.exe": "BCUninstaller",
-        "bleachbit.exe": "BleachBit",
-        "7zfm.exe": "7-Zip",
-        "7zg.exe": "7-Zip",
-        "kook.exe": "KOOK",
-        "mailmaster.exe": "网易邮箱大师",
-        "neat download manager.exe": "Neat Download Manager",
-        "o+connect.exe": "O+Connect",
-        "localsend.exe": "LocalSend",
-        "mpv.exe": "MPV",
-        "cloudmusic.exe": "网易云音乐",
-        "kwmusic.exe": "酷我音乐",
-        "mgtv.exe": "芒果TV",
-        "douyin.exe": "抖音",
-        "kuaishou.exe": "快手",
-        "jianying.exe": "剪映",
-        "figma.exe": "Figma",
-        "wemeet.exe": "腾讯会议",
-        "yuque.exe": "语雀",
-        "sunloginclient.exe": "向日葵远程控制",
-        "todesk.exe": "ToDesk",
-        "everything.exe": "Everything",
-        "bandizip.exe": "Bandizip",
-        "unigetui.exe": "UniGetUI",
-        "usagemonitor.exe": "电脑使用监控",
-    },    "categories": [
-        {
-            "name": "AI编程",
-            "exe": [
-                "opencode",
-                "pi-agent",
-                "piagent",
-                "pi_agent",
-                "chatgpt",
-                "claude",
-                "cursor",
-                "windsurf",
-                "trae",
-                "gemini",
-                "aider",
-                "copilot",
-                "cline",
-                "codex",
-                "qwen",
-                "kimi",
-                "doubao",
-                "zhipu",
-                "glm",
-                "deepseek",
-                "augment",
-                "continue"
-            ],
-            "title": [
-                "opencode",
-                "pi agent",
-                "chatgpt",
-                "claude",
-                "π",
-                "qwen",
-                "kimi"
-            ]
-        },
-        {
-            "name": "浏览器",
-            "exe": [
-                "chrome",
-                "msedge",
-                "firefox",
-                "brave",
-                "opera",
-                "360se",
-                "qqbrowser",
-                "tabbit",
-                "arc",
-                "vivaldi",
-                "centbrowser",
-                "yandex",
-                "sogouexplorer",
-                "liebao",
-                "uc",
-                "waterfox",
-                "tor",
-                "whale",
-                "floorp"
-            ],
-            "title": []
-        },
-        {
-            "name": "影音娱乐",
-            "exe": [
-                "potplayer",
-                "vlc",
-                "spotify",
-                "bilibili",
-                "iqiyi",
-                "qqmusic",
-                "neteasemusic",
-                "cloudmusic",
-                "kugou",
-                "kwmusic",
-                "foobar",
-                "mpv",
-                "kmplayer",
-                "youtube",
-                "youku",
-                "tvm",
-                "qqvideo",
-                "mgtv",
-                "douyin",
-                "kuaishou",
-                "ximalaya",
-                "qingting",
-                "winamp",
-                "windowsmediaplayer",
-                "wmp",
-                "mplayer",
-                "musicbee",
-                "aimp"
-            ],
-            "title": []
-        },
-        {
-            "name": "游戏",
-            "exe": [
-                "cyberpunk2077",
-                "redprelauncher",
-                "eldenring",
-                "sekiro",
-                "darksouls",
-                "dmc",
-                "monsterhunter",
-                "blackmyth",
-                "wukong",
-                "cs2",
-                "dota2",
-                "valorant",
-                "overwatch",
-                "apex",
-                "genshin",
-                "starrail",
-                "zenless",
-                "wutheringwaves",
-                "arknights",
-                "majsoul",
-                "hearthstone",
-                "naraka",
-                "crossfire",
-                "dnf",
-                "pathofexile",
-                "terraria",
-                "stardew",
-                "factorio",
-                "rimworld",
-                "slaythespire",
-                "hollowknight",
-                "hades",
-                "cuphead",
-                "cities",
-                "civ",
-                "stellaris",
-                "witcher",
-                "gtav",
-                "rdr2",
-                "minecraft",
-                "steam",
-                "wegame",
-                "epic",
-                "battle.net",
-                "leagueclient",
-                "league of legends",
-                "yuzu",
-                "ryujinx",
-                "cemu",
-                "pcsx2",
-                "dolphin",
-                "retroarch"
-            ],
-            "title": []
-        },
-        {
-            "name": "安全防护",
-            "exe": [
-                "huorong",
-                "360safe",
-                "360tray",
-                "qqpcmanager",
-                "windowsdefender",
-                "msmpeng",
-                "mssense",
-                "kaspersky",
-                "nod32",
-                "eset",
-                "avast",
-                "avg",
-                "malwarebytes",
-                "adguard",
-                "bitdefender",
-                "norton",
-                "kingsoft",
-                "360"
-            ],
-            "title": []
-        },
-        {
-            "name": "社交聊天",
-            "exe": [
-                "wechat",
-                "weixin",
-                "qq",
-                "tim",
-                "dingtalk",
-                "telegram",
-                "discord",
-                "whatsapp",
-                "line",
-                "slack",
-                "kook",
-                "yy",
-                "weibo",
-                "feishu",
-                "lark",
-                "wecom",
-                "viber",
-                "skype"
-            ],
-            "title": []
-        },
-        {
-            "name": "开发工具",
-            "exe": [
-                "code",
-                "pycharm",
-                "idea64",
-                "goland",
-                "webstorm",
-                "rider",
-                "clion",
-                "datagrip",
-                "phpstorm",
-                "rubymine",
-                "androidstudio",
-                "intellij",
-                "fleet",
-                "sublime",
-                "notepad++",
-                "vim",
-                "neovim",
-                "nvim",
-                "emacs",
-                "zed",
-                "helix",
-                "windowsterminal",
-                "wt",
-                "cmd",
-                "powershell",
-                "pwsh",
-                "openconsole",
-                "mintty",
-                "alacritty",
-                "kitty",
-                "wezterm",
-                "conemu",
-                "cmder",
-                "git",
-                "docker",
-                "podman",
-                "kubectl",
-                "minikube",
-                "wsl",
-                "mysql",
-                "navicat",
-                "dbeaver",
-                "heidi",
-                "mongodb",
-                "redis",
-                "sqlserver",
-                "postgres",
-                "postman",
-                "apifox",
-                "insomnia",
-                "ida",
-                "ghidra",
-                "x64dbg",
-                "ollydbg",
-                "dnspy",
-                "cheatengine",
-                "unigetui",
-                "scoop",
-                "chocolatey",
-                "winget",
-                "matlab",
-                "jupyter",
-                "unity",
-                "unreal",
-                "godot"
-            ],
-            "title": []
-        },
-        {
-            "name": "办公学习",
-            "exe": [
-                "winword",
-                "excel",
-                "powerpnt",
-                "wps",
-                "wpp.exe",
-                "et.exe",
-                "notion",
-                "obsidian",
-                "onenote",
-                "drawio",
-                "xmind",
-                "typora",
-                "marktext",
-                "wemeet",
-                "zoom",
-                "shimo",
-                "yuque",
-                "evernote",
-                "youdao",
-                "foxit",
-                "acrobat",
-                "mathtype",
-                "chaoxing",
-                "mailmaster",
-                "thunderbird",
-                "outlook",
-                "foxmail",
-                "teams"
-            ],
-            "title": []
-        },
-        {
-            "name": "设计创作",
-            "exe": [
-                "photoshop",
-                "illustrator",
-                "afterfx",
-                "aftereffects",
-                "adobepremierepro",
-                "premiere",
-                "lightroom",
-                "adobe",
-                "figma",
-                "blender",
-                "cinema4d",
-                "maya",
-                "3dsmax",
-                "zbrush",
-                "sketchup",
-                "autocad",
-                "acad",
-                "solidworks",
-                "davinciresolve",
-                "jianying",
-                "capcut",
-                "krita",
-                "gimp",
-                "inkscape",
-                "clipstudio",
-                "paintshop",
-                "coreldraw",
-                "affinity",
-                "rhino",
-                "keyshot",
-                "eagle"
-            ],
-            "title": []
-        },
-        {
-            "name": "网盘下载",
-            "exe": [
-                "baidunetdisk",
-                "quark",
-                "aliyundrive",
-                "thunder",
-                "xunlei",
-                "115",
-                "tycloud",
-                "cowtransfer",
-                "bitcomet",
-                "qbittorrent",
-                "utorrent",
-                "motrix",
-                "idman",
-                "aria2",
-                "freedownloadmanager",
-                "neat download manager",
-                "flameget",
-                "netants"
-            ],
-            "title": []
-        },
-        {
-            "name": "网络工具",
-            "exe": [
-                "clash",
-                "verge",
-                "mihomo",
-                "v2ray",
-                "sing-box",
-                "nekoray",
-                "hiddify",
-                "netch",
-                "openvpn",
-                "wireguard",
-                "proxifier",
-                "wireshark",
-                "charles",
-                "fiddler",
-                "burp",
-                "putty",
-                "xshell",
-                "finalshell",
-                "mobaxterm",
-                "winscp",
-                "filezilla",
-                "localsend",
-                "ccswitch",
-                "switchhosts"
-            ],
-            "title": []
-        },
-        {
-            "name": "系统",
-            "exe": [
-                "explorer",
-                "taskmgr",
-                "msconfig",
-                "control",
-                "regedit",
-                "lockapp",
-                "dwm",
-                "shell",
-                "settings",
-                "textinputhost",
-                "dism++",
-                "bcuninstaller",
-                "bleachbit",
-                "7zfm",
-                "7z",
-                "winrar",
-                "bandizip",
-                "everything",
-                "listary",
-                "powertoys",
-                "geek",
-                "revo",
-                "ccleaner",
-                "processexplorer",
-                "procexp",
-                "autoruns",
-                "crystaldiskinfo",
-                "aida64",
-                "cpu-z",
-                "gpuz",
-                "hwinfo",
-                "speedtest",
-                "trafficmonitor",
-                "sunlogin",
-                "todesk",
-                "teamviewer",
-                "anydesk",
-                "rustdesk",
-                "parsec",
-                "moonlight",
-                "sunshine",
-                "mstsc",
-                "vmware",
-                "virtualbox",
-                "vmconnect",
-                "usagemonitor"
-            ],
-            "title": []
-        },
-        {
-            "name": "其他",
-            "exe": [],
-            "title": []
-        }
-    ],
-    "social_apps": {
-        "wechat.exe": "微信",
-        "weixin.exe": "微信",
-        "qq.exe": "QQ",
-        "tim.exe": "TIM",
-        "dingtalk.exe": "钉钉",
-        "telegram.exe": "Telegram",
-        "discord.exe": "Discord",
-    },
-    "social_main_titles": ["微信", "wechat", "qq", "钉钉", "dingtalk", "tim", "telegram", "discord"],
-    "browser_exes": [
-        "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe",
-        "360se.exe", "qqbrowser.exe", "tabbit browser.exe",
-    ],
-    "terminal_exes": [
-        "windowsterminal.exe", "wt.exe", "cmd.exe", "powershell.exe",
-        "pwsh.exe", "openconsole.exe",
-    ],
-    # 编辑器内置集成终端：在编辑器窗口里跑 AI CLI 工具（opencode 等）同样做进程树识别。
-    # 只有这些 exe 在前台时才枚举进程表，静态开销不受影响。
-    "editor_exes": [
-        "code.exe", "pycharm.exe", "pycharm64.exe", "idea64.exe",
-        "goland64.exe", "webstorm64.exe", "rider64.exe", "clion64.exe",
-        "datagrip64.exe", "sublime_text.exe", "notepad++.exe", "vim.exe",
-    ],
-    "ai_keywords": [
-        "opencode", "pi-agent", "piagent", "pi_agent", "chatgpt", "claude",
-        "cursor", "windsurf", "trae", "gemini", "aider", "copilot", "cline",
-    ],
-    # 标题专用关键词：长度 < 4 不能走 exe 子串规则，仅在窗口标题中做子串匹配
-    # （π = pi agent 的终端标题特征；配合 python/pip 防误伤，避免命中 pintia 等含 "pi" 的标题）
-    "ai_title_keywords": ["π"],
-    "ai_tool_names": {
-        "pi-agent": "pi agent",
-        "piagent": "pi agent",
-        "pi_agent": "pi agent",
-        "π": "pi agent",
-        "opencode": "opencode",
-        "chatgpt": "chatgpt",
-        "claude": "claude",
-        "cursor": "cursor",
-        "windsurf": "windsurf",
-        "trae": "trae",
-        "gemini": "gemini",
-        "aider": "aider",
-        "copilot": "copilot",
-        "cline": "cline",
-    },
-    "browser_categories": {
-        "视频": [
-            "bilibili",
-            "youtube",
-            "youku",
-            "iqiyi",
-            "腾讯视频",
-            "爱奇艺",
-            "优酷",
-            "芒果",
-            "抖音",
-            "快手",
-            "twitch",
-            "netflix",
-            "disneyplus",
-            "hulu",
-            "prime video",
-            "dailymotion",
-            "nicovideo",
-            "douyu",
-            "huya",
-            "acfun",
-            "哔哩哔哩",
-            "b站",
-            "直播",
-            "番剧"
-        ],
-        "代码": [
-            "github",
-            "stackoverflow",
-            "leetcode",
-            "codesandbox",
-            "replit",
-            "vscode.dev",
-            "gitlab",
-            "gitee",
-            "codespaces",
-            "huggingface",
-            "opencode",
-            "stackblitz",
-            "codepen",
-            "jsfiddle",
-            "npmjs",
-            "pypi",
-            "crates.io",
-            "rust-lang",
-            "golang.org",
-            "dev.to",
-            "掘金",
-            "思否",
-            "菜鸟教程",
-            "runoob",
-            "力扣"
-        ],
-        "学习": [
-            "mooc",
-            "coursera",
-            "学堂在线",
-            "知乎",
-            "csdn",
-            "w3school",
-            "mdn",
-            "教程",
-            "course",
-            "learn",
-            "docs",
-            "geeksforgeeks",
-            "百度百科",
-            "wikipedia",
-            "pintia",
-            "pta",
-            "udemy",
-            "edx",
-            "khanacademy",
-            "icourse163",
-            "中国大学mooc",
-            "xuexi",
-            "duolingo",
-            "kindle",
-            "wolai",
-            "语雀",
-            "高数",
-            "考研",
-            "英语",
-            "背单词",
-            "四六级",
-            "蓝桥杯",
-            "acm",
-            "icpc",
-            "毕设"
-        ],
-        "购物": [
-            "taobao",
-            "tmall",
-            "jd.com",
-            "pinduoduo",
-            "suning",
-            "amazon",
-            "ebay",
-            "1688",
-            "xiaohongshu",
-            "得物",
-            "dianping",
-            "meituan",
-            "ele.me",
-            "taobao.com",
-            "tmall.com",
-            "vip.com",
-            "淘宝",
-            "天猫",
-            "京东",
-            "拼多多",
-            "苏宁",
-            "小红书",
-            "闲鱼",
-            "值得买",
-            "考拉"
-        ],
-        "新闻": [
-            "weibo",
-            "微博",
-            "toutiao",
-            "头条",
-            "sohu",
-            "sina",
-            "qq.com",
-            "ifeng",
-            "thepaper",
-            "reddit",
-            "v2ex",
-            "hackernews",
-            "medium",
-            "sspai",
-            "36kr",
-            "ithome",
-            "cnbeta",
-            "solidot",
-            "chinaso",
-            "news",
-            "新浪",
-            "网易新闻",
-            "搜狐",
-            "凤凰网",
-            "澎湃",
-            "贴吧",
-            "天涯",
-            "虎扑",
-            "豆瓣"
-        ]
-    },
-    "title_blacklist": [".*密码.*", ".*password.*"],
-    # 终端 TUI 工具识别：终端会话窗口标题关键词 -> 工具名（term_tool 字段）
-    "terminal_tools": [
-        {"name": "vim", "title": ["vim", "nvim", "neovim"]},
-        {"name": "git", "title": ["git"]},
-        {"name": "lazygit", "title": ["lazygit"]},
-        {"name": "htop", "title": ["htop"]},
-        {"name": "python REPL", "title": ["ipython", "python"]},
-        {"name": "cargo", "title": ["cargo"]},
-        {"name": "npm", "title": ["npm", "yarn", "pnpm"]},
-        {"name": "docker", "title": ["docker"]},
-    ],
-    # 二级子分类：大类确定后按 exe 关键词细分（subcategory 字段）。
-    # 注意与用户 config.json 的顶级类别保持一致（游戏/安全工具 等已独立成类）。
-    "subcategories": [
-        {"category": "影音娱乐", "name": "视频播放", "exe": ["potplayer", "vlc", "mpv", "kmplayer", "bilibili", "iqiyi", "youku", "youtube", "qqvideo", "mgtv", "douyin", "kuaishou"]},
-        {"category": "影音娱乐", "name": "音乐", "exe": ["qqmusic", "neteasemusic", "cloudmusic", "kugou", "kwmusic", "foobar", "spotify", "winamp", "musicbee", "aimp"]},
-        {"category": "影音娱乐", "name": "播客/电台", "exe": ["ximalaya", "qingting"]},
-        {"category": "游戏", "name": "游戏平台", "exe": ["steam", "wegame", "epic", "battle.net"]},
-        {"category": "游戏", "name": "单机", "exe": ["cyberpunk2077", "redprelauncher", "eldenring", "sekiro", "darksouls", "dmc", "monsterhunter", "blackmyth", "wukong", "terraria", "stardew", "factorio", "rimworld", "slaythespire", "hollowknight", "hades", "cuphead", "cities", "civ", "stellaris", "witcher", "gtav", "rdr2", "minecraft", "pathofexile", "yuzu", "ryujinx", "cemu", "pcsx2", "dolphin", "retroarch"]},
-        {"category": "游戏", "name": "电竞网游", "exe": ["cs2", "dota2", "valorant", "overwatch", "apex", "genshin", "starrail", "zenless", "wutheringwaves", "arknights", "majsoul", "hearthstone", "naraka", "crossfire", "dnf", "leagueclient", "league of legends"]},
-        {"category": "开发工具", "name": "编辑器", "exe": ["code", "pycharm", "idea64", "goland", "webstorm", "rider", "clion", "datagrip", "sublime", "notepad++", "vim"]},
-        {"category": "开发工具", "name": "终端", "exe": ["windowsterminal", "wt", "cmd", "powershell", "pwsh", "openconsole"]},
-        {"category": "开发工具", "name": "容器", "exe": ["docker"]},
-        {"category": "办公学习", "name": "文档办公", "exe": ["winword", "excel", "powerpnt", "wps", "wpp", "et"]},
-        {"category": "办公学习", "name": "笔记", "exe": ["notion", "obsidian", "onenote", "typora", "xmind", "drawio", "marktext"]},
-    ],
-    "browser_history_enabled": True,
-    "browser_history": {
-        "chrome": {"user_data": None},
-        "edge": {"user_data": None},
-        "tabbit": {"user_data": None},
-    },
-    "_comment": "分类与阈值规则，可编辑；修改后重启 monitor 生效",
-}
+DEFAULT_CONFIG_PATH = os.path.join(paths.script_dir(), "config.default.json")
+
+
+def _load_builtin_defaults() -> dict:
+    """从 config.default.json 加载内置默认规则（唯一事实源，与仓库同步）。
+
+    文件缺失时使用精简兜底（只保证模块可导入；正常运行请保留该文件）。
+    """
+    try:
+        with open(DEFAULT_CONFIG_PATH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            return data
+    except Exception:  # noqa: BLE001
+        pass
+    return {
+        "data_root": "",
+        "apps": {},
+        "categories": [{"name": "其他", "exe": [], "title": []}],
+        "social_apps": {}, "social_main_titles": [],
+        "browser_exes": [], "terminal_exes": [],
+        "ai_keywords": [], "ai_tool_names": {}, "ai_title_keywords": [],
+        "browser_categories": {}, "browser_category_priority": [],
+        "terminal_tools": [], "subcategories": [],
+        "title_blacklist": [], "browser_history_enabled": True,
+        "browser_history": {},
+    }
+
+
+DEFAULT_CONFIG = _load_builtin_defaults()
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -817,11 +94,11 @@ def _deep_merge(base: dict, override: dict) -> dict:
 def load_config(path: str | None = None) -> dict:
     """读取 config.json 并深合并到默认配置；文件缺失/损坏时回退默认并告警。
 
-    可移植性：data_root 为空或相对路径时解析为脚本所在目录
-    （克隆到任意机器、任意盘符都能直接运行，数据与代码同目录）。
+    可移植性：data_root 为空或相对路径时解析为程序目录（paths.script_dir，
+    打包 exe 时即 exe 所在目录，避免写进 _MEIPASS 临时目录）。
     """
     if path is None:
-        path = os.path.join(DEFAULT_CONFIG["data_root"], "config.json")
+        path = os.path.join(paths.default_data_root(), "config.json")
     if not os.path.isfile(path):
         print(f"[classifier] 配置不存在，使用默认配置: {path}", file=sys.stderr)
         return dict(DEFAULT_CONFIG)
@@ -836,14 +113,14 @@ def load_config(path: str | None = None) -> dict:
         cfg = dict(DEFAULT_CONFIG)
     root = cfg.get("data_root") or ""
     if not root or not os.path.isabs(root):
-        cfg["data_root"] = os.path.dirname(os.path.abspath(__file__))
+        cfg["data_root"] = paths.script_dir()
     return cfg
 
 
 def load_aliases(path: str | None = None) -> dict:
     """读取联系人别名表 aliases.json；不存在/损坏时返回空表。"""
     if path is None:
-        path = os.path.join(DEFAULT_CONFIG["data_root"], "aliases.json")
+        path = os.path.join(paths.default_data_root(), "aliases.json")
     if not os.path.isfile(path):
         return {}
     try:
@@ -1077,9 +354,57 @@ def is_blacklisted_title(title: str, config: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 自测
+# 自测 / --sync-config
 # ---------------------------------------------------------------------------
+def sync_config() -> int:
+    """对比 config.default.json（内置规则）与当前 config.json，报告差异。
+
+    单一事实源：新增/修改分类规则改 config.default.json（或直接改 config.json
+    覆盖）；本命令帮助发现"默认规则更新了但 config.json 没跟上"的遗漏。
+    """
+    default_path = DEFAULT_CONFIG_PATH
+    user_path = os.path.join(paths.default_data_root(), "config.json")
+    try:
+        with open(default_path, "r", encoding="utf-8") as fh:
+            default = json.load(fh)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[sync-config] 读取默认配置失败: {exc}")
+        return 1
+    if not os.path.isfile(user_path):
+        print(f"[sync-config] 用户配置不存在（{user_path}），建议复制默认配置：")
+        print(f"  copy {default_path} {user_path}")
+        return 0
+    try:
+        with open(user_path, "r", encoding="utf-8") as fh:
+            user = json.load(fh)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[sync-config] 读取用户配置失败: {exc}")
+        return 1
+
+    missing = [k for k in default if k not in user]       # 默认有、用户没有（新增规则未同步）
+    extra = [k for k in user if k not in default]          # 用户自定义（正常）
+    both = [k for k in default if k in user]
+    changed = [k for k in both if default[k] != user[k]]   # 两侧都存在但值不同（用户覆盖/默认更新）
+
+    print(f"默认配置: {default_path}")
+    print(f"用户配置: {user_path}")
+    print(f"  用户自定义新增键（正常）: {len(extra)}  {extra}")
+    print(f"  默认新增、用户未同步（需注意）: {len(missing)}  {missing}")
+    print(f"  两侧均有但值不同（用户覆盖或默认已更新）: {len(changed)}")
+    for k in changed[:12]:
+        print(f"    - {k}")
+    if missing or changed:
+        print("提示：若默认规则已更新，可在 config.json 中补充对应键，或删除 config.json 后重新复制。")
+        return 1
+    print("配置一致。")
+    return 0
+
+
 if __name__ == "__main__":
+    import sys as _sys
+
+    if len(_sys.argv) > 1 and _sys.argv[1] == "--sync-config":
+        _sys.exit(sync_config())
     cfg = DEFAULT_CONFIG
 
     def mk(exe: str, ppid: int) -> object:

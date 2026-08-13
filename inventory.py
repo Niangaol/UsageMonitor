@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import classifier  # noqa: E402
 import win32core  # noqa: E402
+import paths  # noqa: E402
 
 UNINSTALL_SUBKEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
 _START_MENU_ROOTS = [
@@ -273,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     config = classifier.load_config(args.config)
-    data_root = args.data_root or config.get("data_root") or "D:\\电脑使用情况监控"
+    data_root = args.data_root or config.get("data_root") or paths.default_data_root()
     today = datetime.date.today().isoformat()
     date_dir = os.path.join(data_root, today)
     try:

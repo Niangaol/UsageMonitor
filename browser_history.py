@@ -30,6 +30,7 @@ import urllib.parse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import classifier  # noqa: E402
+import paths  # noqa: E402
 
 _FILETIME_EPOCH_OFFSET = 11644473600  # 1601-01-01 -> 1970-01-01（秒）
 _MAX_REPORT_ROWS = 100
@@ -465,7 +466,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     config = classifier.load_config(args.config)
-    data_root = args.data_root or config.get("data_root") or "D:\\电脑使用情况监控"
+    data_root = args.data_root or config.get("data_root") or paths.default_data_root()
 
     if args.list_browsers:
         dbs = find_history_dbs(config)

@@ -265,6 +265,25 @@ install.ps1 注册两个计划任务：
 
 ## 数据说明
 
+### 数据位置（可移植）
+
+- `data_root` 语义：**空字符串 = 程序所在目录**（脚本目录；打包 exe 时为 exe 所在目录，
+  不会写进临时解压目录）。改成绝对路径可把数据放到任何位置。
+- 全项目零硬编码路径（`paths.py` 统一解析），拷到任意盘符/机器直接运行。
+
+### 配置文件：单一事实源
+
+- `config.default.json`：内置默认规则（分类/关键词/黑名单等，随仓库维护）。
+- `config.json`：用户覆盖（不存在时自动使用默认规则）。
+- 新增软件/分类只需改 `config.default.json`（或直接覆盖 `config.json`）；
+  `python classifier.py --sync-config` 可对比两侧，发现"默认规则更新但 config.json 没跟上"的遗漏。
+
+### 数据校验与修复
+
+- `usage.jsonl` 写入带 `flush + fsync`（防断电半行）。
+- `python report.py --verify`：扫描所有日期目录，报告坏行。
+- `python report.py --verify --repair`：剔除坏行（自动备份 `.bak_verify`）并重建缺失日报。
+
 `usage.jsonl` 每行一个 JSON 会话记录：
 
 ```json
@@ -313,9 +332,12 @@ install.ps1 注册两个计划任务：
 - 所有数据仅保存在本机 `data_root`，**无任何联网上传**
 - 只记录元数据（应用名、窗口标题、时间、类别）；不读取聊天消息、密码、输入内容、文件内容
 - `title_blacklist` 命中的标题一律记为 `[已隐藏]`，不落盘原文
+- **仪表盘防偷读（CSRF 防护）**：所有 `/api/*` 校验 `Origin`/`Referer`，必须指向
+  `127.0.0.1:<port>` 或 `localhost:<port>`，否则返回 403——恶意网页的 JS 无法读取你的监控数据；
+  页面同时带 `X-Frame-Options: DENY` 与 CSP（防点击劫持/外部资源注入）
 - 浏览器 URL 级解析仅读取本机 History SQLite（复制到临时目录以只读方式解析，不修改浏览器数据）；
   命中黑名单的 URL/标题同样掩蔽为 `[已隐藏]`；不需要时可在 config.json 设 `browser_history_enabled: false`
-- 浏览器「停留时长」是**标签页前台计时**口径（含空闲/挂机时间、多标签可叠加），会高于真实活跃时长；
+- 浏览器"停留时长"是**标签页前台计时**口径（含空闲/挂机时间、多标签可叠加），会高于真实活跃时长；
   真实活跃时长以 monitor 会话统计（含空闲截断）为准；两者在日报中并列展示
 - 明确不实现（除非你主动开启）：截屏、录屏、OCR、键盘钩子、剪贴板读取
 

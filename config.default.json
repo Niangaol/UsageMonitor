@@ -1,5 +1,4 @@
 {
-  "_comment": "电脑使用情况监控配置：分类/阈值/黑名单规则可编辑，修改后重启 monitor 生效",
   "poll_interval_s": 5,
   "idle_threshold_s": 180,
   "retention_days": 90,
@@ -558,6 +557,20 @@
     "pwsh.exe",
     "openconsole.exe"
   ],
+  "editor_exes": [
+    "code.exe",
+    "pycharm.exe",
+    "pycharm64.exe",
+    "idea64.exe",
+    "goland64.exe",
+    "webstorm64.exe",
+    "rider64.exe",
+    "clion64.exe",
+    "datagrip64.exe",
+    "sublime_text.exe",
+    "notepad++.exe",
+    "vim.exe"
+  ],
   "ai_keywords": [
     "opencode",
     "pi-agent",
@@ -742,13 +755,6 @@
       "豆瓣"
     ]
   },
-  "browser_category_priority": [
-    "学习",
-    "代码",
-    "视频",
-    "购物",
-    "新闻"
-  ],
   "title_blacklist": [
     ".*密码.*",
     ".*password.*"
@@ -995,18 +1001,5 @@
       "user_data": null
     }
   },
-  "editor_exes": [
-    "code.exe",
-    "pycharm.exe",
-    "pycharm64.exe",
-    "idea64.exe",
-    "goland64.exe",
-    "webstorm64.exe",
-    "rider64.exe",
-    "clion64.exe",
-    "datagrip64.exe",
-    "sublime_text.exe",
-    "notepad++.exe",
-    "vim.exe"
-  ]
+  "_comment": "分类与阈值规则，可编辑；修改后重启 monitor 生效"
 }

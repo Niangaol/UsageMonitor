@@ -755,6 +755,73 @@ def test_dimension_refinements():
     shutil.rmtree(tmp5, ignore_errors=True)
 
 
+def test_dashboard_api():
+    print("[test] 仪表盘 API（端点 + 同源安全校验 + 错误码）")
+    import http.client
+    import threading
+    import dashboard
+
+    tmp = fresh_tmp("dashapi")
+    day = "2026-08-08"
+    os.makedirs(os.path.join(tmp, day), exist_ok=True)
+    with open(os.path.join(tmp, day, "usage.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "start": f"{day}T10:00:00", "end": f"{day}T10:02:00", "duration_ms": 120000,
+            "exe": "wechat.exe", "app": "微信", "title": "张三", "category": "社交聊天",
+            "contact": "张三", "ai_tool": None, "active": True,
+        }, ensure_ascii=False) + "\n")
+
+    server = dashboard.create_server(tmp, port=0)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def req(method, path, headers=None):
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request(method, path, headers=headers or {})
+        r = conn.getresponse()
+        body = r.read().decode("utf-8", errors="replace")
+        conn.close()
+        return r.status, body
+
+    try:
+        # 无浏览器上下文的请求（curl/脚本）放行
+        s, _ = req("GET", "/api/dates")
+        check(s == 200, "无 Origin 放行", str(s))
+        # 恶意 Origin（跨站 fetch）拒绝
+        s, _ = req("GET", "/api/dates", {"Origin": "https://evil.example"})
+        check(s == 403, "恶意 Origin 拒绝", str(s))
+        # 恶意 Referer 拒绝
+        s, _ = req("GET", "/api/dates", {"Referer": "https://evil.example/page"})
+        check(s == 403, "恶意 Referer 拒绝", str(s))
+        # 合法 Origin 放行
+        s, _ = req("GET", "/api/dates", {"Origin": f"http://127.0.0.1:{port}"})
+        check(s == 200, "合法 Origin 放行", str(s))
+        # 页面响应带安全头
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request("GET", "/")
+        r = conn.getresponse()
+        headers = dict(r.getheaders())
+        conn.close()
+        check(headers.get("X-Frame-Options") == "DENY", "X-Frame-Options: DENY")
+        check("Content-Security-Policy" in headers, "CSP 存在")
+        # 端点
+        s, _ = req("GET", "/api/day?date=2026-08-08")
+        check(s == 200, "api/day 正常", str(s))
+        s, _ = req("GET", "/api/day?date=bad")
+        check(s == 400, "非法日期 400", str(s))
+        s, _ = req("GET", "/nope")
+        check(s == 404, "未知路径 404", str(s))
+        s, _ = req("POST", "/api/dates")
+        check(s == 405, "POST 405", str(s))
+        # 路径穿越被拒（不存在的日期 -> 400 而非泄露路径）
+        s, _ = req("GET", "/api/day?date=../2026-08-08")
+        check(s == 400, "路径穿越日期被拒", str(s))
+    finally:
+        server.shutdown()
+        server.server_close()
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     print("=" * 60)
     print("电脑使用情况监控 · 完整集成测试")
@@ -766,7 +833,7 @@ def main() -> int:
         test_static_zero_write, test_pause_resume, test_retention,
         test_report_pipeline, test_inventory, test_month_and_json,
         test_contact_aliases, test_browser_history, test_cross_day_isolation,
-        test_reclassify, test_dimension_refinements,
+        test_reclassify, test_dimension_refinements, test_dashboard_api,
     ]
     for t in tests:
         t()

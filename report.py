@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """report.py — 日报/周报生成与 CLI 查询。
 
-读取 D:\\电脑使用情况监控\\YYYY-MM-DD\\usage.jsonl（JSON Lines 会话记录），
+读取 <data_root>/YYYY-MM-DD/usage.jsonl（JSON Lines 会话记录），
 聚合输出中文 Markdown 日报 / 汇总 CSV，支持 --day / --today / --week。
 
 可被 monitor.py 直接 import（跨天时调用 generate_day_report 自动生成日报）。
@@ -20,6 +20,7 @@ import types
 import datetime
 
 import version  # noqa: E402
+import paths  # noqa: E402
 from collections import OrderedDict
 
 CATEGORY_ORDER = [
@@ -27,7 +28,7 @@ CATEGORY_ORDER = [
     "办公学习", "系统", "其他",
 ]
 
-DEFAULT_DATA_ROOT = "D:\\电脑使用情况监控"
+DEFAULT_DATA_ROOT = paths.default_data_root()
 
 _aliases_cache: dict = {"ts": 0.0, "roots": {}}
 
@@ -675,6 +676,59 @@ def reclassify_day(date_str: str, data_root: str) -> int:
     return changed
 
 
+def verify_days(data_root: str, days: list[str] | None = None, repair: bool = False) -> dict:
+    """校验（可选修复）日期目录的 usage.jsonl 完整性。
+
+    扫描每个 YYYY-MM-DD 目录的 usage.jsonl：逐行解析 JSON，
+    统计好行/坏行；repair=True 时剔除坏行（原文件备份为 usage.jsonl.bak_verify）
+    并重建缺失的 report.md/csv。返回汇总。
+    """
+    import glob
+    if days is None:
+        days = sorted(
+            d for d in os.listdir(data_root)
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) and os.path.isdir(os.path.join(data_root, d))
+        )
+    result = {"days": 0, "bad_lines": 0, "repaired": 0, "rebuilt_reports": 0, "issues": []}
+    for day in days:
+        path = os.path.join(data_root, day, "usage.jsonl")
+        if not os.path.isfile(path):
+            continue
+        result["days"] += 1
+        good: list[str] = []
+        bad = 0
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    if isinstance(obj, dict):
+                        good.append(line)
+                        continue
+                except json.JSONDecodeError:
+                    pass
+                bad += 1
+        result["bad_lines"] += bad
+        if bad:
+            result["issues"].append(f"{day}: {bad} 行损坏")
+            if repair:
+                shutil.copy2(path, path + ".bak_verify")
+                with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                    fh.write("\n".join(good) + ("\n" if good else ""))
+                result["repaired"] += bad
+        # 重建缺失的日报
+        report_path = os.path.join(data_root, day, "report.md")
+        if repair and not os.path.isfile(report_path):
+            try:
+                generate_day_report(day, data_root)
+                result["rebuilt_reports"] += 1
+            except Exception as exc:  # noqa: BLE001
+                result["issues"].append(f"{day}: 重建日报失败 {exc}")
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="report.py", description="电脑使用情况日报/周报/月报")
     parser.add_argument("--version", action="version", version=f"%(prog)s {version.VERSION}")
@@ -684,6 +738,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--month", metavar="YYYY-MM", help="月度汇总（默认当月）")
     parser.add_argument("--full", action="store_true", help="日报浏览器 URL 明细不截断（默认前 100 条）")
     parser.add_argument("--reclassify", action="store_true", help="用当前配置重新归类指定日期 usage.jsonl（规则变更后修复历史数据）")
+    parser.add_argument("--verify", action="store_true", help="校验所有日期目录 usage.jsonl 完整性")
+    parser.add_argument("--repair", action="store_true", help="与 --verify 连用：剔除坏行并重建缺失日报（坏行前自动备份）")
     parser.add_argument("--json", action="store_true", help="输出 JSON（数据导出）")
     parser.add_argument("--write", action="store_true", help="同时把 report.md/csv 写入日期文件夹")
     parser.add_argument("--data-root", default=None, help="数据根目录（默认取 config.json）")
@@ -764,6 +820,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         parser.print_help()
         return 2
+
+    if args.verify:
+        result = verify_days(data_root, repair=args.repair)
+        print(f"校验完成：{result['days']} 天，坏行 {result['bad_lines']}，"
+              f"修复 {result['repaired']}，重建日报 {result['rebuilt_reports']}")
+        for issue in result["issues"]:
+            print(f"  - {issue}")
+        return 0 if result["bad_lines"] == 0 else 1
 
     if args.reclassify:
         try:

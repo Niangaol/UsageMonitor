@@ -33,9 +33,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import report  # noqa: E402
 import version  # noqa: E402
+import paths  # noqa: E402
 
 DEFAULT_PORT = 8765
-DEFAULT_DATA_ROOT = "D:\\电脑使用情况监控"
+DEFAULT_DATA_ROOT = paths.default_data_root()
 
 # API 日期参数白名单：防路径穿越（date=../../xxx 会拼进数据目录路径）
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -732,11 +733,37 @@ class Handler(BaseHTTPRequestHandler):
         date = query.get("date", [""])[0]
         return date if _DAY_RE.fullmatch(date) else None
 
+    def _origin_allowed(self, headers) -> bool:
+        """同源校验：Origin/Referer 存在时必须匹配本服务（防恶意网页偷读隐私数据）。
+
+        浏览器跨站 fetch/资源请求必然携带 Origin 或 Referer（指向恶意站点），
+        校验拒绝即可堵住 CSRF/localhost 数据泄露；curl/无头脚本等无浏览器
+        上下文的请求不带这两个头，予以放行（不是攻击向量）。
+        """
+        port = self.server.server_port
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        for header in ("Origin", "Referer"):
+            value = headers.get(header)
+            if not value:
+                continue
+            try:
+                parsed = urllib.parse.urlparse(value.strip())
+            except ValueError:
+                return False
+            if parsed.netloc not in allowed:
+                return False
+        return True
+
     def do_GET(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
         root = self.server.data_root
+
+        # 同源校验：跨站请求直接拒绝（隐私数据防偷读）
+        if not self._origin_allowed(self.headers):
+            self._send_json({"error": "forbidden"}, 403)
+            return
 
         if path == "/" or path == "/index.html":
             html = PAGE_TEMPLATE.replace("DATA_ROOT", json.dumps(root))
@@ -745,6 +772,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Content-Security-Policy",
+                             "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+                             "script-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                             "connect-src 'self'; frame-ancestors 'none'")
             self.end_headers()
             self.wfile.write(body)
             return

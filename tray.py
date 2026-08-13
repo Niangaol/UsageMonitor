@@ -16,6 +16,7 @@ import ctypes
 import ctypes.wintypes as wt
 import os
 import sys
+import paths  # noqa: E402
 import datetime
 
 user32 = ctypes.windll.user32
@@ -166,7 +167,7 @@ _set_paused_fn = lambda paused: None
 _is_paused_fn = lambda: False
 _open_dashboard_fn = lambda view=None: None
 _stop_event = None
-_data_root = "D:\\电脑使用情况监控"
+_data_root = paths.default_data_root()
 
 
 # ---- 托盘图标 ----
@@ -289,7 +290,7 @@ def run(
         _open_dashboard_fn = open_dashboard_fn
     if stop_event is not None:
         _stop_event = stop_event
-    _data_root = config.get("data_root") or "D:\\电脑使用情况监控"
+    _data_root = config.get("data_root") or paths.default_data_root()
 
     hinst = kernel32.GetModuleHandleW(None)
     wc = WNDCLASSEXW()
