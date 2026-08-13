@@ -50,3 +50,5 @@ jobs:
         with:
           files: dist/UsageMonitor.exe
           generate_release_notes: true
+          allowUpdates: true
+          update_release_body: true
