@@ -64,7 +64,7 @@ def is_paused() -> bool:
 # 日志与写入
 # ---------------------------------------------------------------------------
 def _log_error(data_root: str, day_str: str, exc: BaseException, context: str = "") -> None:
-    """把错误写入当日 errors.log（守护进程静默运行，不打印）。"""
+    """把错误写入当日 errors.log + 统一日志 applog（守护进程静默运行，不打印）。"""
     try:
         day_dir = os.path.join(data_root, day_str or datetime.date.today().isoformat())
         os.makedirs(day_dir, exist_ok=True)
@@ -75,6 +75,11 @@ def _log_error(data_root: str, day_str: str, exc: BaseException, context: str = 
             # 仅当确实有活动异常时写堆栈（主动记录如 single-instance 拒绝不写）
             if sys.exc_info()[0] is not None:
                 fh.write(traceback.format_exc() + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import applog  # noqa: PLC0415 —— 惰性导入
+        applog.get_logger("monitor").error("%s: %s", context or "error", exc)
     except Exception:  # noqa: BLE001
         pass
 
@@ -292,6 +297,13 @@ def run_daemon(config: dict, test_seconds: int | None = None, verbose: bool = Fa
                 if not os.path.isfile(os.path.join(data_root, yesterday, "report.md")):
                     finalize_day(yesterday, data_root, retention)
                 _refresh_inventory(data_root, config)  # 启动时刷新今日软件清单
+                try:
+                    import applog  # noqa: PLC0415
+                    applog.configure(data_root)
+                    applog.get_logger("monitor").info(
+                        "守护进程启动 (data_root=%s, poll=%ss, idle=%ss)", data_root, poll_interval, idle_threshold)
+                except Exception:  # noqa: BLE001
+                    pass
             elif day_str != current_day:
                 if session is not None:
                     rec = _close_session(session, session["last_active"], data_root, current_day, config)
@@ -301,6 +313,11 @@ def run_daemon(config: dict, test_seconds: int | None = None, verbose: bool = Fa
                 finalize_day(current_day, data_root, retention)
                 _refresh_inventory(data_root, config)  # 跨天：新一天清单
                 current_day = day_str
+                try:
+                    import applog  # noqa: PLC0415
+                    applog.get_logger("monitor").info("跨天轮转 -> %s（前一日报表已生成）", day_str)
+                except Exception:  # noqa: BLE001
+                    pass
 
             # 暂停
             if _pause.is_set():

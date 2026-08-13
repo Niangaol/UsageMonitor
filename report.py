@@ -692,6 +692,21 @@ def main(argv: list[str] | None = None) -> int:
 
     data_root = args.data_root or _default_data_root()
 
+    # 统一日志（只在实际执行操作时记录，纯查询不刷屏）
+    try:
+        import applog  # noqa: PLC0415
+        applog.configure(data_root)
+        _applog = applog.get_logger("report")
+    except Exception:  # noqa: BLE001
+        _applog = None
+
+    def _log_info(msg: str) -> None:
+        if _applog is not None:
+            try:
+                _applog.info(msg)
+            except Exception:  # noqa: BLE001
+                pass
+
     if args.month:
         month_str = args.month
         try:
@@ -700,6 +715,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[report] 月份格式错误: {month_str}（应为 YYYY-MM）", file=sys.stderr)
             return 2
         agg = aggregate_month(month_str, data_root)
+        if args.write:
+            _log_info(f"生成月报 {month_str}")
         if args.json:
             print(json.dumps(agg, ensure_ascii=False, indent=2, default=str))
         else:
@@ -717,6 +734,7 @@ def main(argv: list[str] | None = None) -> int:
         today = datetime.date.today()
         days = [(today - datetime.timedelta(days=i)).isoformat() for i in range(6, -1, -1)]
         if args.write:
+            _log_info(f"生成周报 {days[0]}~{days[-1]}")
             for ds in days:
                 try:
                     generate_day_report(ds, data_root)
@@ -753,12 +771,14 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001
             print(f"[report] 重分类失败: {exc}", file=sys.stderr)
             return 1
+        _log_info(f"重分类 {date_str}：{n} 条变更")
         print(f"已按当前配置重分类 {date_str}：{n} 条记录变更（原文件备份为 usage.jsonl.bak）")
         return 0
 
     if args.write:
         try:
             generate_day_report(date_str, data_root, full_urls=args.full)
+            _log_info(f"生成日报 {date_str}" + ("（全量URL）" if args.full else ""))
         except Exception as exc:  # noqa: BLE001
             print(f"[report] 生成 {date_str} 失败: {exc}", file=sys.stderr)
             return 1
