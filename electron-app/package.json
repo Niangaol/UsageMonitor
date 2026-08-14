@@ -1,0 +1,35 @@
+{
+  "name": "usagemonitor-desktop",
+  "productName": "电脑使用情况监控",
+  "version": "1.0.0",
+  "description": "电脑使用情况监控 · 桌面壳（独立窗口展示本地仪表盘，不弹默认浏览器）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --smoke",
+    "dist": "electron-builder --win portable"
+  },
+  "author": "UsageMonitor",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "cn.usagemonitor.desktop",
+    "productName": "UsageMonitor",
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "../assets/icon.png"
+    },
+    "portable": {
+      "artifactName": "UsageMonitor-Desktop-${version}.exe"
+    }
+  }
+}

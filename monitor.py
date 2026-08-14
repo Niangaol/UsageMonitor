@@ -19,6 +19,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -418,11 +419,34 @@ def overview_text(data_root: str | None = None) -> str:
     return "\n".join(lines)
 
 
+def _find_electron_shell() -> list[str] | None:
+    """定位 Electron 桌面壳（独立应用窗口，替代默认浏览器）。
+
+    返回启动命令列表（含 main.js 参数）或 None：
+    1) electron-app/dist/*.exe        —— electron-builder 打包的便携版
+    2) electron-app/node_modules/electron/dist/electron.exe + main.js —— dev 模式
+    """
+    base = os.path.dirname(os.path.abspath(__file__))
+    app_dir = os.path.join(base, "electron-app")
+    # 1) 打包便携版
+    dist_dir = os.path.join(app_dir, "dist")
+    if os.path.isdir(dist_dir):
+        for name in sorted(os.listdir(dist_dir)):
+            if name.lower().endswith(".exe"):
+                return [os.path.join(dist_dir, name)]
+    # 2) dev 模式（npm install 后）
+    electron_exe = os.path.join(app_dir, "node_modules", "electron", "dist", "electron.exe")
+    main_js = os.path.join(app_dir, "main.js")
+    if os.path.isfile(electron_exe) and os.path.isfile(main_js):
+        return [electron_exe, main_js]
+    return None
+
+
 def open_dashboard(data_root: str, port: int = 8765, view: str | None = None) -> None:
     """打开本地仪表盘（幂等）。
 
-    端口未被占用 -> 在后台线程启动 dashboard 服务器并打开浏览器；
-    端口已被占用（已有实例）-> 直接打开浏览器。
+    优先 Electron 桌面壳（独立应用窗口，不弹默认浏览器；壳内部自行
+    探测/启动仪表盘服务）；无壳时回退：端口空闲则后台起服务 + 开浏览器。
     view 指定初始视图（overview / report / detail），为空用默认视图。
     """
     import socket
@@ -431,6 +455,22 @@ def open_dashboard(data_root: str, port: int = 8765, view: str | None = None) ->
     url = f"http://127.0.0.1:{port}/"
     if view:
         url += f"?view={view}"
+
+    # 优先 Electron 壳（USAGEMON_USE_BROWSER=1 可强制回退浏览器，调试用）
+    if os.environ.get("USAGEMON_USE_BROWSER") != "1":
+        shell = _find_electron_shell()
+        if shell:
+            try:
+                env = dict(os.environ)
+                env["USAGEMON_DATA_ROOT"] = data_root
+                env["USAGEMON_PORT"] = str(port)
+                creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                subprocess.Popen(shell, env=env, creationflags=creationflags,
+                                 close_fds=True)
+                return
+            except Exception:  # noqa: BLE001 —— 壳启动失败回退浏览器
+                pass
+
     sock = socket.socket()
     try:
         sock.bind(("127.0.0.1", port))

@@ -22,3 +22,6 @@ install_err.txt
 *.log
 # 演示数据（make_demo_data.py 可随时重新生成）
 demo_data/
+# Electron 壳（npm install / electron-builder 产物，可随时重建）
+electron-app/node_modules/
+electron-app/dist/

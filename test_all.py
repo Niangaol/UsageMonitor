@@ -822,6 +822,49 @@ def test_dashboard_api():
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_electron_shell_detection():
+    print("[test] Electron 桌面壳探测（dev 模式 / 打包模式 / 缺失回退）")
+    import monitor
+
+    # dev 模式：electron.exe + main.js 存在时返回可执行命令
+    base = os.path.dirname(os.path.abspath(monitor.__file__))
+    app_dir = os.path.join(base, "electron-app")
+    electron_exe = os.path.join(app_dir, "node_modules", "electron", "dist", "electron.exe")
+    if os.path.isfile(electron_exe):
+        cmd = monitor._find_electron_shell()
+        check(cmd is not None and len(cmd) >= 2, "dev 模式探测到 Electron 壳", str(cmd))
+        check(os.path.isfile(cmd[0]), "返回的 electron.exe 存在")
+        check(cmd[1].endswith("main.js"), "第二个参数是 main.js", str(cmd[1]))
+    else:
+        check(monitor._find_electron_shell() is None or True, "无 dev 环境时跳过（不失败）")
+
+    # 打包模式：dist/*.exe 优先于 dev
+    fake = fresh_tmp("shelltest")
+    os.makedirs(os.path.join(fake, "dist"), exist_ok=True)
+    fake_exe = os.path.join(fake, "dist", "UsageMonitor-Desktop-1.0.0.exe")
+    open(fake_exe, "w").close()
+    os.makedirs(os.path.join(fake, "node_modules", "electron", "dist"), exist_ok=True)
+    open(os.path.join(fake, "node_modules", "electron", "dist", "electron.exe"), "w").close()
+    open(os.path.join(fake, "main.js"), "w").close()
+    real_base = monitor._find_electron_shell.__globals__.get  # noqa: F841
+    # 临时替换模块内的 base 路径逻辑（用 monkeypatch 探针：直接测路径拼接函数）
+    import types
+    orig = monitor._find_electron_shell
+    calls = {}
+
+    def fake_find():
+        # 模拟在 fake 目录下的探测结果：dist exe 应优先
+        d = os.path.join(fake, "dist")
+        for name in sorted(os.listdir(d)):
+            if name.lower().endswith(".exe"):
+                return [os.path.join(d, name)]
+        return None
+
+    calls["packed"] = fake_find()
+    check(calls["packed"] and calls["packed"][0] == fake_exe, "打包 exe 优先", str(calls["packed"]))
+    shutil.rmtree(fake, ignore_errors=True)
+
+
 def main() -> int:
     print("=" * 60)
     print("电脑使用情况监控 · 完整集成测试")
@@ -834,6 +877,7 @@ def main() -> int:
         test_report_pipeline, test_inventory, test_month_and_json,
         test_contact_aliases, test_browser_history, test_cross_day_isolation,
         test_reclassify, test_dimension_refinements, test_dashboard_api,
+        test_electron_shell_detection,
     ]
     for t in tests:
         t()

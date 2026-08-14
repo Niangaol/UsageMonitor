@@ -116,6 +116,26 @@ python inventory.py --once
 > **数据存放位置**：`config.json` 的 `data_root` 为空时，所有数据（日期文件夹/日志/报表）
 > 保存在项目脚本所在目录；如需存到别处，把 `data_root` 改成绝对路径即可。
 
+## 桌面应用（Electron 壳）
+
+electron-app/ 提供独立桌面壳：用 Electron 窗口展示本地仪表盘，**不再弹默认浏览器**（数据引擎仍是 Python）。
+
+- **工作原理**：壳启动时探测 127.0.0.1:8765 是否已有仪表盘服务 → 没有则由壳自动启动
+  dashboard.py（py/pythonw 自动探测）→ 独立窗口加载页面 → 窗口关闭时若服务是本壳
+  启动的则一并退出（托盘常驻的服务则复用保留）。
+- **运行（开发模式）**：
+  `powershell
+  cd electron-app
+  npm install          # 首次（含 Electron 运行时）
+  npm start            # 打开应用窗口
+  npm run smoke        # 冒烟：启动→截图→自动退出
+  `
+- **打包便携版**：
+pm run dist（electron-builder，产物 electron-app/dist/UsageMonitor-Desktop-*.exe，
+  免 Node 环境；仍需系统 Python 提供数据服务）。
+- **打开方式**：托盘菜单「打开仪表盘」与 monitor.open_dashboard 会**优先**启动 Electron 壳，
+  找不到壳时回退默认浏览器（USAGEMON_USE_BROWSER=1 可强制回退）。
+
 ## 打包为 exe（免 Python 运行）
 
 ```powershell
