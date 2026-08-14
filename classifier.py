@@ -16,8 +16,10 @@ from __future__ import annotations
 import json
 import os
 import re
-import paths  # noqa: E402
 import sys
+import time
+
+import paths  # noqa: E402
 
 CATEGORY_ORDER = [
     "AI编程",
@@ -144,10 +146,90 @@ def resolve_app_name(exe: str, config: dict) -> str:
     return stem.title() if stem else exe_l
 
 
+# ---------------------------------------------------------------------------
+# 应用分组覆盖层（用户自定义：把应用放进/移出分组，新增/删除分组）
+# 数据文件：<data_root>/app_groups.json —— {"exe_groups": {"steam.exe": "游戏"},
+#          "custom_categories": ["我的分组"]}
+# ---------------------------------------------------------------------------
+_groups_cache: dict = {"ts": 0.0, "data": None}
+_GROUPS_TTL = 5.0  # 秒
+
+
+def app_groups_path(data_root: str) -> str:
+    return os.path.join(data_root, "app_groups.json")
+
+
+def load_app_groups(data_root: str | None = None) -> dict:
+    """读取用户分组覆盖层（5 秒 TTL 缓存）。缺失/损坏返回空结构。"""
+    global _groups_cache
+    now = time.monotonic()
+    if _groups_cache["data"] is not None and now - _groups_cache["ts"] < _GROUPS_TTL:
+        return _groups_cache["data"]
+    groups: dict = {"exe_groups": {}, "custom_categories": []}
+    root = data_root
+    if root is None:
+        root = paths.default_data_root()
+    path = app_groups_path(root)
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                eg = data.get("exe_groups")
+                if isinstance(eg, dict):
+                    groups["exe_groups"] = {
+                        str(k).lower(): str(v) for k, v in eg.items() if str(v)
+                    }
+                cc = data.get("custom_categories")
+                if isinstance(cc, list):
+                    groups["custom_categories"] = [str(x) for x in cc if str(x)]
+        except Exception:  # noqa: BLE001
+            pass
+    _groups_cache["ts"] = now
+    _groups_cache["data"] = groups
+    return groups
+
+
+def save_app_groups(groups: dict, data_root: str) -> None:
+    """原子写覆盖层（临时文件 + os.replace），并刷新缓存。"""
+    global _groups_cache
+    clean = {
+        "exe_groups": {str(k).lower(): str(v) for k, v in groups.get("exe_groups", {}).items() if str(v)},
+        "custom_categories": [str(x) for x in groups.get("custom_categories", []) if str(x)],
+    }
+    path = app_groups_path(data_root)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(clean, fh, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+    _groups_cache["data"] = clean
+    _groups_cache["ts"] = time.monotonic()
+
+
+def all_categories(config: dict, groups: dict | None = None) -> list[str]:
+    """内置分组 + 用户自定义分组（完整列表，供管理界面使用）。"""
+    cats = [c.get("name", "其他") for c in config.get("categories", [])]
+    if groups is None:
+        groups = load_app_groups(config.get("data_root"))
+    for name in groups.get("custom_categories", []):
+        if name not in cats:
+            cats.append(name)
+    return cats
+
+
 def classify_category(exe: str, title: str, config: dict) -> str:
-    """按配置顺序匹配 exe 关键词 -> 标题关键词，返回类别名；无命中返回 '其他'。"""
+    """按 用户分组覆盖(exe 精确) -> 配置关键词(exe/title) 匹配，返回类别名。
+
+    用户可通过仪表盘「分组」视图把应用放进/移出任意分组（含自定义分组），
+    覆盖层优先级最高且实时生效（无需重启）。
+    """
     exe_l = (exe or "").lower()
     title_l = (title or "").lower()
+    # 1) 用户覆盖层：exe 精确映射
+    override = load_app_groups(config.get("data_root")).get("exe_groups", {}).get(exe_l)
+    if override:
+        return override
+    # 2) 配置规则
     for cat in config.get("categories", []):
         name = cat.get("name", "其他")
         for kw in cat.get("exe", []):

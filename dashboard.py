@@ -259,6 +259,10 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M5 6l2.2 2L5 10M9 10.5h2.5"/></svg>
         日志
       </a>
+      <a class="nav-item" data-view="groups" href="#">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4.5h12v7H2z"/><path d="M2 7h12"/><path d="M6 4.5V9M10 4.5V9"/></svg>
+        分组
+      </a>
     </nav>
     <div class="side-foot">
       <div class="root" id="rootPath" title="数据目录"></div>
@@ -336,13 +340,31 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         </div>
       </div>
     </section>
+
+    <!-- 分组管理 -->
+    <section class="view" id="view-groups">
+      <div class="panel">
+        <div class="controls" style="margin-bottom:14px">
+          <input type="text" id="grpSearch" placeholder="搜索应用…" style="width:200px">
+          <input type="text" id="grpNewName" placeholder="新分组名称" style="width:150px" maxlength="20">
+          <button class="btn primary" id="grpAdd">新增分组</button>
+          <span id="grpStatus" style="color:var(--faint);font-size:11.5px"></span>
+        </div>
+        <div id="grpCats" style="margin-bottom:14px;line-height:2"></div>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>应用</th><th>当前分组</th><th>移动到</th></tr></thead>
+          <tbody id="grpBody"></tbody>
+        </table></div>
+        <div id="grpCount" style="color:var(--faint);font-size:11.5px;margin-top:8px"></div>
+      </div>
+    </section>
   </main>
 </div>
 
 <script>
 "use strict";
 const ROOT_DIR = DATA_ROOT;
-const TITLES = {overview:"概览",trends:"趋势",report:"日报",sessions:"会话",log:"日志"};
+const TITLES = {overview:"概览",trends:"趋势",report:"日报",sessions:"会话",log:"日志",groups:"分组"};
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const state = { view:"overview", day:null, dates:[], loaded:{} };
@@ -416,7 +438,7 @@ function switchView(v, push){
   }
 }
 const loaders = { overview:loadOverview, trends:loadTrends, report:loadReport,
-                  sessions:loadSessions, log:loadLog };
+                  sessions:loadSessions, log:loadLog, groups:loadGroups };
 
 /* ---------- 头部控件（日期选择） ---------- */
 function buildHeadControls(){
@@ -674,6 +696,83 @@ function armLogTimer(){
   logTimer = setInterval(()=>{ if(state.view==="log" && state.loaded.log) loadLog(); }, 15000);
 }
 
+/* ---------- 分组管理 ---------- */
+let grpFlashTimer = null;
+function grpFlash(msg){
+  const el = $("#grpStatus");
+  el.textContent = msg;
+  el.style.color = "var(--ok)";
+  if(grpFlashTimer) clearTimeout(grpFlashTimer);
+  grpFlashTimer = setTimeout(()=>{ el.textContent = ""; }, 3000);
+}
+async function postJson(url, obj){
+  const r = await fetch(url, {method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(obj)});
+  if(!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+async function loadGroups(){
+  const d = await api("/api/groups");
+  state.groups = d;
+  $("#grpCats").innerHTML = d.categories.map(c=>{
+    const custom = d.custom_categories.includes(c);
+    return '<span class="tag" style="padding:4px 10px;margin-right:6px">'+esc(c)+
+      (custom ? ' <a href="#" class="grp-del" data-name="'+esc(c)+'" title="删除分组" style="color:var(--danger);text-decoration:none;margin-left:4px">✕</a>' : '')+'</span>';
+  }).join("");
+  renderGroups();
+}
+function renderGroups(){
+  const q = $("#grpSearch").value.toLowerCase();
+  const d = state.groups || {apps:[]};
+  const rows = d.apps.filter(a => (a.app+" "+a.exe).toLowerCase().includes(q));
+  $("#grpCount").textContent = rows.length + " / " + d.apps.length + " 个应用（下拉选分组即时生效；清空=恢复自动分类）";
+  $("#grpBody").innerHTML = rows.map(a=>{
+    const opts = ['<option value="">自动分类</option>'].concat(
+      d.categories.map(c=>'<option value="'+esc(c)+'"'+(a.overridden && a.category===c ? " selected" : "")+'>'+esc(c)+'</option>')
+    ).join("");
+    return "<tr><td>"+esc(a.app)+"<span class='url-cell' style='margin-left:8px'>"+esc(a.exe)+"</span></td>"+
+      "<td>"+(a.overridden ? '<span class="tag ai">'+esc(a.category)+'</span>' : '<span style="color:var(--dim)">'+esc(a.category)+'</span>')+"</td>"+
+      "<td><select data-exe='"+esc(a.exe)+"'>"+opts+"</select></td></tr>";
+  }).join("") || '<tr><td colspan="3" class="empty">无匹配应用</td></tr>';
+  $$("#grpBody select").forEach(sel=>{
+    sel.onchange = async ()=>{
+      try{
+        await postJson("/api/groups/set", {exe: sel.dataset.exe, category: sel.value});
+        grpFlash("已保存：" + sel.dataset.exe + " → " + (sel.value || "自动分类"));
+        await loadGroups();
+        if(state.loaded.overview) loadOverview();
+      }catch(e){ grpFlash("保存失败：" + e.message); }
+    };
+  });
+}
+async function groupsInit(){
+  $("#grpAdd").onclick = async ()=>{
+    const name = $("#grpNewName").value.trim();
+    if(!name){ grpFlash("请输入分组名称"); return; }
+    try{
+      await postJson("/api/groups/add", {name});
+      $("#grpNewName").value = "";
+      grpFlash("已新增分组：" + name);
+      await loadGroups();
+    }catch(e){ grpFlash("新增失败：" + e.message); }
+  };
+  $("#grpSearch").oninput = renderGroups;
+  $("#grpCats").onclick = async (e)=>{
+    const el = e.target.closest(".grp-del");
+    if(!el) return;
+    e.preventDefault();
+    const name = el.dataset.name;
+    if(!confirm("删除分组「" + name + "」？组内应用将恢复自动分类。")) return;
+    try{
+      await postJson("/api/groups/delete", {name});
+      grpFlash("已删除分组：" + name);
+      await loadGroups();
+      if(state.loaded.overview) loadOverview();
+    }catch(err){ grpFlash("删除失败：" + err.message); }
+  };
+}
+
 /* ---------- 初始化 ---------- */
 (async function init(){
   buildHeadControls();
@@ -699,6 +798,7 @@ function armLogTimer(){
   // URL 视图
   const v = new URLSearchParams(location.search).get("view");
   const target = v && TITLES[v] ? v : "overview";
+  groupsInit();
   if(target !== "overview") switchView(target, false);
   else { state.loaded.overview = true; loadOverview(); }
   armLogTimer();
@@ -886,6 +986,32 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"entries": entries, "errors": errors})
             return
 
+        if path == "/api/groups":
+            # 应用分组管理：内置+自定义分组、全部已知应用及其当前分类
+            try:
+                import classifier as _clf  # noqa: PLC0415
+                config = _clf.load_config(); config["data_root"] = root
+                groups = _clf.load_app_groups(root)
+                cats = _clf.all_categories(config, groups)
+                known = _collect_known_apps(root)
+                entries = []
+                for exe, name in sorted(known.items(), key=lambda kv: kv[1].lower()):
+                    entries.append({
+                        "exe": exe,
+                        "app": name,
+                        "category": _clf.classify_category(exe, "", config),
+                        "overridden": exe in groups["exe_groups"],
+                    })
+                self._send_json({
+                    "exe_groups": groups["exe_groups"],
+                    "custom_categories": groups["custom_categories"],
+                    "categories": cats,
+                    "apps": entries,
+                })
+            except Exception:  # noqa: BLE001
+                self._send_json({"error": "groups unavailable"}, 500)
+            return
+
         if path == "/favicon.ico":
             self.send_response(204)
             self.end_headers()
@@ -894,6 +1020,74 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"error": "not found"}, 404)
 
     def do_POST(self):  # noqa: N802
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        root = self.server.data_root
+        # 同源校验（与 GET 一致）
+        if not self._origin_allowed(self.headers):
+            self._send_json({"error": "forbidden"}, 403)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            if length > 0:
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+            else:
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+        except Exception:  # noqa: BLE001
+            body = {}
+
+        try:
+            import classifier as _clf  # noqa: PLC0415
+        except Exception:  # noqa: BLE001
+            self._send_json({"error": "unavailable"}, 500)
+            return
+
+        if path == "/api/groups/set":
+            # 设置/移出应用分组：{"exe": "steam.exe", "category": "游戏"}；category 为空=移出（自动分类）
+            exe = str(body.get("exe", "")).lower()
+            cat = str(body.get("category", "")).strip()
+            if not exe:
+                self._send_json({"error": "exe required"}, 400)
+                return
+            groups = _clf.load_app_groups(root)
+            if cat:
+                groups["exe_groups"][exe] = cat
+                # 未知分组自动登记为自定义分组
+                if cat not in _clf.all_categories(_clf.load_config(), groups):
+                    groups["custom_categories"].append(cat)
+            else:
+                groups["exe_groups"].pop(exe, None)
+            _clf.save_app_groups(groups, root)
+            self._send_json({"ok": True})
+            return
+
+        if path == "/api/groups/add":
+            name = str(body.get("name", "")).strip()
+            if not name:
+                self._send_json({"error": "name required"}, 400)
+                return
+            groups = _clf.load_app_groups(root)
+            cats = _clf.all_categories(_clf.load_config(), groups)
+            if name not in cats:
+                groups["custom_categories"].append(name)
+                _clf.save_app_groups(groups, root)
+            self._send_json({"ok": True, "categories": _clf.all_categories(_clf.load_config(), groups)})
+            return
+
+        if path == "/api/groups/delete":
+            name = str(body.get("name", "")).strip()
+            if not name:
+                self._send_json({"error": "name required"}, 400)
+                return
+            groups = _clf.load_app_groups(root)
+            groups["custom_categories"] = [x for x in groups["custom_categories"] if x != name]
+            groups["exe_groups"] = {k: v for k, v in groups["exe_groups"].items() if v != name}
+            _clf.save_app_groups(groups, root)
+            self._send_json({"ok": True})
+            return
+
         self._send_json({"error": "method not allowed"}, 405)
 
 
@@ -906,6 +1100,55 @@ def _available_days(data_root: str) -> list[str]:
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", name):
             days.append(name)
     return sorted(days)
+
+
+def _collect_known_apps(data_root: str) -> dict[str, str]:
+    """收集"已知应用"：软件清单 exe + 最近 14 天 usage.jsonl 出现的 exe。
+
+    返回 {exe(小写): 显示名}（供分组管理界面列出全部可分组应用）。
+    """
+    known: dict[str, str] = {}
+
+    def _add(exe: str, name: str = "") -> None:
+        exe = (exe or "").lower()
+        if not exe:
+            return
+        if exe not in known or not known[exe]:
+            known[exe] = name or exe
+
+    # 1) 软件清单（今日 + 最近几天）
+    for day in _available_days(data_root)[-7:]:
+        inv_path = os.path.join(data_root, day, "software_inventory.json")
+        if not os.path.isfile(inv_path):
+            continue
+        try:
+            with open(inv_path, "r", encoding="utf-8") as fh:
+                inv = json.load(fh)
+            for app in inv.get("apps", []):
+                if isinstance(app, dict):
+                    _add(app.get("exe"), app.get("name", ""))
+        except Exception:  # noqa: BLE001
+            continue
+    # 2) 最近 14 天 usage.jsonl
+    for day in _available_days(data_root)[-14:]:
+        usage_path = os.path.join(data_root, day, "usage.jsonl")
+        if not os.path.isfile(usage_path):
+            continue
+        try:
+            with open(usage_path, "r", encoding="utf-8-sig") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                        if isinstance(rec, dict):
+                            _add(rec.get("exe"), rec.get("app", ""))
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            continue
+    return known
 
 
 def create_server(data_root: str, port: int = DEFAULT_PORT) -> ThreadingHTTPServer:

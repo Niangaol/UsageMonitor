@@ -865,6 +865,90 @@ def test_electron_shell_detection():
     shutil.rmtree(fake, ignore_errors=True)
 
 
+def test_app_groups():
+    print("[test] 应用分组自定义（覆盖层分类 + API 增删改移出）")
+    import http.client
+    import threading
+    import dashboard
+
+    tmp = fresh_tmp("groups")
+    day = "2026-08-08"
+    os.makedirs(os.path.join(tmp, day), exist_ok=True)
+    with open(os.path.join(tmp, day, "usage.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "start": f"{day}T10:00:00", "end": f"{day}T10:02:00", "duration_ms": 120000,
+            "exe": "steam.exe", "app": "Steam", "title": "Steam", "category": "游戏",
+            "contact": None, "ai_tool": None, "active": True,
+        }, ensure_ascii=False) + "\n")
+    with open(os.path.join(tmp, day, "software_inventory.json"), "w", encoding="utf-8") as fh:
+        json.dump({"date": day, "count": 2, "apps": [
+            {"name": "Steam", "exe": "steam.exe", "category": "游戏", "source": ["registry"], "running": False},
+            {"name": "WeChat", "exe": "wechat.exe", "category": "社交聊天", "source": ["registry"], "running": False},
+        ]}, fh, ensure_ascii=False)
+
+    cfg = classifier.load_config()
+    cfg["data_root"] = tmp
+
+    # 1) 覆盖层分类：steam -> 自定义分组
+    classifier.save_app_groups(
+        {"exe_groups": {"steam.exe": "我的分组"}, "custom_categories": ["我的分组"]}, tmp)
+    check(classifier.classify_category("steam.exe", "", cfg) == "我的分组", "覆盖层优先", "游戏")
+    check(classifier.classify_category("wechat.exe", "", cfg) == "社交聊天", "未覆盖应用不受影响")
+    check("我的分组" in classifier.all_categories(cfg), "自定义分组出现在列表中")
+
+    # 2) API：GET /api/groups
+    server = dashboard.create_server(tmp, port=0)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def req(method, path, body=None):
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        headers = {"Content-Type": "application/json"} if body is not None else {}
+        conn.request(method, path, body=json.dumps(body) if body is not None else None, headers=headers)
+        r = conn.getresponse()
+        data = json.loads(r.read().decode("utf-8"))
+        conn.close()
+        return r.status, data
+
+    try:
+        s, d = req("GET", "/api/groups")
+        check(s == 200 and "apps" in d and "categories" in d, "GET /api/groups")
+        check(any(a["exe"] == "steam.exe" and a["category"] == "我的分组" for a in d["apps"]),
+              "API 反映覆盖层分类")
+        check(any(a["exe"] == "wechat.exe" for a in d["apps"]), "已知应用列表含清单+usage exe")
+
+        # 3) set 移出（恢复自动）
+        s, d = req("POST", "/api/groups/set", {"exe": "steam.exe", "category": ""})
+        check(s == 200 and d.get("ok") is True, "POST set 移出")
+        check(classifier.classify_category("steam.exe", "", cfg) == "游戏", "移出后恢复自动分类")
+
+        # 4) set 到内置分组
+        req("POST", "/api/groups/set", {"exe": "steam.exe", "category": "影音娱乐"})
+        check(classifier.classify_category("steam.exe", "", cfg) == "影音娱乐", "设置到内置分组")
+
+        # 5) add 新分组（未知分组自动登记）
+        s, d = req("POST", "/api/groups/add", {"name": "学习工具"})
+        check(s == 200 and "学习工具" in d.get("categories", []), "新增分组")
+        # 6) delete 分组（组内应用恢复自动）
+        req("POST", "/api/groups/set", {"exe": "steam.exe", "category": "学习工具"})
+        check(classifier.classify_category("steam.exe", "", cfg) == "学习工具", "移到新分组")
+        req("POST", "/api/groups/delete", {"name": "学习工具"})
+        check(classifier.classify_category("steam.exe", "", cfg) == "游戏", "删分组后恢复自动")
+        s, d = req("GET", "/api/groups")
+        check("学习工具" not in d["categories"], "分组已删除")
+        # 7) 恶意 Origin 对 POST 同样拒绝
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request("POST", "/api/groups/set", body='{"exe":"a","category":"b"}',
+                     headers={"Content-Type": "application/json", "Origin": "https://evil.example"})
+        r = conn.getresponse()
+        check(r.status == 403, "POST 恶意 Origin 拒绝", str(r.status))
+        conn.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     print("=" * 60)
     print("电脑使用情况监控 · 完整集成测试")
@@ -877,7 +961,7 @@ def main() -> int:
         test_report_pipeline, test_inventory, test_month_and_json,
         test_contact_aliases, test_browser_history, test_cross_day_isolation,
         test_reclassify, test_dimension_refinements, test_dashboard_api,
-        test_electron_shell_detection,
+        test_electron_shell_detection, test_app_groups,
     ]
     for t in tests:
         t()

@@ -2,33 +2,30 @@
 
 > 交接时间：2026-08-14 · 项目：电脑使用情况监控（UsageMonitor）
 > 远程仓库：https://github.com/Niangaol/UsageMonitor（master 分支）
-> 最后提交：`06f1aa7`（Electron 桌面壳）· **工作区有未提交的半成品改动（应用分组功能，见 P0）**
+> 最后提交：P0 应用分组功能完成并推送（见下文执行记录）；此前提交 `06f1aa7`（Electron 桌面壳）
 
 ---
 
-## P0 🔴 进行中：应用分组自定义（用户叫停时的现场）
+## P0 ✅ 已完成：应用分组自定义（2026-08-15 完成并提交）
 
-### 已完成（工作区，未提交）
+### 完成内容
 
 | 文件 | 内容 | 验证状态 |
 |---|---|---|
-| `classifier.py` | `load_app_groups()/save_app_groups()`（TTL 5s 缓存+原子写）、`all_categories()`、`classify_category()` 加「用户覆盖(exe 精确) > 配置关键词 > 其他」 | ✅ 手动验证通过 |
-| `dashboard.py` | `GET /api/groups`（含 `_collect_known_apps`）、`POST /api/groups/set\|add\|delete`（原子写 `app_groups.json` + Origin 校验）；`PAGE_TEMPLATE` 加「分组」视图（sidebar 第 6 项） | ✅ 编译 + `node --check` 通过 |
-| `test_all.py` | 新增 `test_app_groups`（覆盖层+API 增删改移出+POST 恶意 Origin 403） | ⚠️ 未跑通（最后一次运行输出为空） |
+| `classifier.py` | `load_app_groups()/save_app_groups()`（TTL 5s 缓存+原子写）、`all_categories()`、`classify_category()` 加「用户覆盖(exe 精确) > 配置关键词 > 其他」 | ✅ 143 项测试全过 |
+| `dashboard.py` | `GET /api/groups`（含 `_collect_known_apps`）、`POST /api/groups/set\|add\|delete`（原子写 `app_groups.json` + Origin 校验）；`PAGE_TEMPLATE` 加「分组」视图（sidebar 第 6 项） | ✅ 143 项测试全过；修复 do_POST 未知路径 405 回归；`/api/groups` 分类使用服务 data_root |
+| `test_all.py` | `test_app_groups`（覆盖层+API 增删改移出+POST 恶意 Origin 403） | ✅ 全部通过（143 项） |
+| `README.md` | 功能特性、仪表盘视图列表、分组数据文件与 API 文档、app_groups.json 配置说明 | ✅ |
+| `docs/screenshots/view_groups.png` | 分组视图截图（demo 数据 + Edge headless + `?view=groups`） | ✅ DOM 验证通过 |
 
-### 剩余步骤（按顺序）
+### 执行记录
 
-1. `python test_all.py` 全量回归，修 `test_app_groups`
-2. 截图验证分组视图（demo 数据 + Edge headless + `?view=groups`）
-3. README 补分组功能说明（数据文件/API/用法）
-4. 重建 exe + 重启守护任务（classifier/dashboard 都改了）
-5. `git add -A && git commit && git push`
-
-### 设计要点
-
-- 数据文件 `<data_root>/app_groups.json`：`{"exe_groups": {"steam.exe": "我的分组"}, "custom_categories": ["我的分组"]}`
-- 实时生效（TTL 5s 缓存，save 即刷新）；monitor/报表/`--reclassify`/inventory 全走 `classify_category`，无需重启
-- API：GET `/api/groups`；POST `/api/groups/set` `{exe, category}`（空=移出恢复自动）/`add` `{name}`/`delete` `{name}`，均带同源校验
+1. `python test_all.py` 全量回归 → 发现 `test_dashboard_api`「POST 405」回归（do_POST 从 405 改为 404），修复
+2. `test_app_groups` 14 项断言全部通过
+3. 截图验证：demo 数据 + Edge headless + `?view=groups`（`docs/screenshots/view_groups.png`）
+4. README 补充分组功能说明（数据文件/API/用法）
+5. 重建 `dist\UsageMonitor.exe`（PyInstaller）+ 重启计划任务 `UsageMonitor`（日志确认新实例启动）
+6. `git commit` + `git push`（master）
 
 ---
 
