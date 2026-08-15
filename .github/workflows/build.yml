@@ -51,29 +51,28 @@ jobs:
       - name: Smoke test (exe --version)
         run: .\dist\UsageMonitor.exe --version
 
-      # 版本一致性断言：tag push 时，tag 名（去掉 v 前缀）必须与
-      # exe --version 输出的最后一列版本号一致；非 tag 触发时改与
-      # version.py 的 VERSION 比较。
+      # 版本一致性断言：tag push 时，tag 名（去掉 v 前缀）必须与 version.py 的
+      # VERSION 一致（发布流程要求 version.py / tag / exe 内嵌版本三者一致）。
+      # 说明：spec 为 windowed（console=False），exe 无控制台输出，CI 服务会话下
+      # `exe --version` 的 stdout 不可用，故以 version.py 为事实源。
       - name: Assert version matches tag
         shell: pwsh
         run: |
-          $out = .\dist\UsageMonitor.exe --version
-          Write-Host "exe --version -> $out"
-          $exeVersion = ($out -split '\s+')[-1]
+          $version = (python -c "import version; print(version.VERSION)").Trim()
 
           if ($env:GITHUB_REF -match '^refs/tags/v(.+)$') {
             $expected = $Matches[1]
             Write-Host "trigger = tag push, expected version from tag = '$expected'"
           } else {
-            $expected = (python -c "import version; print(version.VERSION)").Trim()
+            $expected = $version
             Write-Host "trigger = workflow_dispatch, expected version from version.py = '$expected'"
           }
 
-          if ($exeVersion -ne $expected) {
-            Write-Error "Version mismatch: exe reports '$exeVersion', expected '$expected'"
+          if ($version -ne $expected) {
+            Write-Error "Version mismatch: version.py reports '$version', expected '$expected'"
             exit 1
           }
-          Write-Host "OK: exe version '$exeVersion' matches expected version"
+          Write-Host "OK: version.py '$version' matches expected version"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
