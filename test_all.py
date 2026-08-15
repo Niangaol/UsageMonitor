@@ -949,6 +949,47 @@ def test_app_groups():
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_report_balloon_once_per_day():
+    print("[test] 日报生成托盘通知调度（一天一次 / 晚启动不补弹 / 时间门槛）")
+    root = fresh_tmp("balloon")
+    day = _dt.date.today().isoformat()
+    d = os.path.join(root, day)
+    os.makedirs(d, exist_ok=True)
+    p = os.path.join(d, "report.md")
+
+    def touch(t: _dt.datetime) -> None:
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write("# x")
+        os.utime(p, (t.timestamp(), t.timestamp()))
+
+    # 场景 1：19:30 前启动 -> 武装；报告生成后弹一次，且不重复
+    monitor._report_notified_day = None
+    monitor._report_armed = False
+    check(monitor.check_report_balloon(root, lambda: None) is False, "启动首查不弹（武装）")
+    check(monitor._report_armed is True, "武装状态登记")
+    touch(_dt.datetime.combine(_dt.date.today(), _dt.time(19, 30)))
+    fired: list[int] = []
+    check(monitor.check_report_balloon(root, lambda: fired.append(1)) is True, "生成后首次发现弹一次")
+    check(monitor.check_report_balloon(root, lambda: fired.append(2)) is False, "同一天不重复弹")
+    check(fired == [1], "恰好弹一次", str(fired))
+
+    # 场景 2：19:30 后启动（报告已存在）-> 只登记不补弹
+    monitor._report_notified_day = None
+    monitor._report_armed = False
+    fired = []
+    check(monitor.check_report_balloon(root, lambda: fired.append(1)) is False, "晚启动不补弹")
+    check(fired == [], "晚启动零通知", str(fired))
+
+    # 场景 3：时间门槛——早于 19:25 生成的报告不算"刚生成"
+    touch(_dt.datetime.combine(_dt.date.today(), _dt.time(8, 0)))
+    check(monitor._today_report_recent(root, day) is False, "早于 19:25 不算刚生成")
+    touch(_dt.datetime.combine(_dt.date.today(), _dt.time(19, 30)))
+    check(monitor._today_report_recent(root, day) is True, "19:30 生成识别为刚生成")
+    monitor._report_notified_day = None
+    monitor._report_armed = False
+    shutil.rmtree(root, ignore_errors=True)
+
+
 def main() -> int:
     print("=" * 60)
     print("电脑使用情况监控 · 完整集成测试")
@@ -961,7 +1002,7 @@ def main() -> int:
         test_report_pipeline, test_inventory, test_month_and_json,
         test_contact_aliases, test_browser_history, test_cross_day_isolation,
         test_reclassify, test_dimension_refinements, test_dashboard_api,
-        test_electron_shell_detection, test_app_groups,
+        test_electron_shell_detection, test_app_groups, test_report_balloon_once_per_day,
     ]
     for t in tests:
         t()

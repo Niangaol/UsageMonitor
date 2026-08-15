@@ -93,30 +93,88 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+# ---------------------------------------------------------------------------
+# 配置热重载缓存（config.json / config.default.json 修改后免重启生效）
+# 缓存模式沿用上方 _groups_cache 的写法：mtime 变化或超过 TTL 才重新读盘。
+# 注意：这里可能出现多个不同 path 的调用（如 dashboard 用默认路径、CLI 传入
+# --config），故缓存按「规范化绝对路径」分桶；返回时浅拷贝一层，避免调用方
+# 修改（如 dashboard 里 config["data_root"] = root）污染缓存。
+# ---------------------------------------------------------------------------
+_config_cache: dict[str, dict] = {}  # abs_path -> {"mtime": ..., "ts": ..., "data": ...}
+_CONFIG_TTL = 3.0  # 秒：mtime 未变化时也强制刷新的最长时间
+
+
+def _config_cache_key(path: str) -> str:
+    """规范化配置路径，作为缓存键（相对/绝对均归一化）。"""
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _config_mtime(path: str) -> float:
+    """取配置路径与内置默认配置中「较新」的 mtime，作为重载依据。
+    任一缺失则用 0.0 表示该来源无影响（缺 config 仍能兜底默认规则）。"""
+    m = 0.0
+    for p in (path, DEFAULT_CONFIG_PATH):
+        try:
+            m = max(m, os.path.getmtime(p))
+        except OSError:
+            pass
+    return m
+
+
+def invalidate_config_cache(path: str | None = None) -> None:
+    """强制丢弃配置缓存；path 为空时清空全部缓存。供保存场景/测试调用。"""
+    global _config_cache
+    if path is None:
+        _config_cache.clear()
+    else:
+        _config_cache.pop(_config_cache_key(path), None)
+
+
 def load_config(path: str | None = None) -> dict:
     """读取 config.json 并深合并到默认配置；文件缺失/损坏时回退默认并告警。
+
+    热重载：config.json 或 config.default.json 的 mtime 变化，或距上次读取超过
+    _CONFIG_TTL 秒时重新读盘合并；否则返回缓存。返回值为缓存数据的浅拷贝，
+    避免调用方修改（如 data_root 赋值）污染后续请求。
 
     可移植性：data_root 为空或相对路径时解析为程序目录（paths.script_dir，
     打包 exe 时即 exe 所在目录，避免写进 _MEIPASS 临时目录）。
     """
     if path is None:
         path = os.path.join(paths.default_data_root(), "config.json")
+    key = _config_cache_key(path)
+    now = time.monotonic()
+    entry = _config_cache.get(key)
+    # 命中缓存且未超 TTL 时，先检查 mtime 是否有变化再决定是否复用
+    if entry is not None and now - entry["ts"] < _CONFIG_TTL:
+        if _config_mtime(path) == entry["mtime"]:
+            return dict(entry["data"])
+        # mtime 变化：删掉旧缓存，走下方重新加载
+        _config_cache.pop(key, None)
+
+    # 重新读盘时应重载内置默认规则：config.default.json 的 mtime 已纳入重载判断，
+    # 这样默认规则的更新也会随热重载生效，而非停留在模块导入时的旧快照。
+    defaults = _load_builtin_defaults()
     if not os.path.isfile(path):
         print(f"[classifier] 配置不存在，使用默认配置: {path}", file=sys.stderr)
-        return dict(DEFAULT_CONFIG)
+        data = dict(defaults)
+        _config_cache[key] = {"mtime": _config_mtime(path), "ts": now, "data": data}
+        return dict(data)
     try:
         with open(path, "r", encoding="utf-8") as fh:
             user_cfg = json.load(fh)
         if not isinstance(user_cfg, dict):
             raise ValueError("config 顶层必须是 JSON 对象")
-        cfg = _deep_merge(DEFAULT_CONFIG, user_cfg)
+        cfg = _deep_merge(defaults, user_cfg)
     except Exception as exc:  # noqa: BLE001 —— 配置损坏不应阻断监控
         print(f"[classifier] 配置解析失败，使用默认配置: {exc}", file=sys.stderr)
-        cfg = dict(DEFAULT_CONFIG)
+        cfg = dict(defaults)
     root = cfg.get("data_root") or ""
     if not root or not os.path.isabs(root):
         cfg["data_root"] = paths.script_dir()
-    return cfg
+    # 缓存内部 dict；对外返回浅拷贝，避免 data_root 等赋值污染缓存
+    _config_cache[key] = {"mtime": _config_mtime(path), "ts": now, "data": cfg}
+    return dict(cfg)
 
 
 def load_aliases(path: str | None = None) -> dict:

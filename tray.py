@@ -4,6 +4,7 @@
 功能：
 - 悬停提示"电脑使用监控"
 - 右键菜单：今日概览 / 打开今日日报 / 暂停·继续 / 退出
+- 日报生成后气泡提示（show_balloon），点击气泡打开仪表盘日报视图
 - 通过 Shell_NotifyIconW + 隐藏消息窗口实现
 
 monitor.py 在 --tray 时惰性导入本模块；任何初始化失败都会抛异常，
@@ -30,6 +31,11 @@ NIM_DELETE = 0x2
 NIF_MESSAGE = 0x1
 NIF_ICON = 0x2
 NIF_TIP = 0x4
+NIF_INFO = 0x10
+NIM_SETVERSION = 0x4
+NOTIFYICON_VERSION = 3      # 经典版本号：启用气泡事件回调
+NIN_BALLOONUSERCLICK = 0x405  # WM_USER + 5：用户点击气泡
+NIIF_INFO = 0x1
 
 WM_DESTROY = 0x0002
 WM_COMMAND = 0x0111
@@ -213,6 +219,41 @@ def _delete_icon(hwnd: int) -> None:
         pass
 
 
+def show_balloon(title: str, text: str) -> None:
+    """托盘气泡提示（尽力而为；图标未就绪/平台不支持时静默降级）。
+
+    复用现有隐藏窗口句柄 _hwnd 与 NOTIFYICONDATAW 结构，通过 NIM_MODIFY +
+    NIF_INFO 下发气泡标题/正文；展示前先 NIM_SETVERSION 启用气泡点击事件，
+    使 NIN_BALLOONUSERCLICK 能送达 _wndproc（点击打开日报视图）。
+    Shell_NotifyIcon 不依赖 UI 线程，因此可被 monitor 的通知调度线程安全调用。
+    """
+    if _hwnd == 0:  # 图标尚未就绪：本轮跳过，等待下一轮调度再试
+        return
+    try:
+        # 启用气泡点击事件回调（失败不影响气泡显示）
+        try:
+            ver = NOTIFYICONDATAW()
+            ver.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
+            ver.hWnd = wt.HWND(_hwnd)
+            ver.uID = ID_TRAY
+            ver.uTimeoutOrVersion = NOTIFYICON_VERSION  # uVersion=3
+            shell32.Shell_NotifyIconW(NIM_SETVERSION, ctypes.byref(ver))
+        except Exception:  # noqa: BLE001
+            pass
+        nid = NOTIFYICONDATAW()
+        nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
+        nid.hWnd = wt.HWND(_hwnd)
+        nid.uID = ID_TRAY
+        nid.uFlags = NIF_INFO
+        nid.szInfo = text
+        nid.szInfoTitle = title
+        nid.uTimeoutOrVersion = 10000  # 经典枚举：气泡停留毫秒数（>= Win2000）
+        nid.dwInfoFlags = NIIF_INFO
+        shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(nid))
+    except Exception:  # noqa: BLE001 —— 气泡失败不影响守护
+        pass
+
+
 def _popup_menu(hwnd: int) -> None:
     menu = user32.CreatePopupMenu()
     if not menu:
@@ -252,6 +293,10 @@ def _handle_command(hwnd: int, cmd: int) -> None:
 
 def _wndproc(hwnd, msg, wparam, lparam):
     if msg == WM_TRAY:
+        if lparam & 0xFFFF == NIN_BALLOONUSERCLICK:
+            # 点击气泡：打开仪表盘日报视图
+            _open_dashboard_fn(view="report")
+            return 0
         if lparam & 0xFFFF == WM_RBUTTONUP or lparam & 0xFFFF == WM_CONTEXTMENU:
             _popup_menu(hwnd)
         elif lparam & 0xFFFF == WM_LBUTTONUP:

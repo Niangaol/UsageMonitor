@@ -5,6 +5,10 @@
 <h1 align="center">电脑使用情况监控 · UsageMonitor</h1>
 
 <p align="center">
+  **简体中文** | [English](README.en.md)
+</p>
+
+<p align="center">
   <b>Windows 本地使用情况监控</b> · 纯本地 · 零依赖 · 静默低占用<br>
   Python 3.10+ · Windows 10/11 x64 · MIT License
 </p>
@@ -275,7 +279,8 @@ install.ps1 注册两个计划任务：
 ├─ UsageMonitor.spec       # PyInstaller 打包配置（复现 exe 构建）
 ├─ LICENSE                 # MIT
 ├─ .gitignore              # 排除运行数据/构建产物/本地配置
-├─ README.md               # 本文件
+├─ README.md               # 本文件（简体中文）
+├─ README.en.md            # English README
 ├─ 项目需求与开发文档.md    # 需求文档 v1.0
 └─ YYYY-MM-DD\             # 运行期自动生成（每天一个，不入库）
    ├─ usage.jsonl          # 原始会话日志（JSON Lines，追加写）

@@ -20,6 +20,9 @@ aliases.json
 *.bak
 install_err.txt
 *.log
+# 沙箱测试临时目录（本地残留，可删除）
+.tmp_test*/
+.test_patch/
 # 演示数据（make_demo_data.py 可随时重新生成）
 demo_data/
 # Electron 壳（npm install / electron-builder 产物，可随时重建）

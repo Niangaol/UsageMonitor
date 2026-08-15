@@ -63,6 +63,89 @@ def is_paused() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# 日报生成托盘通知调度
+# ---------------------------------------------------------------------------
+# 报告任务（UsageMonitorReport）每天 19:30 生成当日 report.md。常驻托盘进程
+# 每 60 秒检查一次当日 report.md 的 mtime：当天生成且不早于 19:25（即刚生成）
+# 时弹一次气泡；用内存变量记住已处理日期，跨天自动重置，一天只弹一次。
+REPORT_DONE_HOUR = 19
+REPORT_DONE_MIN = 30
+_REPORT_RECENT_AFTER = datetime.time(REPORT_DONE_HOUR, REPORT_DONE_MIN - 5)  # 19:25
+
+# 内存态：当天是否已处理；arming 表示"报告尚未生成、等待生成后补弹"。
+_report_notified_day: str | None = None
+_report_armed: bool = False
+
+
+def _today_report_recent(data_root: str, day_str: str) -> bool:
+    """当日 report.md 是否"刚生成"：存在、mtime 是今天、且时间不早于 19:25。"""
+    path = os.path.join(data_root, day_str, "report.md")
+    if not os.path.isfile(path):
+        return False
+    try:
+        mtime = datetime.datetime.fromtimestamp(os.path.getmtime(path))
+    except OSError:
+        return False
+    if mtime.date() != datetime.date.today():
+        return False
+    return mtime.time() >= _REPORT_RECENT_AFTER
+
+
+def check_report_balloon(data_root: str, notify_fn) -> bool:
+    """日报生成后弹一次气泡；返回是否触发通知。
+
+    - 启动/跨天首查：若报告在监控启动前就已生成（recent=True）视为"已通知"，
+      只登记不补弹，避免重启后误弹；否则武装，等待生成后首次发现再弹。
+    - 常态轮询：当日已武装且报告出现"刚生成"时弹一次并解除武装。
+    """
+    global _report_notified_day, _report_armed
+    day_str = datetime.date.today().isoformat()
+    recent = _today_report_recent(data_root, day_str)
+
+    if _report_notified_day is None or day_str != _report_notified_day:
+        # 启动 / 跨天：登记当天武装状态
+        _report_notified_day = day_str
+        _report_armed = not recent
+        return False
+
+    if _report_armed and recent:
+        _report_armed = False
+        try:
+            notify_fn()
+        except Exception:  # noqa: BLE001 —— 通知失败不影响守护
+            pass
+        return True
+    return False
+
+
+def _hwnd_tray_ready() -> bool:
+    """托盘隐藏窗口句柄是否已就绪（show_balloon 依赖它）。"""
+    import tray  # noqa: PLC0415
+    return tray._hwnd != 0
+
+
+def _run_balloon_scheduler(data_root: str) -> None:
+    """后台守护线程：每 60 秒调用 check_report_balloon 检测日报生成。
+
+    托盘图标惰性导入；图标不可用/未就绪时 show_balloon 静默降级。
+    """
+    import tray  # noqa: PLC0415 —— 惰性导入
+
+    def _notify() -> None:
+        tray.show_balloon("日报已生成", "今日使用报告已生成，点击查看")
+
+    while not stop_event.is_set():
+        try:
+            if _hwnd_tray_ready():
+                check_report_balloon(data_root, _notify)
+        except Exception:  # noqa: BLE001 —— 单次检查失败不中断调度
+            _log_error(data_root, datetime.date.today().isoformat(),
+                       sys.exc_info()[1], "report balloon")
+        # 每 60 秒检查一次；被 stop_event 打断后立即退出
+        stop_event.wait(60)
+
+
+# ---------------------------------------------------------------------------
 # 日志与写入
 # ---------------------------------------------------------------------------
 def _log_error(data_root: str, day_str: str, exc: BaseException, context: str = "") -> None:
@@ -280,7 +363,8 @@ def _open_session(fg, config: dict, processes: dict, now: datetime.datetime) -> 
 # ---------------------------------------------------------------------------
 # 主循环
 # ---------------------------------------------------------------------------
-def run_daemon(config: dict, test_seconds: int | None = None, verbose: bool = False) -> list[dict]:
+def run_daemon(config: dict, test_seconds: int | None = None, verbose: bool = False,
+               config_path: str | None = None) -> list[dict]:
     """守护主循环。test_seconds 非空时跑 N 秒后返回本次写入的记录列表。
 
     仅在 (exe, 标题, 类别, 联系人, AI工具, 浏览器分类) 变化时写一条；静止零写入。
@@ -298,6 +382,15 @@ def run_daemon(config: dict, test_seconds: int | None = None, verbose: bool = Fa
 
     while True:
         try:
+            # 配置热重载：显式传入 config_path 时每轮重新读取（classifier.load_config
+            # 带 mtime+TTL 缓存，成本可忽略）。data_root 保持首次启动值，避免中途切换
+            # 数据目录造成数据分裂；分类/轮询等其余配置即时生效。
+            # 未传 config_path（如测试直接调用 run_daemon）保持初始 config 行为。
+            if config_path is not None and os.path.isfile(config_path):
+                config = load_config(config_path)
+                poll_interval = max(1, int(config.get("poll_interval_s", DEFAULT_POLL_INTERVAL)))
+                idle_threshold = max(0, int(config.get("idle_threshold_s", DEFAULT_IDLE_THRESHOLD)))
+                retention = max(0, int(config.get("retention_days", DEFAULT_RETENTION)))
             now = datetime.datetime.now()
             day_str = now.strftime("%Y-%m-%d")
 
@@ -558,6 +651,8 @@ def main(argv: list[str] | None = None) -> int:
         config["data_root"] = args.data_root
     data_root = config.get("data_root") or paths.default_data_root()
     os.makedirs(data_root, exist_ok=True)
+    # 配置热重载来源：显式 --config 或默认路径（文件存在才生效；缺失时保持初始 config）
+    hot_reload_path = args.config or os.path.join(paths.default_data_root(), "config.json")
 
     # 单实例保护：守护模式（非 --test）下已有实例在运行则直接退出，
     # 避免多个 monitor 同时写 usage.jsonl 造成重复记录。
@@ -567,7 +662,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.test:
-        records = run_daemon(config, test_seconds=max(1, args.test), verbose=args.foreground)
+        records = run_daemon(config, test_seconds=max(1, args.test), verbose=args.foreground,
+                             config_path=hot_reload_path)
         print(f"--test 结束：本次运行写入 {len(records)} 条会话记录")
         by_app: dict[str, int] = {}
         for r in records:
@@ -584,9 +680,13 @@ def main(argv: list[str] | None = None) -> int:
         try:
             import tray  # noqa: PLC0415 —— 惰性导入，托盘不可用时降级
             thread = threading.Thread(
-                target=run_daemon, args=(config,), daemon=True
+                target=run_daemon, args=(config,), kwargs={"config_path": hot_reload_path}, daemon=True
             )
             thread.start()
+            # 日报生成托盘通知调度：独立守护线程，每 60 秒检测 report.md
+            threading.Thread(
+                target=_run_balloon_scheduler, args=(data_root,), daemon=True
+            ).start()
             tray.run(
                 config,
                 overview_fn=lambda: overview_text(data_root),
@@ -599,7 +699,7 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001
             _log_error(data_root, datetime.date.today().isoformat(), exc, "tray init (degraded)")
 
-    run_daemon(config, verbose=args.foreground)
+    run_daemon(config, verbose=args.foreground, config_path=hot_reload_path)
     return 0
 
 

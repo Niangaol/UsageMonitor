@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""dashboard.py — 本地网页仪表盘（v3：三视图）。
+"""dashboard.py — 本地网页仪表盘（v4：周报/月报/导出/主题/口令/备份）。
 
 - 仅监听 127.0.0.1（不做远程访问），默认端口 8765；
 - 纯标准库（http.server），页面与图表内联，零外部依赖、离线可用；
@@ -10,6 +10,15 @@
    + 14/30 天趋势 + 类别/应用分布 + AI 工具/联系人（鼠标悬停看详情）
 2. 日报：选日期渲染当日 report.md（前端 mini-markdown，含表格/标题/列表/代码块）
 3. 明细：会话明细与浏览器 URL 明细（均支持关键词过滤）
+4. 周报：最近 7 个有数据日聚合回顾
+5. 月报：按自然月聚合回顾
+6. 设置：数据备份下载 / 恢复上传
+
+安全与增强（v4）：
+- 可选访问口令（config.json 的 dashboard_token，空/缺失=关闭；开启后所有 /api 需要
+  X-Dashboard-Token 头，hmac.compare_digest 常量时间比较）
+- 浅色/深色/自动 主题切换（localStorage 持久化 + 跟随系统 prefers-color-scheme）
+- 一键导出 CSV/JSON（日报/周报/月报）、备份 zip 下载与回滚恢复
 
 用法：
     python dashboard.py                # 启动，浏览器访问 http://127.0.0.1:8765
@@ -21,12 +30,18 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hmac
+import io
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
+import time
 import urllib.parse
 import webbrowser
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -40,8 +55,178 @@ DEFAULT_DATA_ROOT = paths.default_data_root()
 
 # API 日期参数白名单：防路径穿越（date=../../xxx 会拼进数据目录路径）
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# API 月份参数白名单（YYYY-MM）
+_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 _URL_MAX_ROWS = 200  # 浏览器明细最多回传条数
+
+# 备份 zip 允许包含的顶层条目：日期目录 或 已知数据文件（其余一律拒绝，防解压注入）
+_ALLOWED_ROOT_FILES = {
+    "config.json", "app_groups.json", "aliases.json",
+    "report_week.md", "report_month.json", "report_month.md",
+}
+# 备份 zip 打包时排除的大日志/临时/备份文件
+_EXCLUDED_FILE_SUFFIXES = (".log", ".bak", ".bak_verify", ".tmp", ".pyc")
+
+
+def _load_dashboard_token(data_root: str | None = None, config_path: str | None = None) -> str:
+    """读取 dashboard_token（空/缺失 = 关闭口令）。
+
+    优先数据根目录的 config.json（与仪表盘 data_root 语义一致，--data-root 场景正确）；
+    其次回退 classifier.load_config()（默认/--config 路径，可移植性/深合并一致）。
+    """
+    if data_root:
+        try:
+            p = os.path.join(data_root, "config.json")
+            if os.path.isfile(p):
+                with open(p, "r", encoding="utf-8") as fh:
+                    token = json.load(fh).get("dashboard_token")
+                if token:
+                    return str(token).strip()
+        except Exception:  # noqa: BLE001 —— 数据根配置损坏时回退默认读取
+            pass
+    try:
+        import classifier  # noqa: PLC0415
+        cfg = classifier.load_config(config_path)
+        token = cfg.get("dashboard_token")
+        return str(token).strip() if token else ""
+    except Exception:  # noqa: BLE001 —— 配置损坏时口令关闭（不阻断仪表盘）
+        return ""
+
+
+_token_cache: dict = {"key": None, "ts": 0.0, "token": ""}
+
+
+def _required_token(config_path: str | None = None, data_root: str | None = None) -> str:
+    """带短 TTL 的 token 缓存，避免每个请求都重读 config（改配置后 ~5s 生效）。"""
+    key = data_root or config_path
+    now = time.monotonic()
+    if _token_cache["key"] != key or now - _token_cache["ts"] > 5.0:
+        _token_cache["token"] = _load_dashboard_token(data_root, config_path)
+        _token_cache["key"] = key
+        _token_cache["ts"] = now
+    return _token_cache["token"]
+
+
+def _month_days_for(data_root: str, month_str: str) -> list[str]:
+    """返回某月内实际存在 usage.jsonl 的日期（升序），用于导出/统计。"""
+    out = []
+    for name in os.listdir(data_root) if os.path.isdir(data_root) else []:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", name) and name.startswith(month_str + "-"):
+            if os.path.isfile(os.path.join(data_root, name, "usage.jsonl")):
+                out.append(name)
+    return sorted(out)
+
+
+def _agg_to_csv(agg: dict, title_line: str | None = None) -> str:
+    """把任意聚合结果渲染成汇总 CSV（类型,名称,时长秒），周/月报通用。
+
+    与 report.generate_report_csv 的口径一致：应用/类别/联系人/AI工具/浏览器分类。
+    """
+    lines: list[str] = []
+    if title_line:
+        lines.append("# " + title_line.replace("# ", "").replace(",", ""))
+        lines.append("")
+    lines.append("类型,名称,时长秒")
+    for name, ms in sorted(agg.get("by_app", {}).items(), key=lambda kv: -kv[1]):
+        lines.append(f"应用:{name},{int(ms // 1000)}")
+    for cat, ms in sorted(agg.get("by_category", {}).items(), key=lambda kv: -kv[1]):
+        lines.append(f"类别:{cat},{int(ms // 1000)}")
+    for app, contacts in sorted(agg.get("by_contact", {}).items()):
+        for contact, ms in sorted(contacts.items(), key=lambda kv: -kv[1]):
+            lines.append(f"联系人:{app}/{contact},{int(ms // 1000)}")
+    for tool, ms in sorted(agg.get("by_ai", {}).items(), key=lambda kv: -kv[1]):
+        lines.append(f"AI工具:{tool},{int(ms // 1000)}")
+    for label, ms in sorted(agg.get("by_browser", {}).items(), key=lambda kv: -kv[1]):
+        lines.append(f"浏览器:{label},{int(ms // 1000)}")
+    return "\n".join(lines) + "\n"
+
+
+def _backup_zip(data_root: str) -> bytes:
+    """把 data_root 内容打包为 zip 字节（日期目录 + 配置文件），排除大日志/临时/备份。
+
+    用于 /api/backup 附件下载。
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        entries = _backup_entries(data_root)
+        for rel in entries:
+            src = os.path.join(data_root, rel)
+            if os.path.isfile(src):
+                zf.write(src, rel)
+            elif os.path.isdir(src):
+                for dirpath, _dirnames, filenames in os.walk(src):
+                    for fn in filenames:
+                        full = os.path.join(dirpath, fn)
+                        arch = os.path.join(rel, os.path.relpath(full, src))
+                        zf.write(full, arch.replace("\\", "/"))
+    return buf.getvalue()
+
+
+def _backup_entries(data_root: str) -> list[str]:
+    """枚举要打包的条目：日期目录 + 允许的根配置文件；排除日志/临时/备份文件。"""
+    entries: list[str] = []
+    if os.path.isdir(data_root):
+        for name in sorted(os.listdir(data_root)):
+            full = os.path.join(data_root, name)
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", name) and os.path.isdir(full):
+                entries.append(name)
+            elif name in _ALLOWED_ROOT_FILES and os.path.isfile(full):
+                entries.append(name)
+    return entries
+
+
+def _safe_extract_zip(data_root: str, zip_bytes: bytes) -> str:
+    """把备份 zip 解压到临时目录并校验（路径穿越/恶意条目拦截），返回临时目录路径。
+
+    仅保留日期目录与白名单根文件；zip 外的其他条目一律丢弃（不覆盖攻击者文件）。
+    """
+    tmp = tempfile.mkdtemp(prefix="usemon_restore_")
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        for info in zf.infolist():
+            name = info.filename.replace("\\", "/")
+            # 防路径穿越：拒绝绝对路径与 ../ 上级引用
+            if name.startswith("/") or ".." in name.split("/"):
+                continue
+            top = name.split("/", 1)[0]
+            if not (re.fullmatch(r"\d{4}-\d{2}-\d{2}", top) or top in _ALLOWED_ROOT_FILES):
+                continue
+            if info.is_dir():
+                continue
+            # 排除日志/临时/备份文件
+            if any(name.lower().endswith(s) for s in _EXCLUDED_FILE_SUFFIXES):
+                continue
+            dest = os.path.normpath(os.path.join(tmp, name))
+            if not dest.startswith(os.path.normpath(tmp) + os.sep) and dest != tmp:
+                continue
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with zf.open(info) as src, open(dest, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+    # 把白名单根文件的顶层名规范化后同 tmp 一起返回（由调用方合并到 data_root）
+    return tmp
+
+
+def _merge_restore(data_root: str, tmp: str) -> dict:
+    """把临时解压目录合并覆盖到 data_root（逐日期目录 + 配置文件）。"""
+    restored_days: list[str] = []
+    restored_files: list[str] = []
+    if not os.path.isdir(data_root):
+        os.makedirs(data_root, exist_ok=True)
+    for name in sorted(os.listdir(tmp)):
+        src = os.path.join(tmp, name)
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", name) and os.path.isdir(src):
+            dst = os.path.join(data_root, name)
+            os.makedirs(dst, exist_ok=True)
+            for fn in os.listdir(src):
+                s = os.path.join(src, fn)
+                if os.path.isfile(s) and not any(fn.lower().endswith(ext) for ext in _EXCLUDED_FILE_SUFFIXES):
+                    shutil.copy2(s, os.path.join(dst, fn))
+                    restored_files.append(f"{name}/{fn}")
+            restored_days.append(name)
+        elif name in _ALLOWED_ROOT_FILES and os.path.isfile(src):
+            shutil.copy2(src, os.path.join(data_root, name))
+            restored_files.append(name)
+    return {"days": restored_days, "files": restored_files}
 
 
 PAGE_TEMPLATE = r"""<!DOCTYPE html>
@@ -57,9 +242,26 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     --text:#e8e6e1; --dim:#9aa0ab; --faint:#6b7280;
     --accent:#e0a53c; --accent-soft:rgba(224,165,60,.13);
     --danger:#e0533d; --warn:#d9a441; --ok:#7fb069;
+    --code-bg:#0d1016; --md-h2:#e8b46a; --md-a:#8fb8ff; --url:#6b7280; --err-txt:#d98a7d;
+    --grid-line:rgba(255,255,255,.06); --bar-empty:#232936; --chart-axis:#6b7280; --chart-bar:#e0a53c;
+    --scroll-thumb:#2a303c; --scroll-thumb-hover:#39414f;
+    --hm-1:#1c212b; --hm-2:#2c3342; --hm-3:#6b5323; --hm-4:#a06f24; --hm-5:#e0a53c;
+    --tag-ai-text:#e8b46a; --tag-ai-border:rgba(232,180,106,.35); --tag-ai-bg:rgba(232,180,106,.08);
     --mono:ui-monospace,"Cascadia Code",Consolas,"Courier New",monospace;
     --radius:8px; --sidebar-w:216px;
     --ease:cubic-bezier(.22,.61,.36,1);
+  }
+  html[data-theme="light"]{
+    --bg:#f4f5f7; --surface:#ffffff; --surface-2:#eef0f3; --surface-3:#e4e7ec;
+    --border:rgba(20,25,36,.10); --border-strong:rgba(20,25,36,.18);
+    --text:#1e232b; --dim:#5a6472; --faint:#89919d;
+    --accent:#b47a1c; --accent-soft:rgba(180,122,28,.12);
+    --danger:#c4422c; --warn:#96670f; --ok:#3e7736;
+    --code-bg:#ffffff; --md-h2:#a06a12; --md-a:#2a6fd6; --url:#5a6472; --err-txt:#c4422c;
+    --grid-line:rgba(20,25,36,.08); --bar-empty:#d9dde3; --chart-axis:#89919d; --chart-bar:#b47a1c;
+    --scroll-thumb:#c3c9d2; --scroll-thumb-hover:#aab2bd;
+    --hm-1:#dfe3ea; --hm-2:#c9d1e0; --hm-3:#d3ad5c; --hm-4:#c08a1f; --hm-5:#b47a1c;
+    --tag-ai-text:#8a5a10; --tag-ai-border:rgba(180,122,28,.35); --tag-ai-bg:rgba(180,122,28,.08);
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
@@ -68,11 +270,22 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     font-size:13px;line-height:1.55;-webkit-font-smoothing:antialiased}
   ::selection{background:var(--accent-soft)}
   ::-webkit-scrollbar{width:10px;height:10px}
-  ::-webkit-scrollbar-thumb{background:#2a303c;border-radius:5px;border:2px solid var(--bg)}
-  ::-webkit-scrollbar-thumb:hover{background:#39414f}
+  ::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:5px;border:2px solid var(--bg)}
+  ::-webkit-scrollbar-thumb:hover{background:var(--scroll-thumb-hover)}
   ::-webkit-scrollbar-track{background:transparent}
   button,input,select{font:inherit;color:inherit}
   .app{display:flex;min-height:100vh}
+
+  /* ---------- 登录/口令遮罩 ---------- */
+  .auth-mask{position:fixed;inset:0;background:var(--bg);z-index:200;display:none;
+    align-items:center;justify-content:center;flex-direction:column;gap:14px;padding:20px}
+  .auth-mask.show{display:flex}
+  .auth-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:26px 28px;width:min(360px,92vw);text-align:center}
+  .auth-card h3{font-size:16px;margin-bottom:6px}
+  .auth-card p{font-size:12px;color:var(--dim);margin-bottom:16px}
+  .auth-card .controls{justify-content:center}
+  .auth-err{color:var(--danger);font-size:12px;min-height:16px;margin-top:8px}
 
   /* ---------- 侧边栏 ---------- */
   .sidebar{width:var(--sidebar-w);flex-shrink:0;background:var(--surface);
@@ -108,13 +321,16 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   .page-head h1{font-size:19px;font-weight:600;letter-spacing:.1px}
   .page-head .sub{font-size:12px;color:var(--faint);margin-top:3px}
   .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  select,input[type=text],button.btn{background:var(--surface);border:1px solid var(--border);
+  select,input[type=text],input[type=month],input[type=password],input[type=file],button.btn{
+    background:var(--surface);border:1px solid var(--border);
     border-radius:6px;padding:6px 10px;font-size:12.5px;color:var(--text);outline:none;
     transition:border-color .18s var(--ease),background .18s var(--ease)}
-  select:focus,input[type=text]:focus,button.btn:focus-visible{border-color:var(--accent)}
+  input[type=file]{padding:4px 8px;width:220px}
+  select:focus,input:focus,button.btn:focus-visible{border-color:var(--accent)}
   button.btn{cursor:pointer}
   button.btn:hover{background:var(--surface-2);border-color:var(--border-strong)}
   button.btn.primary{background:var(--accent);border-color:var(--accent);color:#141008;font-weight:600}
+  html[data-theme="light"] button.btn.primary{color:#fff}
   button.btn.primary:hover{background:#eab356}
 
   /* ---------- 视图切换动画 ---------- */
@@ -163,12 +379,12 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   .tbl td.mono{font-family:var(--mono);font-size:11.5px}
   .tag{display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px;margin-right:5px;
     background:var(--surface-3);border:1px solid var(--border-strong);color:var(--dim);white-space:nowrap}
-  .tag.ai{color:#e8b46a;border-color:rgba(232,180,106,.35);background:rgba(232,180,106,.08)}
-  .url-cell{font-family:var(--mono);font-size:11px;color:var(--faint);max-width:280px;
+  .tag.ai{color:var(--tag-ai-text);border-color:var(--tag-ai-border);background:var(--tag-ai-bg)}
+  .url-cell{font-family:var(--mono);font-size:11px;color:var(--url);max-width:280px;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
 
   /* ---------- 日志 ---------- */
-  .log-box{background:#0d1016;border:1px solid var(--border);border-radius:var(--radius);
+  .log-box{background:var(--code-bg);border:1px solid var(--border);border-radius:var(--radius);
     font-family:var(--mono);font-size:11.5px;line-height:1.7;padding:12px 14px;
     height:calc(100vh - 300px);min-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-all}
   #view-log .grid{grid-template-columns:1fr}
@@ -179,15 +395,15 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   .log-line .lv.WARN{color:var(--warn)}
   .log-line .lv.ERRO{color:var(--danger)}
   .log-line .msg{color:var(--dim)}
-  .log-line.err .msg{color:#d98a7d}
+  .log-line.err .msg{color:var(--err-txt)}
 
   /* ---------- 日报渲染 ---------- */
   .md h1{font-size:19px;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:16px}
-  .md h2{font-size:14px;color:#e8b46a;margin:20px 0 10px;letter-spacing:.3px}
+  .md h2{font-size:14px;color:var(--md-h2);margin:20px 0 10px;letter-spacing:.3px}
   .md table{border-collapse:collapse;width:100%;font-size:12.5px;margin:8px 0 16px}
   .md th,.md td{border:1px solid var(--border);padding:6px 10px;text-align:left}
   .md th{background:var(--surface-2);color:var(--faint);font-weight:500}
-  .md a{color:#8fb8ff;text-decoration:none}
+  .md a{color:var(--md-a);text-decoration:none}
   .md blockquote{color:var(--dim);border-left:3px solid var(--border-strong);padding-left:10px;margin:8px 0}
   .mdbar{height:6px;border-radius:3px;background:var(--surface-3);overflow:hidden;min-width:60px}
   .mdbar i{display:block;height:100%;background:var(--accent);border-radius:3px}
@@ -199,6 +415,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   .sk::after{content:"";position:absolute;inset:0;transform:translateX(-100%);
     background:linear-gradient(90deg,transparent,rgba(255,255,255,.05),transparent);
     animation:shimmer 1.3s infinite}
+  html[data-theme="light"] .sk::after{background:linear-gradient(90deg,transparent,rgba(20,25,36,.06),transparent)}
   @keyframes shimmer{to{transform:translateX(100%)}}
   .empty{padding:34px 0;text-align:center;color:var(--faint);font-size:12.5px}
   canvas{width:100%;display:block}
@@ -212,6 +429,14 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   .hm-legend{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--faint);
     justify-content:flex-end;margin-top:8px}
   .hm-legend .sw{width:10px;height:10px;border-radius:2px}
+
+  /* ---------- 设置区（备份/恢复/口令） ---------- */
+  .set-group{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:16px 18px;margin-bottom:12px}
+  .set-group h3{font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .set-group .desc{font-size:11.5px;color:var(--faint);margin-bottom:12px;line-height:1.6}
+  .set-restore{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .set-note{font-size:11px;color:var(--faint);margin-top:8px}
 
   /* ---------- 响应式 ---------- */
   @media(max-width:920px){
@@ -229,6 +454,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </style>
 </head>
 <body>
+<div class="auth-mask" id="authMask" style="display:none"></div>
 <div class="app">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
@@ -251,6 +477,14 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3M5.5 8.5h5M5.5 11h5"/></svg>
         日报
       </a>
+      <a class="nav-item" data-view="week" href="#">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 3.5h11v9h-11z"/><path d="M2.5 7h11M5 2v2.5M11 2v2.5"/></svg>
+        周报
+      </a>
+      <a class="nav-item" data-view="month" href="#">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 2.5h11v11h-11z"/><path d="M2.5 5.5h11"/><path d="M5.5 1.5v2.5M10.5 1.5v2.5"/></svg>
+        月报
+      </a>
       <a class="nav-item" data-view="sessions" href="#">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4h12M2 8h12M2 12h7"/></svg>
         会话
@@ -262,6 +496,10 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       <a class="nav-item" data-view="groups" href="#">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4.5h12v7H2z"/><path d="M2 7h12"/><path d="M6 4.5V9M10 4.5V9"/></svg>
         分组
+      </a>
+      <a class="nav-item" data-view="settings" href="#">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3M3.4 3.4l2.1 2.1M10.5 10.5l2.1 2.1M12.6 3.4l-2.1 2.1M5.5 10.5l-2.1 2.1"/><circle cx="8" cy="8" r="2.2"/></svg>
+        设置
       </a>
     </nav>
     <div class="side-foot">
@@ -297,7 +535,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     <section class="view" id="view-trends">
       <div class="panel"><h2>活跃热力图（24 小时 × 最近 84 天）<span class="hint">行=小时 · 列=日期</span></h2>
         <div id="trHeatmap"></div>
-        <div class="hm-legend">少 <span class="sw" style="background:#1c212b"></span><span class="sw" style="background:#2c3342"></span><span class="sw" style="background:#a06f24"></span><span class="sw" style="background:#e0a53c"></span> 多</div>
+        <div class="hm-legend">少 <span class="sw" style="background:var(--hm-1)"></span><span class="sw" style="background:var(--hm-2)"></span><span class="sw" style="background:var(--hm-4)"></span><span class="sw" style="background:var(--hm-5)"></span> 多</div>
       </div>
       <div class="panel"><h2>日活跃柱状图</h2>
         <div class="controls" style="margin-bottom:12px">
@@ -310,7 +548,37 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
     <!-- 日报 -->
     <section class="view" id="view-report">
-      <div class="panel"><div class="md" id="rpMd"></div></div>
+      <div class="panel"><h2>日报 <span class="hint">选日期渲染当日 report.md</span></h2>
+        <div class="controls" style="margin-bottom:12px">
+          <button class="btn" data-export="csv" data-scope="day">导出 CSV</button>
+          <button class="btn" data-export="json" data-scope="day">导出 JSON</button>
+        </div>
+        <div class="md" id="rpMd"></div>
+      </div>
+    </section>
+
+    <!-- 周报 -->
+    <section class="view" id="view-week">
+      <div class="panel"><h2>周报 <span class="hint">最近 7 个有数据日 · 自动</span></h2>
+        <div class="controls" style="margin-bottom:12px">
+          <button class="btn" data-export="csv" data-scope="week">导出 CSV</button>
+          <button class="btn" data-export="json" data-scope="week">导出 JSON</button>
+        </div>
+        <div class="md" id="wkMd"></div>
+      </div>
+    </section>
+
+    <!-- 月报 -->
+    <section class="view" id="view-month">
+      <div class="panel"><h2>月报 <span class="hint">按自然月汇总</span></h2>
+        <div class="controls" style="margin-bottom:12px">
+          <input type="month" id="moSel" value="">
+          <button class="btn primary" id="moGo">查看</button>
+          <button class="btn" data-export="csv" data-scope="month">导出 CSV</button>
+          <button class="btn" data-export="json" data-scope="month">导出 JSON</button>
+        </div>
+        <div class="md" id="moMd"></div>
+      </div>
     </section>
 
     <!-- 会话 -->
@@ -358,21 +626,104 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         <div id="grpCount" style="color:var(--faint);font-size:11.5px;margin-top:8px"></div>
       </div>
     </section>
+
+    <!-- 设置（备份/恢复/口令/主题） -->
+    <section class="view" id="view-settings">
+      <div class="set-group">
+        <h3>🗄️ 数据备份</h3>
+        <div class="desc">打包数据目录（各日期文件夹 + config.json / app_groups.json / aliases.json，
+          已排除 .log / 临时 / 备份大文件）为 zip 一键下载，用于迁移或存档。</div>
+        <div class="controls"><button class="btn primary" id="bkDownload">备份下载（zip）</button></div>
+      </div>
+      <div class="set-group">
+        <h3>♻️ 数据恢复</h3>
+        <div class="desc">选择上文备份生成的 zip 上传，解压校验后按日期目录/配置合并覆盖到当前数据目录。
+          相同日期目录会被覆盖、缺失的会补齐；不会删除已有的其他数据。</div>
+        <div class="set-restore">
+          <input type="file" id="bkFile" accept=".zip,application/zip">
+          <button class="btn primary" id="bkRestore">恢复上传</button>
+        </div>
+        <div class="set-note" id="bkNote"></div>
+      </div>
+      <div class="set-group">
+        <h3>🔒 访问口令</h3>
+        <div class="desc">是否启用口令由数据根目录 <span class="url-cell">config.json</span> 的
+          <b>dashboard_token</b> 决定（缺失/为空 = 关闭）。开启后所有 API 需携带
+          <span class="url-cell">X-Dashboard-Token</span> 请求头；本机浏览器首次会在右上角输入口令并记住。
+          本页面不会显示/修改口令。</div>
+        <div class="set-note" id="authNote"></div>
+      </div>
+    </section>
   </main>
 </div>
 
 <script>
 "use strict";
 const ROOT_DIR = DATA_ROOT;
-const TITLES = {overview:"概览",trends:"趋势",report:"日报",sessions:"会话",log:"日志",groups:"分组"};
+const AUTH_REQUIRED = AUTH_FLAG;
+const TITLES = {overview:"概览",trends:"趋势",report:"日报",week:"周报",month:"月报",
+                sessions:"会话",log:"日志",groups:"分组",settings:"设置"};
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
-const state = { view:"overview", day:null, dates:[], loaded:{} };
+const state = { view:"overview", day:null, month:null, dates:[], loaded:{}, authed:!AUTH_REQUIRED };
 const NO_ANIM = location.search.includes("static=1") || matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ---------- 访问口令（P1-8） ---------- */
+let authShown = false;
+function tokenHeaders(){
+  const t = localStorage.getItem("dash_token");
+  return t ? {"X-Dashboard-Token": t} : {};
+}
+function failAuth(){
+  if(authShown) return;
+  authShown = true;
+  buildAuthMask();
+  $("#authMask").classList.add("show");
+  window.__pendingNav = null;
+}
+function buildAuthMask(){
+  const mask = $("#authMask");
+  mask.style.cssText = "display:flex;position:fixed;inset:0;background:var(--bg);z-index:300;" +
+    "align-items:center;justify-content:center;flex-direction:column;gap:14px";
+  mask.innerHTML = '<div class="auth-card">' +
+    '<h3>请输入访问口令</h3>' +
+    '<p>仪表盘开启了口令保护，请输入后继续。</p>' +
+    '<div class="controls"><input type="password" id="authInput" placeholder="访问口令" autofocus>' +
+    '<button class="btn primary" id="authGo">解锁</button></div>' +
+    '<div class="auth-err" id="authErr"></div></div>';
+  $("#authGo").onclick = tryUnlock;
+  $("#authInput").onkeydown = e => { if(e.key === "Enter") tryUnlock(); };
+}
+async function tryUnlock(){
+  const val = $("#authInput").value.trim();
+  if(!val) return;
+  const saved = localStorage.getItem("dash_token");
+  // 先尝试校验；成功则记录并继续
+  state.authed = true;
+  try{
+    const r = await fetch("/api/dates", {headers:{"X-Dashboard-Token": val}});
+    if(r.status === 401){
+      state.authed = false;
+      $("#authErr").textContent = "口令错误，请重试。";
+      return;
+    }
+    if(!r.ok) throw new Error("HTTP " + r.status);
+  }catch(e){
+    // 网络错误也放行为本地状态，交由后续请求判断
+  }
+  localStorage.setItem("dash_token", val);
+  authShown = false;
+  $("#authMask").classList.remove("show");
+  $("#authMask").style.display = "none";
+  // 触发当前视图重载
+  if(state.loaded[state.view]){ state.loaded[state.view] = false; }
+  startApp();
+}
 
 /* ---------- 工具 ---------- */
 async function api(path){
-  const r = await fetch(path);
+  const r = await fetch(path, {headers: tokenHeaders()});
+  if(r.status === 401){ failAuth(); throw new Error("口令未授权"); }
   if(!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
@@ -438,14 +789,18 @@ function switchView(v, push){
   }
 }
 const loaders = { overview:loadOverview, trends:loadTrends, report:loadReport,
-                  sessions:loadSessions, log:loadLog, groups:loadGroups };
+                  week:loadWeek, month:loadMonth,
+                  sessions:loadSessions, log:loadLog, groups:loadGroups, settings:loadSettings };
 
-/* ---------- 头部控件（日期选择） ---------- */
+/* ---------- 头部控件（日期选择 + 主题切换） ---------- */
 function buildHeadControls(){
   const c = $("#headControls");
-  c.innerHTML = '<select id="daySel"></select><button class="btn" id="btnToday">今天</button>';
+  c.innerHTML = '<select id="daySel"></select><button class="btn" id="btnToday">今天</button>' +
+    '<button class="btn" id="themeBtn" title="切换主题：自动/浅色/深色">🌗</button>';
   $("#btnToday").onclick = () => { pickDay(todayStr()); };
   $("#daySel").onchange = e => pickDay(e.target.value);
+  $("#themeBtn").onclick = cycleTheme;
+  updateThemeBtn();
 }
 function pickDay(d){
   state.day = d; $("#daySel").value = d;
@@ -454,6 +809,37 @@ function pickDay(d){
   if(state.view === "sessions") loadSessions();
 }
 function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+
+/* ---------- 主题切换（P1-7） ---------- */
+const THEME_LABEL = {auto:"🌗 自动", light:"☀️ 浅色", dark:"🌙 深色"};
+function currentTheme(){
+  const pref = localStorage.getItem("dash_theme") || "auto";
+  if(pref === "auto") return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  return pref;
+}
+function applyTheme(){
+  const eff = currentTheme();
+  document.documentElement.dataset.theme = eff;
+  updateThemeBtn();
+  // 重绘 canvas 图表以匹配新配色
+  if(state.view === "overview" && state.loaded.overview) loadOverview();
+  else if(state.view === "trends" && state.loaded.trends) loadTrends();
+}
+function cycleTheme(){
+  const order = ["auto", "light", "dark"];
+  const pref = localStorage.getItem("dash_theme") || "auto";
+  const next = order[(order.indexOf(pref) + 1) % order.length];
+  localStorage.setItem("dash_theme", next);
+  applyTheme();
+}
+function updateThemeBtn(){
+  const b = $("#themeBtn");
+  if(b) b.textContent = THEME_LABEL[localStorage.getItem("dash_theme") || "auto"];
+}
+function canvasCssVar(name, fallback){
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
 
 /* ---------- 画布图表 ---------- */
 function setupCanvas(cv){
@@ -479,9 +865,14 @@ function drawBarChart(cv, labels, values, fmt){
   const n = values.length, bw = Math.max(6, (w-padL-8)/n);
   const labelStep = bw < 60 ? 2 : 1;
   const tickFmt = v => v >= 3600000 ? Math.round(v/3600000) + "h" : Math.round(v/60000) + "m";
+  // 主题相关颜色：从 CSS 变量读取，切换主题后重绘即同步
+  const gridColor = canvasCssVar("--grid-line", "rgba(255,255,255,.06)");
+  const axisColor = canvasCssVar("--chart-axis", "#6b7280");
+  const barColor = canvasCssVar("--chart-bar", "#e0a53c");
+  const emptyColor = canvasCssVar("--bar-empty", "#232936");
   function paint(ease){
     ctx.clearRect(0,0,w,h);
-    ctx.strokeStyle = "rgba(255,255,255,.06)"; ctx.fillStyle = "#6b7280";
+    ctx.strokeStyle = gridColor; ctx.fillStyle = axisColor;
     ctx.font = "10px " + getComputedStyle(document.body).fontFamily;
     ctx.lineWidth = 1;
     for(let g=0; g<=4; g++){
@@ -493,10 +884,10 @@ function drawBarChart(cv, labels, values, fmt){
     values.forEach((v,i)=>{
       const bh = Math.max(2, (v/max) * (h-padT-padB) * ease);
       const x = padL + i*bw, y = h-padB-bh;
-      ctx.fillStyle = v > 0 ? "#e0a53c" : "#232936";
+      ctx.fillStyle = v > 0 ? barColor : emptyColor;
       ctx.fillRect(x+2, y, bw-4, bh);
       if(i % labelStep === 0){
-        ctx.fillStyle = "#6b7280"; ctx.textAlign = "center";
+        ctx.fillStyle = axisColor; ctx.textAlign = "center";
         ctx.fillText(String(labels[i]).slice(5), x+bw/2, h-8);
       }
     });
@@ -551,7 +942,9 @@ async function loadTrends(){
   const hm = await api("/api/heatmap?days=84");
   const maxH = Math.max(1, ...hm.days.flatMap(d=>d.hourly_ms));
   const box = $("#trHeatmap");
-  const lvl = ["#242a36","#2f3a4d","#6b5323","#a06f24","#e0a53c"];
+  const lvl = [
+    canvasCssVar("--hm-1","#242a36"), canvasCssVar("--hm-2","#2f3a4d"),
+    canvasCssVar("--hm-3","#6b5323"), canvasCssVar("--hm-4","#a06f24"), canvasCssVar("--hm-5","#e0a53c")];
   const nDays = hm.days.length;
   // 行=小时(24)，列=天数；flex 布局：标签列 + 每天一列
   const cols = [];
@@ -586,7 +979,7 @@ async function loadTrends(){
   });
 }
 
-/* ---------- Markdown 渲染（日报视图） ---------- */
+/* ---------- Markdown 渲染（日报/周报/月报 通用） ---------- */
 function md2html(src){
   const lines = (src||"").split("\n"); let out = [], inT = false;
   for(const line of lines){
@@ -620,7 +1013,7 @@ function md2html(src){
     let t = esc(s);
     t = t.replace(/\[([^\]]*)\]\(([^)]*)\)/g, (m,a,b)=>{ const u=b.split("?")[0]; return '<a href="'+esc(b)+'">'+esc(a)+'</a><span class="url-cell">'+esc(u.slice(0,80))+'</span>'; });
     t = t.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-    if(/[█▇▆▅▄▃▂▁]/.test(t)) t = t.replace(/([█▇▆▅▄▃▂▁]+)/g, '<span style="color:#e0a53c;letter-spacing:1px">$1</span>');
+    if(/[█▇▆▅▄▃▂▁]/.test(t)) t = t.replace(/([█▇▆▅▄▃▂▁]+)/g, '<span style="color:var(--md-h2);letter-spacing:1px">$1</span>');
     return t;
   }
 }
@@ -629,6 +1022,107 @@ async function loadReport(){
   const r = await api("/api/report?date=" + state.day);
   if(!r.exists){ $("#rpMd").innerHTML = '<div class="empty">当日无日报（守护进程跨天时自动生成，或运行 report.py --day '+state.day+' --write）</div>'; return; }
   $("#rpMd").innerHTML = md2html(r.markdown);
+}
+
+/* ---------- 周报 / 月报（P1-1） ---------- */
+async function loadWeek(){
+  $("#wkMd").innerHTML = skeleton(14);
+  const r = await api("/api/week");
+  if(!r.days || !r.days.length){
+    $("#wkMd").innerHTML = '<div class="empty">近 7 天无数据</div>'; return;
+  }
+  $("#wkMd").innerHTML = md2html(r.markdown);
+}
+async function loadMonth(){
+  $("#moMd").innerHTML = skeleton(14);
+  if(!state.month) return;
+  const r = await api("/api/month?month=" + state.month);
+  if(!r.exists){ $("#moMd").innerHTML = '<div class="empty">当月无数据</div>'; return; }
+  $("#moMd").innerHTML = md2html(r.markdown);
+}
+function monthInit(){
+  const sel = $("#moSel");
+  const now = new Date();
+  const latest = availableMonths()[availableMonths().length-1] ||
+    now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0");
+  state.month = latest;
+  if(sel){ sel.value = latest; sel.max = latest; }
+  $("#moGo").onclick = ()=>{ state.month = sel.value; if(state.loaded.month){ state.loaded.month = false; } loadMonth(); };
+}
+function availableMonths(){
+  const s = new Set();
+  (state.dates || []).forEach(d => s.add(d.slice(0,7)));
+  return [...s].sort();
+}
+
+/* ---------- 导出（P1-2） ---------- */
+async function downloadToFile(url, filename){
+  const r = await fetch(url, {headers: tokenHeaders()});
+  if(r.status === 401){ failAuth(); throw new Error("口令未授权"); }
+  if(!r.ok) throw new Error("HTTP " + r.status);
+  const blob = await r.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+}
+let exporting = false;
+async function doExport(scope, type){
+  if(exporting) return;
+  exporting = true;
+  try{
+    let url = "/api/export?type=" + type + "&scope=" + scope;
+    let name = "report";
+    if(scope === "day"){ url += "&date=" + state.day; name = "report_" + state.day; }
+    else if(scope === "week"){ name = "week_" + (state.dates.length ? state.dates[state.dates.length-1] : todayStr()); }
+    else if(scope === "month"){ url += "&month=" + state.month; name = "month_" + state.month; }
+    name += (type === "csv" ? ".csv" : ".json");
+    await downloadToFile(url, name);
+  }catch(e){
+    alert("导出失败：" + e.message);
+  }finally{
+    exporting = false;
+  }
+}
+function wireExportButtons(){
+  $$("[data-export]").forEach(b => b.onclick = () => doExport(b.dataset.export, b.dataset.scope));
+}
+
+/* ---------- 备份/恢复（P1-4） ---------- */
+async function bkDownload(){
+  try{
+    const name = "usagemonitor_backup_" + todayStr() + ".zip";
+    await downloadToFile("/api/backup", name);
+  }catch(e){ alert("备份下载失败：" + e.message); }
+}
+async function bkRestore(){
+  const file = $("#bkFile").files[0];
+  const note = $("#bkNote");
+  if(!file){ note.textContent = "请先选择要恢复的 zip 备份文件。"; note.style.color = "var(--danger)"; return; }
+  if(!confirm("确认恢复「" + file.name + "」？\n将把备份中的日期目录/配置合并覆盖到当前数据目录（缺失补齐、相同覆盖）。\n建议先「备份下载」留底。")) return;
+  note.textContent = "正在上传与校验…"; note.style.color = "var(--dim)";
+  try{
+    const buf = await file.arrayBuffer();
+    const r = await fetch("/api/backup/restore", {method:"POST",
+      headers:Object.assign({"Content-Type":"application/octet-stream"}, tokenHeaders()),
+      body: buf});
+    if(r.status === 401){ failAuth(); note.textContent = ""; return; }
+    const result = await r.json();
+    if(!r.ok || !result.ok){ throw new Error(result.error || ("HTTP " + r.status)); }
+    note.textContent = "恢复完成：" + (result.days||[]).length + " 个日期目录、配置 " +
+      (result.files||[]).length + " 项（如需查看请刷新页面重新载入日期）。";
+    note.style.color = "var(--ok)";
+    $("#bkFile").value = "";
+  }catch(e){
+    note.textContent = "恢复失败：" + e.message;
+    note.style.color = "var(--danger)";
+  }
+}
+async function loadSettings(){
+  $("#authNote").textContent = AUTH_REQUIRED ?
+    "已开启：当前页面需要访问口令。" :
+    "当前关闭：config.json 缺失 dashboard_token（或为空）。如需开启，在 config.json 增加 \"dashboard_token\":\"你的口令\" 后重启仪表盘。";
 }
 
 /* ---------- 会话 ---------- */
@@ -693,7 +1187,7 @@ function scrollLogBottom(){
 }
 function armLogTimer(){
   if(logTimer) clearInterval(logTimer);
-  logTimer = setInterval(()=>{ if(state.view==="log" && state.loaded.log) loadLog(); }, 15000);
+  logTimer = setInterval(()=>{ if(state.view==="log" && state.loaded.log && state.authed) loadLog(); }, 15000);
 }
 
 /* ---------- 分组管理 ---------- */
@@ -707,8 +1201,9 @@ function grpFlash(msg){
 }
 async function postJson(url, obj){
   const r = await fetch(url, {method:"POST",
-    headers:{"Content-Type":"application/json"},
+    headers:Object.assign({"Content-Type":"application/json"}, tokenHeaders()),
     body: JSON.stringify(obj)});
+  if(r.status === 401){ failAuth(); throw new Error("口令未授权"); }
   if(!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
@@ -774,20 +1269,14 @@ async function groupsInit(){
 }
 
 /* ---------- 初始化 ---------- */
-(async function init(){
+function startApp(){
   buildHeadControls();
-  const [dates] = await Promise.all([api("/api/dates")]);
-  state.dates = dates.dates || [];
-  $("#daySel").innerHTML = state.dates.map(d=>'<option value="'+d+'">'+d+'</option>').join("");
-  state.day = state.dates.length ? state.dates[state.dates.length-1] : todayStr();
-  if(!state.dates.includes(state.day)) {
-    const opt = document.createElement("option");
-    opt.value = state.day; opt.textContent = state.day + "（今天）";
-    $("#daySel").appendChild(opt);
-  }
-  $("#daySel").value = state.day;
-  $("#pageSub").textContent = "数据目录：" + ROOT_DIR;
-  $("#rootPath").textContent = ROOT_DIR;
+  applyTheme();
+  backgroundWatchTheme();
+  wireExportButtons();
+  monthInit();
+  $("#bkDownload").onclick = bkDownload;
+  $("#bkRestore").onclick = bkRestore;
 
   // 导航
   $$(".nav-item").forEach(a => a.onclick = e => { e.preventDefault(); switchView(a.dataset.view); });
@@ -795,17 +1284,60 @@ async function groupsInit(){
   $("#hamburger").onclick = () => { $("#sidebar").classList.add("open"); $("#backdrop").classList.add("show"); };
   $("#backdrop").onclick = closeDrawer;
 
-  // URL 视图
-  const v = new URLSearchParams(location.search).get("view");
-  const target = v && TITLES[v] ? v : "overview";
-  groupsInit();
-  if(target !== "overview") switchView(target, false);
-  else { state.loaded.overview = true; loadOverview(); }
-  armLogTimer();
-  window.addEventListener("resize", ()=>{
-    if(state.view==="overview") loadOverview();
-    else if(state.view==="trends" && state.loaded.trends) loadTrends();
+  // 加载日期
+  $("#pageSub").textContent = "数据目录：" + ROOT_DIR;
+  $("#rootPath").textContent = ROOT_DIR;
+  Promise.all([api("/api/dates")]).then(async ([dates]) => {
+    state.dates = dates.dates || [];
+    $("#daySel").innerHTML = state.dates.map(d=>'<option value="'+d+'">'+d+'</option>').join("");
+    state.day = state.dates.length ? state.dates[state.dates.length-1] : todayStr();
+    if(!state.dates.includes(state.day)) {
+      const opt = document.createElement("option");
+      opt.value = state.day; opt.textContent = state.day + "（今天）";
+      $("#daySel").appendChild(opt);
+    }
+    $("#daySel").value = state.day;
+
+    // URL 视图
+    const v = new URLSearchParams(location.search).get("view");
+    const target = v && TITLES[v] ? v : "overview";
+    groupsInit();
+    armLogTimer();
+    window.addEventListener("resize", ()=>{
+      if(state.view==="overview") loadOverview();
+      else if(state.view==="trends" && state.loaded.trends) loadTrends();
+    });
+    if(target !== "overview") switchView(target, false);
+    else { state.loaded.overview = true; loadOverview(); }
+  }).catch(err => {
+    if(String(err.message).includes("口令")) return; // 认证流程已接管
+    $("#daySel").innerHTML = '<option>加载失败</option>';
   });
+}
+let themeMedia = null;
+function backgroundWatchTheme(){
+  if(themeMedia) return;
+  themeMedia = matchMedia("(prefers-color-scheme: light)");
+  themeMedia.addEventListener("change", ()=>{
+    if((localStorage.getItem("dash_theme") || "auto") === "auto") applyTheme();
+  });
+}
+
+(async function init(){
+  if(AUTH_REQUIRED){
+    // 尝试用已存口令静默通过；失败则弹出口令框
+    const t = localStorage.getItem("dash_token");
+    if(t){
+      try{
+        const r = await fetch("/api/dates", {headers:{"X-Dashboard-Token": t}});
+        if(r.ok){ state.authed = true; }
+      }catch(e){ /* 忽略，稍后重试 */ }
+    }
+    if(state.authed) startApp();
+    else { failAuth(); }
+  }else{
+    startApp();
+  }
 })();
 </script>
 </body>
@@ -814,24 +1346,71 @@ async function groupsInit(){
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "UsageMonitorDashboard/3.0"
+    server_version = "UsageMonitorDashboard/4.0"
 
     def log_message(self, fmt, *args):  # 静默，减少刷屏
         pass
 
+    def _send_security_headers(self, extra: dict | None = None) -> None:
+        """统一的隐私/安全响应头（CSP / X-Frame-Options 等）。"""
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy",
+                         "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+                         "script-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                         "connect-src 'self'; frame-ancestors 'none'")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+
     def _send_json(self, obj: dict, status: int = 200) -> None:
+        """发送 JSON 响应（带统一隐私/安全头）。"""
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self._send_security_headers()
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_blob(self, data: bytes, content_type: str, filename: str) -> None:
+        """发送附件下载（导出 CSV/JSON、备份 zip），带 Content-Disposition。"""
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Disposition",
+                         f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(data)))
+        self._send_security_headers()
+        self.end_headers()
+        self.wfile.write(data)
 
     def _valid_date(self, query: dict) -> str | None:
         """校验并返回日期参数；非法返回 None。"""
         date = query.get("date", [""])[0]
         return date if _DAY_RE.fullmatch(date) else None
+
+    def _valid_month(self, query: dict) -> str | None:
+        """校验并返回月份参数（YYYY-MM）；非法返回 None。"""
+        month = query.get("month", [""])[0]
+        if not _MONTH_RE.fullmatch(month):
+            return None
+        try:
+            datetime.datetime.strptime(month, "%Y-%m")
+            return month
+        except ValueError:
+            return None
+
+    def _required_token(self) -> str:
+        """当前生效的访问口令；'' = 未开启。"""
+        config_path = self.server.config_path if hasattr(self.server, "config_path") else None
+        return _required_token(config_path, data_root=self.server.data_root)
+
+    def _auth_ok(self) -> bool:
+        """校验 X-Dashboard-Token（未开启口令直接放行；开启则 hmac 常量时间比较）。"""
+        token = self._required_token()
+        if not token:
+            return True
+        provided = self.headers.get("X-Dashboard-Token", "")
+        return hmac.compare_digest(provided, token)
 
     def _origin_allowed(self, headers) -> bool:
         """同源校验：Origin/Referer 存在时必须匹配本服务（防恶意网页偷读隐私数据）。
@@ -854,6 +1433,69 @@ class Handler(BaseHTTPRequestHandler):
                 return False
         return True
 
+    # ---- 周报 / 月报 数据构造（复用 report.py 聚合） ----
+    def _week_aggregate(self, root: str) -> dict:
+        """最近 7 个有数据日聚合；返回 (agg, days)。"""
+        days = _available_days(root)[-7:]
+        return report._aggregate_days(days, root), days
+
+    def _month_aggregate(self, root: str, month: str) -> dict | None:
+        """月度聚合；当月无数据返回 None。"""
+        agg = report.aggregate_month(month, root)
+        if not agg.get("per_day"):
+            return None
+        return agg
+
+    def _render_week_md(self, agg: dict) -> str:
+        return report._report_from_agg(agg, "电脑使用情况周报（最近 7 个有数据日）")
+
+    def _render_month_md(self, agg: dict) -> str:
+        return report.generate_month_report_md(agg.get("month", ""), self.server.data_root)
+
+    def _handle_export(self, query: dict, root: str) -> None:
+        """/api/export：CSV/JSON 一键下载（day/week/month）。"""
+        ftype = query.get("type", [""])[0]
+        scope = query.get("scope", [""])[0]
+        if ftype not in ("csv", "json"):
+            self._send_json({"error": "invalid type"}, 400)
+            return
+        agg = None
+        filename = "report"
+        if scope == "day":
+            date = self._valid_date(query)
+            if not date:
+                self._send_json({"error": "invalid date"}, 400)
+                return
+            agg = report.aggregate(date, root)
+            filename = f"report_{date}"
+        elif scope == "week":
+            a, days = self._week_aggregate(root)
+            agg = a
+            filename = f"week_{days[-1] if days else 'none'}"
+        elif scope == "month":
+            month = self._valid_month(query)
+            if not month:
+                self._send_json({"error": "invalid month"}, 400)
+                return
+            m = self._month_aggregate(root, month)
+            if m is None:
+                self._send_json({"error": "no data"}, 404)
+                return
+            agg = m
+            filename = f"month_{month}"
+        else:
+            self._send_json({"error": "invalid scope"}, 400)
+            return
+
+        if ftype == "json":
+            payload = json.dumps(agg, ensure_ascii=False, default=str).encode("utf-8")
+            self._send_blob(payload, "application/json; charset=utf-8", f"{filename}.json")
+        else:
+            csv = _agg_to_csv(agg)
+            # 简单安全清洗：去掉可能被当作公式的单元格前缀（CSV 注入防护）
+            csv = _sanitize_csv(csv)
+            self._send_blob(csv.encode("utf-8-sig"), "text/csv; charset=utf-8", f"{filename}.csv")
+
     def do_GET(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
@@ -865,18 +1507,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "forbidden"}, 403)
             return
 
+        # 访问口令：开启状态所有 /api 一致校验（P1-8）
+        auth_enabled = bool(self._required_token())
+        if path.startswith("/api/") and not self._auth_ok():
+            self._send_json({"error": "unauthorized"}, 401)
+            return
+
         if path == "/" or path == "/index.html":
-            html = PAGE_TEMPLATE.replace("DATA_ROOT", json.dumps(root))
+            html = (PAGE_TEMPLATE
+                    .replace("DATA_ROOT", json.dumps(root).replace("$", "\\$"))
+                    .replace("AUTH_FLAG", "true" if auth_enabled else "false"))
             body = html.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Frame-Options", "DENY")
-            self.send_header("Content-Security-Policy",
-                             "default-src 'self'; style-src 'self' 'unsafe-inline'; "
-                             "script-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-                             "connect-src 'self'; frame-ancestors 'none'")
+            self._send_security_headers()
             self.end_headers()
             self.wfile.write(body)
             return
@@ -950,6 +1595,55 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             self._send_json({"date": date, "exists": False, "markdown": ""})
+            return
+
+        if path == "/api/week":
+            # 周报：最近 7 个有数据日聚合（复用 report._aggregate_days/_report_from_agg）
+            a, days = self._week_aggregate(root)
+            payload = {
+                "days": days,
+                "total_ms": a["total_active_ms"],
+                "count": a["session_count"],
+                "aggregate": a,
+                "markdown": self._render_week_md(a),
+            }
+            self._send_json(payload)
+            return
+
+        if path == "/api/month":
+            month = self._valid_month(query)
+            if not month:
+                self._send_json({"error": "invalid month"}, 400)
+                return
+            a = self._month_aggregate(root, month)
+            if a is None:
+                self._send_json({"month": month, "exists": False,
+                                 "markdown": "", "aggregate": None})
+                return
+            self._send_json({
+                "month": month, "exists": True,
+                "total_ms": a["total_active_ms"],
+                "active_days": len(a.get("per_day", [])),
+                "count": a["session_count"],
+                "aggregate": a,
+                "markdown": self._render_month_md(a),
+            })
+            return
+
+        if path == "/api/export":
+            self._handle_export(query, root)
+            return
+
+        if path == "/api/backup":
+            if not os.path.isdir(root):
+                self._send_json({"error": "no data"}, 404)
+                return
+            try:
+                data = _backup_zip(root)
+                stamp = datetime.date.today().isoformat()
+                self._send_blob(data, "application/zip", f"usagemonitor_backup_{stamp}.zip")
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": f"backup failed: {exc}"}, 500)
             return
 
         if path == "/api/heatmap":
@@ -1027,6 +1721,34 @@ class Handler(BaseHTTPRequestHandler):
         if not self._origin_allowed(self.headers):
             self._send_json({"error": "forbidden"}, 403)
             return
+        # 访问口令：所有 POST 一致校验
+        if path.startswith("/api/") and not self._auth_ok():
+            self._send_json({"error": "unauthorized"}, 401)
+            return
+
+        # 恢复上传：二进制 zip（Content-Type: application/octet-stream）
+        if path == "/api/backup/restore":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except ValueError:
+                length = 0
+            if length <= 0 or length > 200 * 1024 * 1024:
+                self._send_json({"error": "bad body"}, 400)
+                return
+            data = self.rfile.read(length)
+            tmp_dir = None
+            try:
+                tmp_dir = _safe_extract_zip(root, data)
+                result = _merge_restore(root, tmp_dir)
+                self._send_json({"ok": True, "days": result["days"], "files": result["files"]})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": f"restore failed: {exc}"}, 400)
+            finally:
+                if tmp_dir:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+            return
+
+        # 其余 POST 为 JSON 请求体
         try:
             length = int(self.headers.get("Content-Length", 0))
             if length > 0:
@@ -1151,10 +1873,31 @@ def _collect_known_apps(data_root: str) -> dict[str, str]:
     return known
 
 
-def create_server(data_root: str, port: int = DEFAULT_PORT) -> ThreadingHTTPServer:
-    """创建仪表盘服务器（绑定 127.0.0.1）。"""
+def _sanitize_csv(csv_text: str) -> str:
+    """CSV 注入防护：把以 = + - @ 或 tab 开头的单元格值前缀为 '（防 Excel 公式执行）。"""
+    def clean(field: str) -> str:
+        f = field.strip()
+        if f[:1] in ("=", "+", "-", "@", "\t"):
+            return "'" + field
+        return field
+    out = []
+    for line in csv_text.split("\n"):
+        if line.startswith("#"):
+            out.append(line)
+            continue
+        out.append(",".join(clean(c) for c in line.split(",")))
+    return "\n".join(out)
+
+
+def create_server(data_root: str, port: int = DEFAULT_PORT,
+                  config_path: str | None = None) -> ThreadingHTTPServer:
+    """创建仪表盘服务器（绑定 127.0.0.1）。
+
+    config_path 可指定 config.json 路径（测试用）；缺省由 _required_token 用默认路径。
+    """
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.data_root = data_root
+    server.config_path = config_path
     return server
 
 
@@ -1164,24 +1907,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"监听端口（默认 {DEFAULT_PORT}）")
     parser.add_argument("--open", action="store_true", help="启动后自动打开浏览器")
     parser.add_argument("--data-root", default=None, help="数据根目录（默认取 config.json）")
+    parser.add_argument("--config", default=None, help="config.json 路径（默认取 data_root/config.json）")
     args = parser.parse_args(argv)
 
     try:
         import classifier  # noqa: PLC0415
-        data_root = args.data_root or (classifier.load_config().get("data_root") or DEFAULT_DATA_ROOT)
+        cfg = classifier.load_config(args.config)
+        data_root = args.data_root or (cfg.get("data_root") or DEFAULT_DATA_ROOT)
     except Exception:  # noqa: BLE001
         data_root = args.data_root or DEFAULT_DATA_ROOT
 
-    server = create_server(data_root, args.port)
+    server = create_server(data_root, args.port, config_path=args.config)
     url = f"http://127.0.0.1:{args.port}/"
     print(f"[dashboard] 数据目录: {data_root}")
-    print(f"[dashboard] 仪表盘已启动: {url}  （Ctrl+C 退出）")
+    base_domain = url.rstrip("/")
+    if bool(_required_token(args.config)):
+        print("[dashboard] 访问口令：已开启（config.json 的 dashboard_token）")
+    else:
+        print("[dashboard] 访问口令：关闭")
+    print(f"[dashboard] 仪表盘已启动: {url}  （Ctrl+C 退出，可带 /?view=week|month|settings）")
     try:
         import applog  # noqa: PLC0415
         applog.configure(data_root)
         applog.get_logger("dashboard").info("仪表盘启动 %s (data_root=%s)", url, data_root)
     except Exception:  # noqa: BLE001
         pass
+    del base_domain
     if args.open:
         try:
             webbrowser.open(url)

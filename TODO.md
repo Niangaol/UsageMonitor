@@ -29,21 +29,33 @@
 
 ---
 
-## P1 🟡 功能增强（建议顺序）
+## P1 ✅ 已完成：功能增强（2026-08-15 完成并提交，9/11 项）
 
-| # | 事项 | 说明 | 依赖 |
-|---|---|---|---|
-| 1 | **仪表盘周报/月报视图** | 后端 `--week/--month` 已支持，前端无入口。加 sidebar「周报/月报」或报表视图内切换 | 无 |
-| 2 | **仪表盘数据导出** | 会话/日报一键下载 CSV/JSON（现仅 CLI `--json`/`--write`，UI 无按钮） | 无 |
-| 3 | **AI 会话深度统计**（doc §6.4.3，需用户确认） | 读 opencode/ChatGPT 本地会话文件，统计轮数/生成行数；涉及第三方数据格式，默认不做 | 用户确认 |
-| 4 | **数据备份/恢复** | 一键把 data_root 打包 zip / 导入恢复（隐私数据迁移场景） | 无 |
-| 5 | **配置热重载** | config.json 修改后免重启生效（现需重启；可文件 mtime 检测 + 定时重载） | 无 |
-| 6 | **托盘通知** | 19:30 日报生成后托盘气泡提示（现仅静默生成） | 无 |
-| 7 | **仪表盘主题切换** | 深色（现）/浅色主题 + 持久化偏好 | 无 |
-| 8 | **仪表盘访问口令（可选加固）** | Origin 校验已挡浏览器攻击面；同机其他程序仍可读。可加可选 token/口令（默认关闭） | 无 |
-| 9 | **Firefox 历史支持** | 现仅 Chromium 系；places.sqlite 结构不同（moz_places/moz_historyvisits），需单测 | 无 |
-| 10 | **SQLite 后端 usage.db**（评审建议 3 长期项） | 行级主键+按日索引，多年数据聚合不再全量扫 JSONL；JSONL 仍为原始日志 | P0 完成后 |
-| 11 | **多语言 README** | English README（GitHub 国际化受众） | 文档 |
+| # | 事项 | 状态 |
+|---|---|---|
+| 1 | **仪表盘周报/月报视图** | ✅ `/api/week`、`/api/month`（复用 report 聚合）+ sidebar「周报/月报」视图 |
+| 2 | **仪表盘数据导出** | ✅ `/api/export?type=csv\|json&scope=day\|week\|month`，日报/周报/月报视图导出按钮（CSV 防注入清洗） |
+| 3 | **AI 会话深度统计**（需用户确认） | ⏸️ 未做（等待用户确认） |
+| 4 | **数据备份/恢复** | ✅ `/api/backup`（zip 下载）+ `/api/backup/restore`（白名单+路径穿越防护，合并覆盖） |
+| 5 | **配置热重载** | ✅ classifier.load_config 缓存（mtime+TTL 3s+浅拷贝）；monitor 循环内每轮重读（data_root 保持启动值） |
+| 6 | **托盘通知** | ✅ 日报生成后气泡提示（19:30 后首次发现弹一次，防重启误弹，点击打开日报视图） |
+| 7 | **仪表盘主题切换** | ✅ 自动/浅色/深色（CSS 变量 + localStorage + 跟随系统 + canvas 重绘） |
+| 8 | **仪表盘访问口令** | ✅ `dashboard_token`（默认关闭；开启后所有 /api 需 X-Dashboard-Token，hmac 常量时间比较） |
+| 9 | **Firefox 历史支持** | ✅ places.sqlite（moz_places/moz_historyvisits，PRTime 换算），最近修改 profile 自动发现 |
+| 10 | **SQLite 后端 usage.db** | ⏸️ 未做（大工程长期项） |
+| 11 | **多语言 README** | ✅ README.en.md（482 行完整英文版 + 双语互链） |
+
+执行记录：5 个并行 subagent 按文件隔离分工（dashboard.py / tray.py+monitor.py / browser_history.py / classifier.py / README），
+主代理集成：修复 monitor 热重载与测试 config 隔离、token 读取 data_root 语义、无效去重逻辑清理；
+全量测试 **152 项通过**（新增托盘调度 9 项）；API 冒烟（周/月/导出/备份/恢复/口令 401 校验）全部通过；
+修复 HEAD 遗留 bug：report.py 缺失 `import re`（verify 路径 NameError）。
+
+## P1 剩余 ⏸️
+
+| # | 事项 | 说明 |
+|---|---|---|
+| 3 | **AI 会话深度统计**（doc §6.4.3，需用户确认） | 读 opencode/ChatGPT 本地会话文件，统计轮数/生成行数；涉及第三方数据格式，默认不做 |
+| 10 | **SQLite 后端 usage.db**（评审建议 3 长期项） | 行级主键+按日索引，多年数据聚合不再全量扫 JSONL；JSONL 仍为原始日志 |
 
 ## P2 🟢 工程 / 质量
 
