@@ -13,9 +13,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Run integration tests
-        run: python test_all.py
+      - name: Install test dependencies
+        run: pip install coverage
+      - name: Run tests with coverage
+        run: coverage run --source=monitor,classifier,report,dashboard,browser_history,inventory,win32core,paths,applog,tray -m test_all.py
         timeout-minutes: 10
+      # 首次接入覆盖率，暂不强制 fail-under 阈值以免 CI 意外变红；
+      # 后续可按基线逐步收紧：coverage report -m --fail-under=<阈值>
+      - name: Coverage report
+        run: coverage report -m
+      - name: Generate coverage.xml
+        run: coverage xml -o coverage.xml
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
 
   build:
     runs-on: windows-latest
@@ -37,6 +50,30 @@ jobs:
 
       - name: Smoke test (exe --version)
         run: .\dist\UsageMonitor.exe --version
+
+      # 版本一致性断言：tag push 时，tag 名（去掉 v 前缀）必须与
+      # exe --version 输出的最后一列版本号一致；非 tag 触发时改与
+      # version.py 的 VERSION 比较。
+      - name: Assert version matches tag
+        shell: pwsh
+        run: |
+          $out = .\dist\UsageMonitor.exe --version
+          Write-Host "exe --version -> $out"
+          $exeVersion = ($out -split '\s+')[-1]
+
+          if ($env:GITHUB_REF -match '^refs/tags/v(.+)$') {
+            $expected = $Matches[1]
+            Write-Host "trigger = tag push, expected version from tag = '$expected'"
+          } else {
+            $expected = (python -c "import version; print(version.VERSION)").Trim()
+            Write-Host "trigger = workflow_dispatch, expected version from version.py = '$expected'"
+          }
+
+          if ($exeVersion -ne $expected) {
+            Write-Error "Version mismatch: exe reports '$exeVersion', expected '$expected'"
+            exit 1
+          }
+          Write-Host "OK: exe version '$exeVersion' matches expected version"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

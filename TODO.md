@@ -54,20 +54,23 @@
 
 | # | 事项 | 说明 |
 |---|---|---|
-| 3 | **AI 会话深度统计**（doc §6.4.3，需用户确认） | 读 opencode/ChatGPT 本地会话文件，统计轮数/生成行数；涉及第三方数据格式，默认不做 |
-| 10 | **SQLite 后端 usage.db**（评审建议 3 长期项） | 行级主键+按日索引，多年数据聚合不再全量扫 JSONL；JSONL 仍为原始日志 |
+| 3 | **AI 会话深度统计**（doc §6.4.3） | **优先级已放低**（用户 2026-08-15 指示）：读 opencode/ChatGPT 本地会话文件，统计轮数/生成行数；涉及第三方数据格式，默认不做 |
+| 10 | **SQLite 后端 usage.db**（评审建议 3 长期项） | **待定**（大工程，需专项设计）：行级主键+按日索引，多年数据聚合不再全量扫 JSONL；JSONL 仍为原始日志 |
 
-## P2 🟢 工程 / 质量
+## P2 ✅ 已完成：工程 / 质量（2026-08-15 完成并提交，6/7 项）
 
-| # | 事项 | 说明 |
+| # | 事项 | 状态 |
 |---|---|---|
-| 1 | **CHANGELOG.md** | 缺失。建议 keep-a-changelog 格式，从 v1.0.0 开始补 |
-| 2 | **CONTRIBUTING.md + Issue/PR 模板** | `.github/ISSUE_TEMPLATE/`、`PULL_REQUEST_TEMPLATE.md`（缺失） |
-| 3 | **README CI/Release 徽章** | README 无 CI 状态徽章；加 `github.com/.../actions/workflows/build.yml/badge.svg` 与 release 徽章 |
-| 4 | **version.py ↔ git tag 同步校验** | CI 里断言 `UsageMonitor.exe --version` 与 tag 一致，防漏 bump |
-| 5 | **测试覆盖率** | 加 coverage 报告（CI 上传） |
-| 6 | **exe 代码签名** | 杀软误报对策（doc 建议项）；无证书时至少 README 加白名单指引 |
-| 7 | **GitHub Pages 文档站**（可选） | README/截图 静态站 |
+| 1 | **CHANGELOG.md** | ✅ keep-a-changelog 格式，[未发布]（P0+P1+Electron）+ [1.0.0]（2026-08-13） |
+| 2 | **CONTRIBUTING.md + Issue/PR 模板** | ✅ 贡献指南（环境/风格/测试/提交/PR/发布/隐私）+ bug_report/feature_request/PR 模板 |
+| 3 | **README CI/Release 徽章** | ✅ workflow badge + release badge（中英文 README） |
+| 4 | **version.py ↔ git tag 同步校验** | ✅ build.yml 新增 Assert step（tag 触发与 tag 比对；dispatch 与 version.py 比对） |
+| 5 | **测试覆盖率** | ✅ coverage 接入 test job（--source 全模块，report + xml 上传 artifact，暂不强制阈值） |
+| 6 | **exe 代码签名** | ✅ 无证书；README 中英文补「杀软误报处理」指引（白名单/源码运行/VirusTotal/开源审计） |
+| 7 | **GitHub Pages 文档站**（可选） | ⏸️ 未做（可选低优先） |
+
+执行记录：4 个并行 subagent（CHANGELOG / CONTRIBUTING+模板 / README 徽章+签名 / CI workflow）；
+主代理集成：CHANGELOG 仓库 URL 修正、README 补「贡献指南」链接与测试数修正（152）、中英文同步。
 
 ## P3 ⚪ 已知限制（记录，不修）
 

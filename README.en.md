@@ -18,6 +18,8 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey" alt="Platform">
   <img src="https://img.shields.io/badge/dependencies-zero-orange" alt="Zero deps">
+  <img src="https://img.shields.io/github/actions/workflow/status/Niangaol/UsageMonitor/build.yml" alt="CI">
+  <img src="https://img.shields.io/github/v/release/Niangaol/UsageMonitor" alt="Release">
 </p>
 
 A standalone Windows monitoring tool that runs in the background with an extremely low performance footprint. It automatically records which software you use each day and for how long; how long you chatted with specific contacts on WeChat/QQ/DingTalk; how much time you spent on video, coding, or studying in the browser; and how much time you spent on AI coding tools such as opencode, pi agent, and ChatGPT.
@@ -46,6 +48,7 @@ Implemented against the requirements document *《项目需求与开发文档.md
 - [Privacy and Repository Notes (GitHub)](#privacy-and-repository-notes-github)
 - [Performance Benchmarks](#performance-benchmarks-this-machine)
 - [Testing](#testing)
+- [Contributing](#contributing)
 - [FAQ](#faq)
 - [Known Limitations](#known-limitations)
 - [Roadmap](#roadmap)
@@ -168,6 +171,15 @@ Tray right-click menu: **Today's Overview / Open Dashboard / Pause · Resume / E
 
 **Single-instance protection**: daemon mode uses a Windows named mutex (`UsageMonitorMutex`) to guarantee only one monitoring instance runs at a time
 (preventing duplicate `usage.jsonl` writes when multiple instances are accidentally started); a duplicate instance exits immediately and writes a record to that day's `errors.log`.
+
+### Handling Antivirus False Positives
+
+The packaged **single-file EXE is not code-signed**, so some antivirus products (e.g. Huorong, 360, Windows Defender SmartScreen, etc.) may flag it as a false positive. If you run into this, you can:
+
+- **Add to allowlist/trust**: add `dist\UsageMonitor.exe` (or the `data_root` data directory) to your antivirus trust/allowlist
+- **Run from source instead**: the project has zero third-party dependencies, so just run `python monitor.py` to completely avoid EXE false positives
+- **Submit to VirusTotal**: upload the EXE to [VirusTotal](https://www.virustotal.com/) for a second opinion, and report a false positive to the vendor if confirmed
+- **The project is open source and auditable**: this project is MIT-licensed ([repository](https://github.com/Niangaol/UsageMonitor)), so you can review the source to confirm there is no malicious behavior
 
 ### Viewing Reports
 
@@ -426,7 +438,7 @@ is a list of custom group names. If the file is missing or corrupted it is treat
 
 ```powershell
 python monitor.py --test 30   # test mode (runs for N seconds then exits and prints a summary)
-python test_all.py            # full integration tests (109 assertions, ~1 minute)
+python test_all.py            # full integration tests (152 assertions, ~1 minute)
 ```
 
 test_all.py monkey-patches the foreground window/idle/process tree to cover: timing on switch, no timing while idle, WeChat contacts,
@@ -435,6 +447,14 @@ retention cleanup, the reporting pipeline, inventory scan, browser history, alia
 
 **Acceptance criteria**: switch between 3 apps for 1 minute each → the daily report shows each app's duration; lock the screen for 10 minutes → no timing;
 the scheduled task pulls the daemon back up after a restart; idle CPU usage < 0.1%.
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first: development environment,
+code style (zero third-party dependencies, Chinese comments, type annotations), testing requirements
+(`python test_all.py` must pass), commit conventions (`feat:`/`fix:`/`docs:`/`ci:`/`test:`/`chore:` prefixes),
+branch & PR workflow, release process (`git tag vX.Y.Z` → CI builds the Release automatically),
+and privacy rules.
 
 ## FAQ
 

@@ -18,6 +18,8 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey" alt="Platform">
   <img src="https://img.shields.io/badge/dependencies-zero-orange" alt="Zero deps">
+  <img src="https://img.shields.io/github/actions/workflow/status/Niangaol/UsageMonitor/build.yml" alt="CI">
+  <img src="https://img.shields.io/github/v/release/Niangaol/UsageMonitor" alt="Release">
 </p>
 
 独立的 Windows 后台监控工具：常驻运行、性能占用极低，自动记录你每天在电脑上
@@ -48,6 +50,7 @@
 - [隐私与仓库说明（GitHub）](#隐私与仓库说明github)
 - [性能实测](#性能实测本机基准)
 - [测试](#测试)
+- [贡献指南](#贡献指南)
 - [FAQ](#faq)
 - [已知局限](#已知局限)
 - [路线图](#路线图)
@@ -167,6 +170,15 @@ python -m PyInstaller UsageMonitor.spec --noconfirm
 
 **单实例保护**：守护模式通过 Windows 命名互斥锁（`UsageMonitorMutex`）保证同一时间只有一个监控实例
 （防止误开多个导致 usage.jsonl 重复写入）；重复启动的实例会直接退出并在当日 errors.log 留一条记录。
+
+### 杀软误报处理
+
+打包的**单文件 exe 未做代码签名**，可能被部分杀毒软件（如火绒、360、Windows Defender SmartScreen 等）误报。如遇误报，可按以下方式处理：
+
+- **添加白名单/信任**：将 `dist\UsageMonitor.exe`（或 `data_root` 数据目录）加入杀软的信任/白名单
+- **源码运行替代**：项目零第三方依赖，直接用 `python monitor.py` 运行即可，完全避免 exe 误报
+- **提交 VirusTotal 分析**：上传 exe 到 [VirusTotal](https://www.virustotal.com/) 复核，确认误报后便于向厂商申诉
+- **项目开源可审计**：本项目为 MIT 开源（[仓库地址](https://github.com/Niangaol/UsageMonitor)），可审计源码确认无恶意行为
 
 ### 查看报告
 
@@ -427,7 +439,7 @@ install.ps1 注册两个计划任务：
 
 ```powershell
 python monitor.py --test 30   # 测试模式（跑 N 秒后退出并打印汇总）
-python test_all.py            # 完整集成测试（109 项断言，约 1 分钟）
+python test_all.py            # 完整集成测试（152 项断言，约 1 分钟）
 ```
 
 test_all.py 通过猴子补丁模拟前台窗口/空闲/进程树，覆盖：切换计时、空闲不计时、微信联系人、
@@ -436,6 +448,12 @@ test_all.py 通过猴子补丁模拟前台窗口/空闲/进程树，覆盖：切
 
 **验收要点**：切换 3 个软件各 1 分钟 → 日报给出各自时长；锁屏 10 分钟 → 不计时；
 重启后计划任务自动拉起；静态 CPU 占用 < 0.1%。
+
+## 贡献指南
+
+欢迎贡献！请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)：开发环境、代码风格（零第三方依赖、中文注释、类型注解）、
+测试规范（`python test_all.py` 全量通过）、提交规范（`feat:/fix:/docs:/ci:/test:/chore:` 前缀）、
+分支与 PR 流程、发布流程（`git tag vX.Y.Z` → CI 自动构建 Release）与隐私约定。
 
 ## FAQ
 
