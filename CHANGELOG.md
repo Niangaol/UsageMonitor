@@ -10,6 +10,10 @@
 
 已合并到 `main`、尚未打 `vX.Y.Z` tag 的变更。
 
+## [1.1.0] - 2026-08-15
+
+功能增强大版本：应用分组自定义（P0）+ 九项功能增强（P1）+ 工程/质量项（P2）。
+
 ### 新增
 - 应用分组自定义（P0）：`classifier` 支持 `load/save_app_groups`（TTL 5s 缓存 + 原子写）、
   `all_categories`、`classify_category` 用户覆盖优先；仪表盘新增 GET `/api/groups` 与
@@ -26,7 +30,10 @@
   服务则复用；`--smoke` 冒烟模式（启动 → 截图 → 退出，CI 自检用）；`monitor.open_dashboard`
   优先 Electron 壳（打包 exe > dev 模式），找不到回退默认浏览器，`USAGEMON_USE_BROWSER=1`
   强制回退；paths 环境变量 `USAGEMON_PROJECT_DIR`/`DATA_ROOT`/`PORT`/`PYTHON`。
-- 英文版 README（`README.en.md`，482 行）及双语互链。
+- 英文版 README（`README.en.md`）及双语互链。
+- 工程/质量（P2）：CHANGELOG.md（keep-a-changelog 格式）、CONTRIBUTING.md 贡献指南、
+  Issue/PR 模板（bug_report / feature_request / pull request）、README CI/Release 徽章、
+  杀软误报处理指引；CI 新增 version↔git tag 同步校验与 coverage 覆盖率报告（上传 artifact）。
 
 ### 修复
 - 修复 `do_POST` 未知路径 405 回归；`/api/groups` 分类使用服务 `data_root`。
@@ -78,5 +85,6 @@
 - 测试：test_all 新增 11 项 dashboard API 测试（端点 / 403 / 安全头 / 错误码 / 路径穿越），
   构建后 `UsageMonitor.exe --version` 冒烟，全量 125 项门禁通过。
 
-[未发布]: https://github.com/Niangaol/UsageMonitor/compare/v1.0.0...HEAD
+[未发布]: https://github.com/Niangaol/UsageMonitor/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.0.0
