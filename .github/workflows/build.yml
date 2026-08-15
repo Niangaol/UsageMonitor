@@ -16,7 +16,7 @@ jobs:
       - name: Install test dependencies
         run: pip install coverage
       - name: Run tests with coverage
-        run: coverage run --source=monitor,classifier,report,dashboard,browser_history,inventory,win32core,paths,applog,tray -m test_all.py
+        run: coverage run --source=monitor,classifier,report,dashboard,browser_history,inventory,win32core,paths,applog,tray test_all.py
         timeout-minutes: 10
       # 首次接入覆盖率，暂不强制 fail-under 阈值以免 CI 意外变红；
       # 后续可按基线逐步收紧：coverage report -m --fail-under=<阈值>
