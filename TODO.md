@@ -72,6 +72,28 @@
 执行记录：4 个并行 subagent（CHANGELOG / CONTRIBUTING+模板 / README 徽章+签名 / CI workflow）；
 主代理集成：CHANGELOG 仓库 URL 修正、README 补「贡献指南」链接与测试数修正（152）、中英文同步。
 
+## 智能洞察 ✅ 已完成（2026-08-15，v1.2.0 候选，不发布 tag）
+
+| 文件 | 内容 | 验证状态 |
+|---|---|---|
+| `insights.py` | 规则引擎（study/game/health/efficiency/balance/trend）+ AI 客户端（urllib/InsightsError）+ 缓存/单飞锁 + CLI | ✅ 新增 6 组测试全过 |
+| `config.default.json` | 新增 `insights` 段（enabled/in_report/rules/ai），深合并自动生效 | ✅ |
+| `config.json` | 本地开启 `ai.enabled=true`（用户要求接入 AI；仓库默认关闭保护隐私） | ✅ |
+| `report.py` | 日报末尾追加「📌 今日建议」段（仅离线规则洞察） | ✅ |
+| `dashboard.py` | `/api/insights`、`/api/insights/ai` + 「洞察」视图（sidebar/TITLES/loader/JS/设置 AI 状态行） | ✅ |
+| `UsageMonitor.spec` | `hiddenimports` 增加 `'insights'` | ✅ |
+| `test_all.py` | 新增 6 组（规则、AI 提示词隐私、AI 调用、缓存、仪表盘 API、日报段落），全量 **199 项通过** | ✅ |
+| `ruff.toml` | 锁定基础规则集（E4/E7/E9/F），并清理存量 E/F 违规；`ruff check .` 零违规 | ✅ |
+| `README.md` / `README.en.md` / `CHANGELOG.md` | 功能特性、智能洞察章节、配置说明、隐私声明同步 | ✅ |
+
+执行记录：
+1. `python test_all.py` 全量回归 → **199 项通过**（原 152 + 新增 47 项断言）
+2. `python insights.py --day 2026-08-10 --data-root demo_data` 命中学习/游戏/趋势 3 条规则
+3. `python insights.py --day 2026-08-10 --json` 真实数据命中 5 条规则
+4. AI 真实调用受外部网络限制未执行；`_chat_completion` 已用 monkeypatch 测试覆盖 URL/请求体/HTTP 错误/超时
+5. `python -m ruff check .` → All checks passed
+6. exe 重建随下次发布由 CI 完成（UsageMonitor.spec 已加入 hiddenimports）
+
 ## P3 ⚪ 已知限制（记录，不修）
 
 - 管理员权限窗口标题读不到（需管理员模式运行监控，未实现该选项）
@@ -88,7 +110,7 @@
 - **Python**：默认 `python`=3.11（有 PyInstaller）；`py -3`=3.14（无 PyInstaller）
 - **构建**：`python -m PyInstaller UsageMonitor.spec --noconfirm`（先停守护任务，exe 会被占用）
 - **发布**：`git tag vX.Y.Z && git push origin vX.Y.Z` → CI 自动测试→构建→冒烟→Release
-- **测试**：`python test_all.py`（129 项 + 未跑通的分组测试）
+- **测试**：`python test_all.py`（199 项全过）；`python -m ruff check .`（零违规）
 - **视觉验收**：Edge headless 截图 + qwen3.7-plus（key 自动读 `~/.config/opencode/opencode.json`）
 - **守护**：计划任务 `UsageMonitor`（exe）/`UsageMonitorReport`（每日 19:30 日报）
 - **测试管线文件**（temp 目录，未入库）：`shot_views.py`（5 视图截图）、`qwen_ui_qa.py`（视觉验收）

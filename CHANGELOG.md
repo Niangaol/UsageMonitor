@@ -10,6 +10,26 @@
 
 已合并到 `main`、尚未打 `vX.Y.Z` tag 的变更。
 
+### 新增
+- 智能洞察模块（v1.2.0 候选）：新增 `insights.py`（纯标准库），离线规则引擎基于
+  `report.aggregate()` 生成学习 / 游戏 / 健康 / 效率 / 平衡 / 趋势六类结构化建议；
+  可选 AI 建议（OpenAI 兼容 `chat/completions`，`urllib` 零依赖，默认关闭、聚合统计
+  隐私过滤、成功写缓存 `<data_root>/YYYY-MM-DD/insights.json` + 线程单飞锁）。
+- 仪表盘「洞察」视图（侧边栏新入口）：`GET /api/insights`（规则即时 + AI 读缓存）与
+  `GET /api/insights/ai?date=…&refresh=1`（强制重生成）；规则卡片 severity 配色、
+  AI 面板状态/错误态、设置页 AI 配置状态。
+- 日报 `report.md` 追加「📌 今日建议」段（仅离线规则洞察，`insights.enabled &&
+  insights.in_report` 时启用，绝不发起网络请求）。
+- `config.default.json` 新增 `insights` 配置段（规则阈值 + AI 端点）；本地 `config.json`
+  按用户要求开启 `insights.ai.enabled`，仓库默认关闭以保护隐私。
+- CLI：`python insights.py --day YYYY-MM-DD [--ai] [--json] [--data-root …]`。
+- 测试新增 6 组智能洞察测试（规则 / AI 提示词隐私 / AI 调用 / 缓存 / 仪表盘 API / 日报段落）。
+
+### 变更
+- `UsageMonitor.spec` `hiddenimports` 增加 `insights`。
+- 新增 `ruff.toml` 锁定基础 lint 规则集（E4/E7/E9/F），并清理存量 E/F 违规。
+- 文档同步：README（中英）新增「智能洞察」章节与隐私声明；TODO 记录执行状态。
+
 ## [1.1.0] - 2026-08-15
 
 功能增强大版本：应用分组自定义（P0）+ 九项功能增强（P1）+ 工程/质量项（P2）。

@@ -18,7 +18,6 @@ import ctypes.wintypes as wt
 import os
 import sys
 import paths  # noqa: E402
-import datetime
 
 user32 = ctypes.windll.user32
 shell32 = ctypes.windll.shell32
@@ -168,10 +167,22 @@ shell32.Shell_NotifyIconW.restype = wt.BOOL
 shell32.Shell_NotifyIconW.argtypes = [wt.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
 
 # 状态（由 run() 注入）
-_overview_fn = lambda: "今日概览"
-_set_paused_fn = lambda paused: None
-_is_paused_fn = lambda: False
-_open_dashboard_fn = lambda view=None: None
+def _overview_fn() -> str:
+    return "今日概览"
+
+
+def _set_paused_fn(paused: bool) -> None:
+    return None
+
+
+def _is_paused_fn() -> bool:
+    return False
+
+
+def _open_dashboard_fn(view=None) -> None:
+    return None
+
+
 _stop_event = None
 _data_root = paths.default_data_root()
 

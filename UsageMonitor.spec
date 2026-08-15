@@ -10,7 +10,7 @@ a = Analysis(
         ('assets/icon.ico', 'assets'),
         ('assets/tray.ico', 'assets'),
     ],
-    hiddenimports=[],
+    hiddenimports=['insights'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

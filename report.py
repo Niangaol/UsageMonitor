@@ -385,6 +385,34 @@ def _inventory_summary(date_str: str, data_root: str) -> dict | None:
         return None
 
 
+def _insights_section(agg: dict, date_str: str, data_root: str) -> str | None:
+    """生成日报「今日建议」段（仅离线规则洞察，绝不发起网络请求）。
+
+    insights.enabled && insights.in_report 且规则非空时返回 Markdown 列表，
+    否则返回 None。任何异常都静默降级为无建议（日报主体不受影响）。
+    """
+    try:
+        import classifier  # noqa: PLC0415 —— 惰性导入避免循环依赖
+        import insights  # noqa: PLC0415
+        config_path = os.path.join(data_root, "config.json")
+        if os.path.isfile(config_path):
+            config = classifier.load_config(config_path)
+        else:
+            config = classifier.load_config()
+        ins = config.get("insights")
+        if not (isinstance(ins, dict) and ins.get("enabled", True) and ins.get("in_report", True)):
+            return None
+        prev_day = (datetime.datetime.strptime(date_str, "%Y-%m-%d")
+                    - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+        prev_agg = aggregate(prev_day, data_root)
+        rules = insights.rule_insights(agg, config, prev_agg)
+        if not rules:
+            return None
+        return "\n".join(f"- [{rule['title']}] {rule['detail']}" for rule in rules)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def generate_consolidated_md(date_str: str, data_root: str, full_urls: bool = False) -> str:
     """生成每日汇总 MD：总览 + 会话统计 + 浏览器访问明细 + 软件清单概要。
 
@@ -450,6 +478,14 @@ def generate_consolidated_md(date_str: str, data_root: str, full_urls: bool = Fa
         out.append(f"扫描时间：{inv['scanned_at']}，共 {inv['count']} 个应用（运行中 {inv['running']} 个）")
         out.append("")
         out.append(_md_table(["类别", "应用数"], [[cat, str(n)] for cat, n in inv["categories"].items()]))
+
+    # 今日建议（离线规则洞察，仅当 insights.enabled && insights.in_report）
+    insights_section = _insights_section(agg, date_str, data_root)
+    if insights_section:
+        out.append("## 📌 今日建议")
+        out.append("")
+        out.append(insights_section)
+        out.append("")
 
     if len(out) <= 2:  # 完全没有数据
         out.append("（当日无数据）")
@@ -684,7 +720,6 @@ def verify_days(data_root: str, days: list[str] | None = None, repair: bool = Fa
     统计好行/坏行；repair=True 时剔除坏行（原文件备份为 usage.jsonl.bak_verify）
     并重建缺失的 report.md/csv。返回汇总。
     """
-    import glob
     if days is None:
         days = sorted(
             d for d in os.listdir(data_root)

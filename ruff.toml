@@ -1,0 +1,7 @@
+# ruff.toml — 项目 lint 基线
+# 本仓库为纯标准库、无类型注解包袱的实用脚本集，锁定 pycodestyle + pyflakes
+# 基础规则（E4/E7/E9/F），保证 `ruff check .` 稳定可复现。
+target-version = "py311"
+
+[lint]
+select = ["E4", "E7", "E9", "F"]

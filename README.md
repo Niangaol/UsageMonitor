@@ -99,6 +99,8 @@
 - **本地网页仪表盘**：24 小时活跃分布、14/30 天趋势、URL 明细、类别/应用/AI 工具统计、会话过滤，仅监听 127.0.0.1
 - **应用分组自定义**：仪表盘「分组」视图把任意应用放进/移出分组（含自定义分组），
   覆盖层（`app_groups.json`）优先级最高、实时生效（TTL 5s 缓存，无需重启）
+- **智能洞察**：离线规则引擎生成学习/游戏/健康/效率/平衡/趋势建议并写入日报「今日建议」；
+  可选 AI 洞察（OpenAI 兼容 API，默认关闭，聚合统计隐私过滤，零第三方依赖）
 - **托盘图标（可选）**：今日概览 / 打开今日日报 / 暂停·继续 / 退出
 - **开机自启**：install.ps1 注册计划任务（崩溃自动重启）；数据默认保留 90 天自动清理
 
@@ -212,7 +214,7 @@ UsageMonitor.exe --dashboard --open           # exe 方式
 仪表盘功能（v3）：
 - **自动明暗主题**：默认跟随系统（prefers-color-scheme，Windows 切换深浅色时实时跟随）；
   右上角 🌗 按钮可循环切换 自动/浅色/深色（localStorage 记住选择）；canvas 图表颜色同步适配
-- 六个视图 Tab：**概览 / 趋势 / 日报 / 会话 / 日志 / 分组**
+- 十个视图 Tab：**概览 / 趋势 / 日报 / 周报 / 月报 / 会话 / 日志 / 分组 / 洞察 / 设置**
 - 今日概览：大数字卡片（总活跃/AI/社交/浏览器/会话数）+ 24 小时活跃分布 + 14/30 天趋势 + 类别/应用/AI 工具/联系人/浏览器汇总
 - **日报视图**：选日期渲染当日 report.md（前端 mini-markdown，表格/标题/列表/代码块）
 - **明细视图**：会话明细与浏览器 URL 明细（均支持关键词过滤）
@@ -226,6 +228,10 @@ UsageMonitor.exe --dashboard --open           # exe 方式
   - 把应用**移动到**任意分组（含自定义分组），或**移出**分组恢复自动分类
   - **新增分组**（输入名称回车/按钮）与**删除分组**（组内应用自动恢复自动分类）
   - 覆盖层优先级：**用户分组(exe 精确) > 配置关键词(exe/title)**，实时生效（TTL 5s 缓存）
+- **洞察视图**：
+  - 规则卡片：学习/游戏/健康/效率/平衡/趋势，severity 配色（蓝=建议 / 橙=注意 / 红=提醒）
+  - AI 面板：provider/model/上次生成时间、生成/重新生成按钮、错误提示框与结果卡片
+  - 规则 100% 本地计算；AI 只在开启并点击生成/读缓存时调用（见下方「智能洞察」）
 
 ### 应用分组数据文件与 API
 
@@ -251,6 +257,61 @@ API（仅 127.0.0.1，POST 带同源 Origin 校验）：
 
 命令行同样生效：monitor 分类、日报/周报/月报、`--reclassify`、软件清单全部走 `classify_category()`，
 改分组无需重启任何进程。
+
+### 智能洞察
+
+```powershell
+python insights.py --day 2026-08-10                  # 离线规则洞察
+python insights.py --day 2026-08-10 --ai             # 同时生成/读取 AI 洞察
+python insights.py --day 2026-08-10 --ai --refresh   # 忽略缓存强制重新生成
+python insights.py --day 2026-08-10 --json           # JSON 输出
+```
+
+- **规则引擎（离线、零依赖、确定性）**：基于当日聚合数据生成六类建议——学习
+  （网课时长 + 学习目标）、游戏（时长提醒 + 占比平衡）、健康（最长连续会话 + 深夜使用）、
+  效率（AI 编程）、平衡（社交聊天）、趋势（与昨日活跃时长对比）。
+- **日报「今日建议」**：`report.md` 末尾自动追加规则洞察（仅离线，绝不联网），
+  由 `insights.enabled` 与 `insights.in_report` 控制。
+- **AI 洞察（可选、默认关闭）**：把**聚合统计**发送到 OpenAI 兼容 `chat/completions`
+  端点（纯 `urllib`，零第三方依赖），成功后缓存到 `<data_root>/YYYY-MM-DD/insights.json`。
+  并发调用由模块级锁单飞；`--refresh` 或仪表盘「重新生成」强制刷新。
+
+#### 配置（config.json 的 insights 段）
+
+```json
+{
+  "insights": {
+    "enabled": true,
+    "in_report": true,
+    "rules": {
+      "long_session_min": 90,
+      "late_night_hour": 23,
+      "game_alert_hours": 2,
+      "study_goal_hours": 1,
+      "game_ratio_warn": 0.4
+    },
+    "ai": {
+      "enabled": false,
+      "provider": "opencodego",
+      "base_url": "",
+      "api_key": "",
+      "model": "deepseek-v4-flash",
+      "timeout_s": 60,
+      "send_raw_titles": false,
+      "language": "zh"
+    }
+  }
+}
+```
+
+开启 AI 只需：`insights.ai.enabled=true`，并填 `base_url`/`api_key`/`model`；
+如果本机已有 `%USERPROFILE%\.config\opencode\opencode.json`，会自动发现
+`opencodego`（`https://opencode.ai/zen/go/v1`，模型优先 `deepseek-v4-flash`）并回退
+`sensenova`；config.json 显式配置始终优先于自动发现。
+
+> **隐私声明**：AI 洞察开启后，聚合统计（时长/会话数/分类 Top/应用 Top，**不含**窗口标题、
+> URL、联系人名）会发送到你配置的 API 端点。`send_raw_titles=true` 才会附加 Top 标题/URL
+> 样本；联系人名在任何情况下都不上送。规则洞察始终离线。
 
 ## 安装与自启
 
@@ -325,6 +386,7 @@ install.ps1 注册两个计划任务：
 | `terminal_tools` | 终端 TUI 工具识别（窗口标题关键词 → term_tool 字段） |
 | `subcategories` | 二级子分类规则（大类 → exe 关键词 → 子类字段） |
 | `browser_history_enabled` / `browser_history` | URL 级历史解析开关与各浏览器 user_data 路径（null=自动探测） |
+| `insights` | 智能洞察：`enabled`/`in_report`、规则阈值（`rules`）、AI 端点与隐私开关（`ai`，默认关闭） |
 | `title_blacklist` | 标题隐私黑名单（正则），命中记 `[已隐藏]`（历史解析的 URL/标题同样生效） |
 
 ### aliases.json（联系人别名）
@@ -406,11 +468,14 @@ install.ps1 注册两个计划任务：
 - **本地私有配置不入库**：`aliases.json`（真实联系人别名）被忽略，仓库提供 `aliases.example.json` 模板
 - 代码本身不包含任何个人数据；分类规则、关键词、黑名单全部在 `config.json`（可入库的通用规则）
 - 默认无任何联网上传；仪表盘仅监听 127.0.0.1；截屏/录屏/OCR/键盘钩子/剪贴板读取均未实现
+- 唯一例外：你主动开启 `insights.ai.enabled=true` 后，**聚合统计**（不含标题/URL/联系人名）
+  会发送到配置的 AI API 端点；仓库默认配置保持关闭
 - 数据默认保留 90 天自动清理（`config.json` 可调）
 
 ## 隐私与安全（运行时）
 
-- 所有数据仅保存在本机 `data_root`，**无任何联网上传**
+- 所有数据默认仅保存在本机 `data_root`，**无任何联网上传**；唯一例外是你主动开启
+  `insights.ai.enabled=true` 后，聚合统计（不含标题/URL/联系人名）会发送到配置的 AI 端点
 - 只记录元数据（应用名、窗口标题、时间、类别）；不读取聊天消息、密码、输入内容、文件内容
 - `title_blacklist` 命中的标题一律记为 `[已隐藏]`，不落盘原文
 - **仪表盘防偷读（CSRF 防护）**：所有 `/api/*` 校验 `Origin`/`Referer`，必须指向
@@ -439,12 +504,13 @@ install.ps1 注册两个计划任务：
 
 ```powershell
 python monitor.py --test 30   # 测试模式（跑 N 秒后退出并打印汇总）
-python test_all.py            # 完整集成测试（152 项断言，约 1 分钟）
+python test_all.py            # 完整集成测试（199 项断言）
 ```
 
 test_all.py 通过猴子补丁模拟前台窗口/空闲/进程树，覆盖：切换计时、空闲不计时、微信联系人、
 浏览器分类、终端 AI 工具、AI 误伤防护、跨天轮转、跨天隔离、隐私黑名单、暂停/继续、
-保留清理、报表管线、清单扫描、浏览器历史、别名表、重归类。
+保留清理、报表管线、清单扫描、浏览器历史、别名表、重归类、应用分组、智能洞察
+（规则 / AI 提示词隐私 / AI 调用 / 缓存 / 仪表盘 API / 日报段落）。
 
 **验收要点**：切换 3 个软件各 1 分钟 → 日报给出各自时长；锁屏 10 分钟 → 不计时；
 重启后计划任务自动拉起；静态 CPU 占用 < 0.1%。
@@ -476,6 +542,11 @@ A: 守护进程会降级为静默运行（托盘不可用时），数据记录�
 **Q: 支持 Firefox 吗？**
 A: 浏览器 URL 级解析目前支持 Chromium 系（Chrome/Edge/Tabbit 等，自动探测）；
 Firefox 用 places.sqlite 结构不同，暂不支持；其他浏览器可在 config 的 `browser_history` 配 user_data 路径。
+
+**Q: AI 洞察会把我的数据发出去吗？**
+A: 默认完全不会（`insights.ai.enabled=false`）。只有你主动开启并配置 API 端点后，
+才会发送**聚合统计**（时长/会话数/分类 Top/应用 Top）；默认不含窗口标题、URL、联系人名，
+`send_raw_titles=true` 才会附加标题/URL 样本，联系人名在任何情况下都不上送。规则洞察始终离线。
 
 **Q: 杀毒软件误报？**
 A: 打包的 exe 建议代码签名；可将 `data_root` 目录加入杀软白名单。

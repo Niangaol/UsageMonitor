@@ -1008,5 +1008,26 @@
     "sublime_text.exe",
     "notepad++.exe",
     "vim.exe"
-  ]
+  ],
+  "insights": {
+    "enabled": true,
+    "in_report": true,
+    "rules": {
+      "long_session_min": 90,
+      "late_night_hour": 23,
+      "game_alert_hours": 2,
+      "study_goal_hours": 1,
+      "game_ratio_warn": 0.4
+    },
+    "ai": {
+      "enabled": true,
+      "provider": "opencodego",
+      "base_url": "",
+      "api_key": "",
+      "model": "deepseek-v4-flash",
+      "timeout_s": 60,
+      "send_raw_titles": false,
+      "language": "zh"
+    }
+  }
 }

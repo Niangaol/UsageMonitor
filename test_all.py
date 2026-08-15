@@ -34,6 +34,7 @@ import monitor  # noqa: E402
 import classifier  # noqa: E402
 import report  # noqa: E402
 import inventory  # noqa: E402
+import insights  # noqa: E402
 
 TMP_ROOT = os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"), "usage_monitor_tests")
 
@@ -462,8 +463,8 @@ def test_month_and_json():
          "contact": "张三", "ai_tool": None, "active": True},
     ]
     with open(os.path.join(tmp, day, "usage.jsonl"), "w", encoding="utf-8") as fh:
-        for l in lines:
-            fh.write(json.dumps(l, ensure_ascii=False) + "\n")
+        for rec in lines:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     agg = report.aggregate_month("2026-08", tmp)
     check(agg["total_active_ms"] == 120000, "月度聚合时长正确", str(agg["total_active_ms"]))
     check(len(agg["per_day"]) == 1 and agg["per_day"][0]["date"] == day, "每日明细正确")
@@ -661,12 +662,12 @@ def test_reclassify():
          "category": "浏览器", "contact": None, "ai_tool": None, "active": True},
     ]
     with open(os.path.join(tmp, day, "usage.jsonl"), "w", encoding="utf-8") as fh:
-        for l in lines:
-            fh.write(json.dumps(l, ensure_ascii=False) + "\n")
+        for rec in lines:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
     n = report.reclassify_day(day, tmp)
     check(n == 1, "1 条记录变更", str(n))
-    recs = [json.loads(l) for l in open(os.path.join(tmp, day, "usage.jsonl"), encoding="utf-8") if l.strip()]
+    recs = [json.loads(line) for line in open(os.path.join(tmp, day, "usage.jsonl"), encoding="utf-8") if line.strip()]
     pi = [r for r in recs if "π" in r["title"]][0]
     check(pi["ai_tool"] == "pi agent", "π 会话重分类为 pi agent", str(pi["ai_tool"]))
     check(pi["category"] == "AI编程", "π 会话类别重分类为 AI编程", pi["category"])
@@ -846,10 +847,7 @@ def test_electron_shell_detection():
     os.makedirs(os.path.join(fake, "node_modules", "electron", "dist"), exist_ok=True)
     open(os.path.join(fake, "node_modules", "electron", "dist", "electron.exe"), "w").close()
     open(os.path.join(fake, "main.js"), "w").close()
-    real_base = monitor._find_electron_shell.__globals__.get  # noqa: F841
-    # 临时替换模块内的 base 路径逻辑（用 monkeypatch 探针：直接测路径拼接函数）
-    import types
-    orig = monitor._find_electron_shell
+    # 直接测试探测优先级逻辑：dist 下的 exe 应优先于 dev 模式
     calls = {}
 
     def fake_find():
@@ -990,6 +988,346 @@ def test_report_balloon_once_per_day():
     shutil.rmtree(root, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+# 智能洞察模块（规则引擎 + AI 客户端 + 缓存 + 仪表盘/日报集成）
+# ---------------------------------------------------------------------------
+def _make_fake_agg(total_h: float = 6.0) -> dict:
+    """构造足以触发全部规则类型的聚合结果。"""
+    hour_ms = 3600000
+    total_ms = int(total_h * hour_ms)
+    return {
+        "date": "2026-08-10",
+        "session_count": 4,
+        "total_active_ms": total_ms,
+        "by_app": {"VS Code": 2 * hour_ms, "Steam": 3 * hour_ms, "微信": hour_ms},
+        "by_category": {
+            "办公学习": 1 * hour_ms,
+            "游戏": 3 * hour_ms,
+            "AI编程": hour_ms,
+            "社交聊天": hour_ms,
+            "浏览器": hour_ms,
+        },
+        "by_contact": {"微信": {"张三": 30 * 60000}},
+        "by_ai": {"opencode": hour_ms},
+        "by_browser": {"学习": 30 * 60000, "视频": 30 * 60000},
+        "by_subcategory": {},
+        "by_term_tool": {},
+        "hourly_ms": [0] * 24,
+        "sessions": [
+            {"start": "2026-08-10T09:00:00", "end": "2026-08-10T10:40:00",
+             "duration_ms": 100 * 60000, "app": "VS Code", "category": "办公学习"},
+            {"start": "2026-08-10T14:00:00", "end": "2026-08-10T15:00:00",
+             "duration_ms": 60 * 60000, "app": "Steam", "category": "游戏"},
+        ],
+    }
+
+
+def test_insights_rules():
+    print("[test] 智能洞察规则引擎（study/game/health/efficiency/balance/trend + 阈值/空数据）")
+    agg = _make_fake_agg()
+    agg["hourly_ms"][1] = 10 * 60000  # 深夜 01:00 仍有活动
+    prev = {
+        "date": "2026-08-09",
+        "session_count": 3,
+        "total_active_ms": 4 * 3600000,
+        "by_category": {}, "by_app": {}, "by_ai": {}, "by_browser": {},
+        "by_contact": {}, "hourly_ms": [0] * 24, "sessions": [],
+    }
+    cfg = classifier.load_config()
+    rules = insights.rule_insights(agg, cfg, prev)
+    types = {r["type"] for r in rules}
+    check({"study", "game", "health", "efficiency", "balance", "trend"} <= types,
+          "六类规则全部命中", str(types))
+    check(all(r["severity"] in ("info", "warn", "alert") for r in rules), "severity 合法")
+    study = next(r for r in rules if r["type"] == "study")
+    check("今日学习" in study["detail"] and "网课" in study["detail"], "学习建议含网课时长",
+          study["detail"])
+    game = next(r for r in rules if r["type"] == "game")
+    check(game["severity"] == "warn" and "劳逸结合" in game["detail"], "游戏超阈值 -> warn", game["detail"])
+    health = [r for r in rules if r["type"] == "health"]
+    check(any("最长连续使用" in r["detail"] for r in health), "长会话健康提醒")
+    check(any("深夜" in r["detail"] for r in health), "深夜使用健康提醒")
+    trend = next(r for r in rules if r["type"] == "trend")
+    check("多 50%" in trend["detail"], "趋势对比 +50%", trend["detail"])
+
+    # 阈值可配置：把提醒线提到 120 分钟后，100 分钟会话不再触发
+    cfg2 = json.loads(json.dumps(cfg))
+    cfg2["insights"]["rules"]["long_session_min"] = 120
+    rules2 = insights.rule_insights(agg, cfg2, prev)
+    health2 = [r for r in rules2 if r["type"] == "health"]
+    check(all("最长连续使用" not in r["detail"] for r in health2), "阈值提升后长会话不触发")
+    check(any("深夜" in r["detail"] for r in health2), "深夜提醒不受影响")
+
+    # 空数据安全
+    empty = {"date": "2026-08-10", "session_count": 0, "total_active_ms": 0,
+             "by_app": {}, "by_category": {}, "by_ai": {}, "by_browser": {},
+             "by_contact": {}, "hourly_ms": [0] * 24, "sessions": []}
+    check(insights.rule_insights(empty, cfg) == [], "空数据返回空列表")
+
+
+def test_insights_ai_prompt():
+    print("[test] AI 提示词隐私过滤（默认无标题/URL/联系人名；开启后含标题/URL，联系人仍不上送）")
+    agg = _make_fake_agg()
+    agg["sessions"] = agg["sessions"] + [{
+        "start": "2026-08-10T20:00:00", "end": "2026-08-10T20:30:00",
+        "duration_ms": 30 * 60000, "app": "Chrome", "title": "秘密项目资料",
+        "url": "https://secret.example.com/project?token=abc", "category": "浏览器",
+    }]
+    prev = {"date": "2026-08-09", "session_count": 1, "total_active_ms": 3600000,
+            "by_category": {}, "by_app": {}, "by_ai": {}, "by_browser": {},
+            "by_contact": {}, "hourly_ms": [0] * 24, "sessions": []}
+    cfg = classifier.load_config()
+    p_default = insights.build_ai_prompt(agg, cfg, prev, False)
+    check("张三" not in p_default, "默认不上送联系人名")
+    check("秘密项目资料" not in p_default, "默认不上送窗口标题")
+    check("secret.example.com" not in p_default, "默认不上送 URL")
+    check("联系人数量" in p_default and "总活跃时长" in p_default, "默认仍含聚合统计")
+    check("昨日活跃时长" in p_default, "提示词含昨日对比")
+
+    p_raw = insights.build_ai_prompt(agg, cfg, prev, True)
+    check("秘密项目资料" in p_raw and "secret.example.com" in p_raw, "开启后上送标题/URL")
+    check("张三" not in p_raw, "即使开启也不上送联系人名")
+    check("top" not in p_raw.lower() or "原始样本" in p_raw, "原始样本段存在")
+
+
+def test_insights_ai_call():
+    print("[test] AI 调用（urllib 请求体/响应解析/HTTP 错误/超时）")
+    import urllib.error
+    import urllib.request
+
+    class FakeResp:
+        def __init__(self, payload: bytes):
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return self._payload
+
+    calls: list[urllib.request.Request] = []
+
+    def fake_urlopen(req, timeout=None):
+        calls.append(req)
+        return FakeResp(json.dumps({
+            "choices": [{"message": {"content": '[{"type":"health","title":"健康","detail":"记得休息"}]'}}],
+        }).encode("utf-8"))
+
+    orig = insights.urllib.request.urlopen
+    insights.urllib.request.urlopen = fake_urlopen
+    try:
+        text = insights._chat_completion({
+            "base_url": "https://ai.example.test/v1",
+            "api_key": "sk-test",
+            "model": "deepseek-v4-flash",
+            "timeout_s": 60,
+        }, "测试提示词")
+        check(text == '[{"type":"health","title":"健康","detail":"记得休息"}]', "响应 content 解析")
+        check(len(calls) == 1, "恰好调用一次", str(len(calls)))
+        req = calls[0]
+        check(req.full_url == "https://ai.example.test/v1/chat/completions", "URL 拼接正确", req.full_url)
+        check(req.get_header("Authorization") == "Bearer sk-test", "Authorization 头正确")
+        body = json.loads(req.data.decode("utf-8"))
+        check(body["model"] == "deepseek-v4-flash" and body["temperature"] == 0.7
+              and body["max_tokens"] == 800, "请求体参数正确", str(body))
+        check(body["messages"][0]["content"] == "测试提示词", "提示词入消息体")
+    finally:
+        insights.urllib.request.urlopen = orig
+
+    def fail_http(req, timeout=None):
+        raise urllib.error.HTTPError("https://ai.example.test/v1/chat/completions",
+                                     500, "Server Error", {}, io.BytesIO(b"oops"))
+    insights.urllib.request.urlopen = fail_http
+    try:
+        try:
+            insights._chat_completion({
+                "base_url": "https://ai.example.test/v1", "api_key": "k", "model": "m",
+            }, "x")
+            fail("HTTP 错误未抛出", "expected InsightsError")
+        except insights.InsightsError as exc:
+            check("HTTP 500" in str(exc), "非 200 -> InsightsError(HTTP 500)", str(exc))
+    finally:
+        insights.urllib.request.urlopen = orig
+
+    def fail_timeout(req, timeout=None):
+        raise TimeoutError("timed out")
+    insights.urllib.request.urlopen = fail_timeout
+    try:
+        try:
+            insights._chat_completion({
+                "base_url": "https://ai.example.test/v1", "api_key": "k", "model": "m",
+            }, "x")
+            fail("超时未抛出", "expected InsightsError")
+        except insights.InsightsError as exc:
+            check("超时" in str(exc), "超时 -> InsightsError", str(exc))
+    finally:
+        insights.urllib.request.urlopen = orig
+
+
+def test_insights_cache():
+    print("[test] AI 洞察缓存（成功写缓存 / 二次调用不重发 / refresh 重发 / 失败不写缓存）")
+    tmp = fresh_tmp("insights_cache")
+    day = "2026-08-10"
+    os.makedirs(os.path.join(tmp, day), exist_ok=True)
+    with open(os.path.join(tmp, day, "usage.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "start": f"{day}T10:00:00", "end": f"{day}T11:00:00",
+            "duration_ms": 3600000, "exe": "code.exe", "app": "VS Code",
+            "title": "main.py", "category": "办公学习", "active": True,
+        }, ensure_ascii=False) + "\n")
+
+    cfg = classifier.load_config()
+    cfg["data_root"] = tmp
+    cfg["insights"]["ai"].update({
+        "enabled": True, "base_url": "https://ai.example.test/v1",
+        "api_key": "sk-test", "model": "deepseek-v4-flash",
+    })
+    calls: list[int] = []
+
+    def fake_chat(_cfg, _prompt):
+        calls.append(1)
+        return '[{"type":"study","title":"学习","detail":"测试建议"}]'
+
+    orig = insights._chat_completion
+    insights._chat_completion = fake_chat
+    try:
+        r1 = insights.ai_insights(day, tmp, cfg)
+        check(r1["error"] is None and len(r1["insights"]) == 1, "首次生成成功", str(r1))
+        check(len(calls) == 1, "首次真实调用一次")
+        cache_path = os.path.join(tmp, day, "insights.json")
+        check(os.path.isfile(cache_path), "成功写缓存")
+
+        r2 = insights.ai_insights(day, tmp, cfg)
+        check(len(calls) == 1 and r2["generated_at"] == r1["generated_at"], "二次调用读缓存不重发")
+        r3 = insights.ai_insights(day, tmp, cfg, refresh=True)
+        check(len(calls) == 2 and r3["generated_at"] is not None, "refresh 强制重发")
+
+        # 未开启：不读缓存、不请求
+        cfg_off = json.loads(json.dumps(cfg))
+        cfg_off["insights"]["ai"]["enabled"] = False
+        r_off = insights.ai_insights(day, tmp, cfg_off)
+        check("未开启" in (r_off["error"] or ""), "未开启返回错误态", str(r_off))
+
+        # 失败：不写缓存
+        day2 = "2026-08-11"
+
+        def fail_chat(_cfg, _prompt):
+            raise insights.InsightsError("模拟失败")
+        insights._chat_completion = fail_chat
+        r_fail = insights.ai_insights(day2, tmp, cfg)
+        check(r_fail["error"] == "模拟失败", "失败返回错误", str(r_fail))
+        check(not os.path.isfile(os.path.join(tmp, day2, "insights.json")), "失败不写缓存")
+    finally:
+        insights._chat_completion = orig
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_dashboard_insights_api():
+    print("[test] 仪表盘洞察 API（/api/insights 结构 + /api/insights/ai 错误态 + 非法日期 400）")
+    import http.client
+    import threading
+    import dashboard
+
+    tmp = fresh_tmp("dash_insights")
+    day = "2026-08-10"
+    os.makedirs(os.path.join(tmp, day), exist_ok=True)
+    with open(os.path.join(tmp, day, "usage.jsonl"), "w", encoding="utf-8") as fh:
+        for row in (
+            {"start": f"{day}T09:00:00", "end": f"{day}T10:00:00", "duration_ms": 3600000,
+             "exe": "code.exe", "app": "VS Code", "title": "main.py",
+             "category": "办公学习", "active": True},
+            {"start": f"{day}T20:00:00", "end": f"{day}T23:00:00", "duration_ms": 3 * 3600000,
+             "exe": "steam.exe", "app": "Steam", "title": "Steam",
+             "category": "游戏", "active": True},
+        ):
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    config_path = os.path.join(tmp, "config.json")
+    with open(config_path, "w", encoding="utf-8") as fh:
+        json.dump({"insights": {
+            "enabled": True, "in_report": True,
+            "rules": {"long_session_min": 90, "late_night_hour": 23,
+                      "game_alert_hours": 2, "study_goal_hours": 1, "game_ratio_warn": 0.4},
+            "ai": {"enabled": False},
+        }}, fh, ensure_ascii=False)
+    classifier.invalidate_config_cache()
+
+    server = dashboard.create_server(tmp, port=0, config_path=config_path)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def req(path):
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request("GET", path)
+        r = conn.getresponse()
+        data = json.loads(r.read().decode("utf-8", errors="replace"))
+        conn.close()
+        return r.status, data
+
+    try:
+        s, d = req(f"/api/insights?date={day}")
+        check(s == 200, "/api/insights 200", str(s))
+        check(d["date"] == day and isinstance(d["rules"], list) and len(d["rules"]) >= 2,
+              "规则结构正确", str(d))
+        check(d["ai_enabled"] is False and d["ai"] is None, "AI 关闭 -> ai_enabled=false / ai=null")
+        check(any(r["type"] == "study" for r in d["rules"]), "规则含学习")
+        check(any(r["type"] == "game" for r in d["rules"]), "规则含游戏")
+
+        s, d = req(f"/api/insights/ai?date={day}")
+        check(s == 200 and d["ai_enabled"] is False, "/api/insights/ai 未开启错误态 200")
+        check("未开启" in (d.get("ai") or {}).get("error", ""), "错误态文案", str(d))
+
+        s, _ = req("/api/insights?date=bad")
+        check(s == 400, "/api/insights 非法日期 400", str(s))
+        s, _ = req("/api/insights/ai?date=../2026-08-10")
+        check(s == 400, "/api/insights/ai 路径穿越日期 400", str(s))
+    finally:
+        server.shutdown()
+        server.server_close()
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_report_insights_section():
+    print("[test] 日报「今日建议」段（in_report=true 出现；false 不出现）")
+    tmp = fresh_tmp("report_insights")
+    day = "2026-08-10"
+    os.makedirs(os.path.join(tmp, day), exist_ok=True)
+    with open(os.path.join(tmp, day, "usage.jsonl"), "w", encoding="utf-8") as fh:
+        for row in (
+            {"start": f"{day}T09:00:00", "end": f"{day}T11:00:00", "duration_ms": 2 * 3600000,
+             "exe": "code.exe", "app": "VS Code", "title": "main.py",
+             "category": "办公学习", "active": True},
+            {"start": f"{day}T20:00:00", "end": f"{day}T22:00:00", "duration_ms": 2 * 3600000,
+             "exe": "steam.exe", "app": "Steam", "title": "Steam",
+             "category": "游戏", "active": True},
+        ):
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    config_path = os.path.join(tmp, "config.json")
+    with open(config_path, "w", encoding="utf-8") as fh:
+        json.dump({"insights": {
+            "enabled": True, "in_report": True,
+            "rules": {"long_session_min": 90, "late_night_hour": 23,
+                      "game_alert_hours": 2, "study_goal_hours": 1, "game_ratio_warn": 0.4},
+            "ai": {"enabled": False},
+        }}, fh, ensure_ascii=False)
+    classifier.invalidate_config_cache()
+    report.generate_day_report(day, tmp)
+    md = open(os.path.join(tmp, day, "report.md"), encoding="utf-8").read()
+    check("## 📌 今日建议" in md, "in_report=true 含今日建议段")
+    check("- [学习]" in md and "今日学习" in md, "含学习建议")
+    check("- [游戏]" in md, "含游戏建议")
+
+    with open(config_path, "w", encoding="utf-8") as fh:
+        json.dump({"insights": {"enabled": True, "in_report": False}}, fh, ensure_ascii=False)
+    classifier.invalidate_config_cache()
+    report.generate_day_report(day, tmp)
+    md2 = open(os.path.join(tmp, day, "report.md"), encoding="utf-8").read()
+    check("今日建议" not in md2, "in_report=false 无今日建议段")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     print("=" * 60)
     print("电脑使用情况监控 · 完整集成测试")
@@ -1003,6 +1341,8 @@ def main() -> int:
         test_contact_aliases, test_browser_history, test_cross_day_isolation,
         test_reclassify, test_dimension_refinements, test_dashboard_api,
         test_electron_shell_detection, test_app_groups, test_report_balloon_once_per_day,
+        test_insights_rules, test_insights_ai_prompt, test_insights_ai_call,
+        test_insights_cache, test_dashboard_insights_api, test_report_insights_section,
     ]
     for t in tests:
         t()

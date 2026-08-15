@@ -12,7 +12,8 @@
 3. 明细：会话明细与浏览器 URL 明细（均支持关键词过滤）
 4. 周报：最近 7 个有数据日聚合回顾
 5. 月报：按自然月聚合回顾
-6. 设置：数据备份下载 / 恢复上传
+6. 洞察：离线规则洞察卡片 + 可选 AI 洞察面板
+7. 设置：数据备份下载 / 恢复上传
 
 安全与增强（v4）：
 - 可选访问口令（config.json 的 dashboard_token，空/缺失=关闭；开启后所有 /api 需要
@@ -106,6 +107,20 @@ def _required_token(config_path: str | None = None, data_root: str | None = None
         _token_cache["key"] = key
         _token_cache["ts"] = now
     return _token_cache["token"]
+
+
+def _load_config_for_root(root: str, config_path: str | None = None) -> dict:
+    """读取与数据根目录一致的完整配置（已深合并默认值）。
+
+    优先级：显式 --config 路径 > <root>/config.json > 默认 config.json。
+    """
+    import classifier  # noqa: PLC0415
+    if config_path:
+        return classifier.load_config(config_path)
+    local = os.path.join(root, "config.json")
+    if os.path.isfile(local):
+        return classifier.load_config(local)
+    return classifier.load_config()
 
 
 def _month_days_for(data_root: str, month_str: str) -> list[str]:
@@ -497,6 +512,10 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4.5h12v7H2z"/><path d="M2 7h12"/><path d="M6 4.5V9M10 4.5V9"/></svg>
         分组
       </a>
+      <a class="nav-item" data-view="insights" href="#">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.6c3.2 0 5.4 2.1 5.4 4.9 0 2.1-1.2 3.3-2 4.4-.4.6-.8 1-.8 1.6H5.4c0-.6-.4-1-.8-1.6-.8-1.1-2-2.3-2-4.4 0-2.8 2.2-4.9 5.4-4.9z"/><path d="M6.9 14.5h2.2"/></svg>
+        洞察
+      </a>
       <a class="nav-item" data-view="settings" href="#">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3M3.4 3.4l2.1 2.1M10.5 10.5l2.1 2.1M12.6 3.4l-2.1 2.1M5.5 10.5l-2.1 2.1"/><circle cx="8" cy="8" r="2.2"/></svg>
         设置
@@ -627,8 +646,37 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       </div>
     </section>
 
+    <!-- 智能洞察 -->
+    <section class="view" id="view-insights">
+      <div class="panel">
+        <h2>规则洞察 <span class="hint">离线规则引擎 · 自动跟随所选日期</span></h2>
+        <div class="controls" style="margin-bottom:12px">
+          <button class="btn" id="inReload">刷新</button>
+          <span class="hint">规则 100% 本地计算，不上送任何数据</span>
+        </div>
+        <div class="grid" id="inRules" style="margin-top:12px"></div>
+      </div>
+      <div class="panel">
+        <h2>AI 洞察 <span class="hint">可选 · OpenAI 兼容 API · 默认关闭</span></h2>
+        <div class="controls" style="margin-bottom:12px">
+          <button class="btn primary" id="inGen">生成 AI 洞察</button>
+          <span class="hint" id="inAiMeta"></span>
+        </div>
+        <div class="set-note" id="inAiError" style="display:none"></div>
+        <div id="inAiCards" style="margin-top:12px"></div>
+      </div>
+    </section>
+
     <!-- 设置（备份/恢复/口令/主题） -->
     <section class="view" id="view-settings">
+      <div class="set-group">
+        <h3>✨ AI 洞察状态</h3>
+        <div class="desc">AI 洞察默认关闭（隐私优先）。开启方式：数据根目录 <span class="url-cell">config.json</span>
+          的 <b>insights.ai.enabled=true</b>，并配置 <b>base_url / api_key / model</b>
+          （或本机已有 <span class="url-cell">%USERPROFILE%\.config\opencode\opencode.json</span> 时自动发现）。
+          开启后，聚合统计会发送到你配置的 API 端点；规则洞察始终离线。</div>
+        <div class="set-note" id="aiCfgNote"></div>
+      </div>
       <div class="set-group">
         <h3>🗄️ 数据备份</h3>
         <div class="desc">打包数据目录（各日期文件夹 + config.json / app_groups.json / aliases.json，
@@ -662,7 +710,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 const ROOT_DIR = DATA_ROOT;
 const AUTH_REQUIRED = AUTH_FLAG;
 const TITLES = {overview:"概览",trends:"趋势",report:"日报",week:"周报",month:"月报",
-                sessions:"会话",log:"日志",groups:"分组",settings:"设置"};
+                sessions:"会话",log:"日志",groups:"分组",insights:"洞察",settings:"设置"};
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const state = { view:"overview", day:null, month:null, dates:[], loaded:{}, authed:!AUTH_REQUIRED };
@@ -790,7 +838,8 @@ function switchView(v, push){
 }
 const loaders = { overview:loadOverview, trends:loadTrends, report:loadReport,
                   week:loadWeek, month:loadMonth,
-                  sessions:loadSessions, log:loadLog, groups:loadGroups, settings:loadSettings };
+                  sessions:loadSessions, log:loadLog, groups:loadGroups,
+                  insights:loadInsights, settings:loadSettings };
 
 /* ---------- 头部控件（日期选择 + 主题切换） ---------- */
 function buildHeadControls(){
@@ -807,6 +856,7 @@ function pickDay(d){
   if(state.view === "overview") loadOverview();
   if(state.view === "report") loadReport();
   if(state.view === "sessions") loadSessions();
+  if(state.view === "insights") loadInsights();
 }
 function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 
@@ -1123,6 +1173,24 @@ async function loadSettings(){
   $("#authNote").textContent = AUTH_REQUIRED ?
     "已开启：当前页面需要访问口令。" :
     "当前关闭：config.json 缺失 dashboard_token（或为空）。如需开启，在 config.json 增加 \"dashboard_token\":\"你的口令\" 后重启仪表盘。";
+  try{
+    const d = await api("/api/insights?date=" + state.day);
+    const note = $("#aiCfgNote");
+    if(d.ai_enabled){
+      const ai = d.ai || {};
+      note.textContent = "已开启" + (ai.provider ? " · provider: " + ai.provider : "") +
+        (ai.model ? " · 模型: " + ai.model : "") +
+        (ai.generated_at ? " · 上次生成: " + String(ai.generated_at).replace("T"," ") : " · 尚未生成") +
+        (ai.error ? " · 最近错误: " + ai.error : "");
+      note.style.color = ai.error ? "var(--danger)" : "var(--ok)";
+    }else{
+      note.textContent = "当前关闭（隐私优先默认）。规则洞察不受影响。";
+      note.style.color = "var(--dim)";
+    }
+  }catch(e){
+    $("#aiCfgNote").textContent = "读取配置状态失败：" + e.message;
+    $("#aiCfgNote").style.color = "var(--danger)";
+  }
 }
 
 /* ---------- 会话 ---------- */
@@ -1268,12 +1336,101 @@ async function groupsInit(){
   };
 }
 
+/* ---------- 智能洞察（规则 + AI） ---------- */
+const SEV_STYLE = {
+  info:   {c:"var(--accent)", bg:"color-mix(in srgb, var(--accent) 10%, transparent)"},
+  warn:   {c:"#e0a53c", bg:"rgba(224,165,60,.12)"},
+  alert:  {c:"var(--danger)", bg:"rgba(239,68,68,.12)"}
+};
+function insightCardHTML(item){
+  const s = SEV_STYLE[item.severity] || SEV_STYLE.info;
+  const label = {info:"建议", warn:"注意", alert:"提醒"}[item.severity] || "建议";
+  return '<div class="panel" style="padding:14px 16px;margin:0;border-left:3px solid '+s.c+'">' +
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
+      '<b style="font-size:13px">'+esc(item.title || "AI")+'</b>' +
+      '<span style="font-size:10.5px;padding:2px 8px;border-radius:999px;background:'+s.bg+';color:'+s.c+'">'+label+'</span>' +
+    '</div>' +
+    '<div style="color:var(--dim);font-size:12.5px;line-height:1.7">'+esc(item.detail || "")+'</div>' +
+  '</div>';
+}
+async function loadInsights(){
+  const box = $("#inRules");
+  box.innerHTML = skeleton(6);
+  $("#inAiError").style.display = "none";
+  $("#inAiCards").innerHTML = "";
+  let d;
+  try{
+    d = await api("/api/insights?date=" + state.day);
+  }catch(err){
+    box.innerHTML = '<div class="empty">加载失败：' + esc(err.message) + '</div>';
+    return;
+  }
+  box.innerHTML = (d.rules && d.rules.length)
+    ? d.rules.map(insightCardHTML).join("")
+    : '<div class="empty">当日暂无规则洞察（数据为空或 insights.enabled=false）</div>';
+  renderAiPanel(d);
+}
+function renderAiPanel(d){
+  const btn = $("#inGen"), meta = $("#inAiMeta"), err = $("#inAiError"), cards = $("#inAiCards");
+  if(btn) btn.disabled = false;
+  if(!d.ai_enabled){
+    meta.textContent = "未开启（config.json: insights.ai.enabled=false）";
+    cards.innerHTML = '<div class="empty">AI 洞察未开启。开启后聚合统计会发送到你配置的 API 端点；规则洞察始终离线。</div>';
+    return;
+  }
+  const ai = d.ai || {};
+  const bits = [];
+  if(ai.provider) bits.push("provider " + esc(ai.provider));
+  if(ai.model) bits.push("模型 " + esc(ai.model));
+  if(ai.generated_at) bits.push("上次生成 " + esc(String(ai.generated_at).replace("T", " ")));
+  meta.textContent = bits.length ? bits.join(" · ") : "尚未生成（点击左侧按钮）";
+  if(ai.error){
+    err.style.display = "block";
+    err.textContent = "生成失败：" + ai.error;
+    err.style.color = "var(--danger)";
+  }else{
+    err.style.display = "none";
+  }
+  if(ai.insights && ai.insights.length){
+    cards.innerHTML = ai.insights.map(insightCardHTML).join("");
+  }else if(!ai.error){
+    cards.innerHTML = '<div class="empty">暂无 AI 洞察缓存。</div>';
+  }else{
+    cards.innerHTML = "";
+  }
+}
+let aiGenerating = false;
+function wireInsights(){
+  $("#inReload").onclick = () => { loadInsights(); };
+  $("#inGen").onclick = async () => {
+    if(aiGenerating) return;
+    aiGenerating = true;
+    const btn = $("#inGen");
+    btn.disabled = true;
+    btn.textContent = "生成中…（可能需数十秒）";
+    $("#inAiError").style.display = "none";
+    try{
+      const d = await api("/api/insights/ai?date=" + state.day + "&refresh=1");
+      renderAiPanel(d);
+    }catch(err){
+      $("#inAiError").style.display = "block";
+      $("#inAiError").textContent = "生成失败：" + err.message;
+      $("#inAiError").style.color = "var(--danger)";
+    }finally{
+      aiGenerating = false;
+      const b = $("#inGen");
+      if(b){ b.disabled = false; b.textContent = "重新生成 AI 洞察"; }
+    }
+  };
+}
+
 /* ---------- 初始化 ---------- */
 function startApp(){
   buildHeadControls();
   applyTheme();
   backgroundWatchTheme();
   wireExportButtons();
+  wireInsights();
   monthInit();
   $("#bkDownload").onclick = bkDownload;
   $("#bkRestore").onclick = bkRestore;
@@ -1549,6 +1706,65 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"date": date, "aggregate": report.aggregate(date, root)})
             return
 
+        if path == "/api/insights":
+            # 规则即时计算（离线）；AI 只读缓存/按需生成（成功才写缓存）
+            date = self._valid_date(query)
+            if not date:
+                self._send_json({"error": "invalid date"}, 400)
+                return
+            config = _load_config_for_root(root, self.server.config_path)
+            try:
+                import insights  # noqa: PLC0415 —— 惰性导入
+                prev_day = (datetime.date.fromisoformat(date)
+                            - datetime.timedelta(days=1)).isoformat()
+                agg = report.aggregate(date, root)
+                prev_agg = report.aggregate(prev_day, root)
+                rules = insights.rule_insights(agg, config, prev_agg)
+                ins_cfg = config.get("insights") if isinstance(config.get("insights"), dict) else {}
+                ai_cfg = ins_cfg.get("ai") if isinstance(ins_cfg.get("ai"), dict) else {}
+                ai_enabled = bool(ins_cfg.get("enabled", True) and ai_cfg.get("enabled"))
+                ai = None
+                if ai_enabled:
+                    ai = insights.ai_insights(date, root, config, refresh=False)
+                    ai["provider"] = str(ai_cfg.get("provider") or "")
+                self._send_json({
+                    "date": date, "rules": rules,
+                    "ai_enabled": ai_enabled, "ai": ai,
+                })
+            except Exception as exc:  # noqa: BLE001 —— 洞察失败不拖垮仪表盘
+                self._send_json({"error": f"insights unavailable: {exc}"}, 500)
+            return
+
+        if path == "/api/insights/ai":
+            # AI 洞察：refresh=1 强制重生成；未开启时返回可展示的错误态
+            date = self._valid_date(query)
+            if not date:
+                self._send_json({"error": "invalid date"}, 400)
+                return
+            config = _load_config_for_root(root, self.server.config_path)
+            try:
+                import insights  # noqa: PLC0415
+                ins_cfg = config.get("insights") if isinstance(config.get("insights"), dict) else {}
+                ai_cfg = ins_cfg.get("ai") if isinstance(ins_cfg.get("ai"), dict) else {}
+                ai_enabled = bool(ins_cfg.get("enabled", True) and ai_cfg.get("enabled"))
+                if not ai_enabled:
+                    self._send_json({
+                        "date": date, "ai_enabled": False,
+                        "ai": {
+                            "generated_at": None, "model": None, "insights": None,
+                            "error": "AI 洞察未开启（config.json: insights.ai.enabled=false）",
+                            "provider": str(ai_cfg.get("provider") or ""),
+                        },
+                    })
+                    return
+                refresh = query.get("refresh", [""])[0] in ("1", "true", "yes")
+                ai = insights.ai_insights(date, root, config, refresh=refresh)
+                ai["provider"] = str(ai_cfg.get("provider") or "")
+                self._send_json({"date": date, "ai_enabled": True, "ai": ai})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": f"insights ai unavailable: {exc}"}, 500)
+            return
+
         if path == "/api/hourly":
             date = self._valid_date(query)
             if not date:
@@ -1684,7 +1900,8 @@ class Handler(BaseHTTPRequestHandler):
             # 应用分组管理：内置+自定义分组、全部已知应用及其当前分类
             try:
                 import classifier as _clf  # noqa: PLC0415
-                config = _clf.load_config(); config["data_root"] = root
+                config = _clf.load_config()
+                config["data_root"] = root
                 groups = _clf.load_app_groups(root)
                 cats = _clf.all_categories(config, groups)
                 known = _collect_known_apps(root)

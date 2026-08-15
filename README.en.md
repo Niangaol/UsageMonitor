@@ -100,6 +100,9 @@ Implemented against the requirements document *《项目需求与开发文档.md
 - **Local web dashboard**: 24-hour activity distribution, 14/30-day trends, URL details, category/app/AI-tool stats, and session filtering; only listens on 127.0.0.1
 - **Custom app grouping**: the dashboard's "Groups" view moves any app into or out of a group (including custom groups);
   the overlay (`app_groups.json`) has the highest priority and takes effect immediately (5s TTL cache, no restart needed)
+- **Smart insights**: an offline rule engine generates study/game/health/efficiency/balance/trend advice and appends a
+  "Today's suggestions" section to the daily report; optional AI insights (OpenAI-compatible API, off by default,
+  privacy-filtered aggregate statistics, zero third-party dependencies)
 - **Tray icon (optional)**: today's overview / open today's report / pause · resume / exit
 - **Auto-start on boot**: install.ps1 registers a scheduled task (auto-restart on crash); data is cleaned up automatically after 90 days by default
 
@@ -213,7 +216,7 @@ UsageMonitor.exe --dashboard --open           # via the EXE
 Dashboard features (v3):
 - **Automatic light/dark theme**: follows the system by default (prefers-color-scheme, follows live when Windows toggles between light/dark);
   the 🌗 button in the top-right cycles among auto/light/dark (choice remembered in localStorage); canvas chart colors adapt accordingly
-- Six view tabs: **Overview / Trends / Report / Sessions / Logs / Groups**
+- Ten view tabs: **Overview / Trends / Report / Week / Month / Sessions / Logs / Groups / Insights / Settings**
 - Today overview: large number cards (total active / AI / social / browser / session count) + 24-hour activity distribution + 14/30-day trends + category/app/AI-tool/contact/browser summaries
 - **Report view**: renders the chosen day's report.md (front-end mini-markdown; tables/headings/lists/code blocks)
 - **Details view**: session details and browser URL details (both support keyword filtering)
@@ -227,6 +230,10 @@ Dashboard features (v3):
   - **Move** an app to any group (including custom groups), or **move it out** of a group to restore automatic classification
   - **Create groups** (type a name and press Enter/click a button) and **delete groups** (apps in a deleted group automatically revert to automatic classification)
   - Overlay priority: **user groups (exact exe match) > config keywords (exe/title)**, takes effect immediately (TTL 5s cache)
+- **Insights view**:
+  - Rule cards for study/game/health/efficiency/balance/trend with severity colors (blue=suggestion / orange=caution / red=alert)
+  - AI panel: provider/model/last-generated time, generate/regenerate button, error box and result cards
+  - Rules are computed 100% locally; AI is only called when enabled (see "Smart Insights" below)
 
 ### App Group Data File and API
 
@@ -251,6 +258,62 @@ API (127.0.0.1 only; POST requests validated against same-origin Origin):
 | `/api/groups/delete` | POST | `{"name":"learning tools"}` | Delete a custom group (apps in the group automatically revert to automatic classification) |
 
 The same settings apply on the command line: monitor classification, daily/weekly/monthly reports, `--reclassify`, and the software inventory all go through `classify_category()`, so you never need to restart any process after changing groups.
+
+### Smart Insights
+
+```powershell
+python insights.py --day 2026-08-10                  # offline rule insights
+python insights.py --day 2026-08-10 --ai             # also generate/read AI insights
+python insights.py --day 2026-08-10 --ai --refresh   # ignore cache and regenerate
+python insights.py --day 2026-08-10 --json           # JSON output
+```
+
+- **Rule engine (offline, zero dependencies, deterministic)**: generates six kinds of advice from the daily aggregate —
+  study (online-course time + study goal), game (time reminder + share balance), health (longest continuous session + late-night use),
+  efficiency (AI coding), balance (social chat), and trend (active-time comparison with yesterday).
+- **"Today's suggestions" in the daily report**: rule insights are appended to `report.md` (offline only, never makes network requests),
+  controlled by `insights.enabled` and `insights.in_report`.
+- **AI insights (optional, off by default)**: sends **aggregate statistics** to an OpenAI-compatible `chat/completions` endpoint
+  (pure `urllib`, zero third-party dependencies); successful results are cached at `<data_root>/YYYY-MM-DD/insights.json`.
+  Concurrent calls are single-flighted by a module-level lock; `--refresh` or the dashboard's "Regenerate" button forces regeneration.
+
+#### Configuration (the `insights` section in config.json)
+
+```json
+{
+  "insights": {
+    "enabled": true,
+    "in_report": true,
+    "rules": {
+      "long_session_min": 90,
+      "late_night_hour": 23,
+      "game_alert_hours": 2,
+      "study_goal_hours": 1,
+      "game_ratio_warn": 0.4
+    },
+    "ai": {
+      "enabled": false,
+      "provider": "opencodego",
+      "base_url": "",
+      "api_key": "",
+      "model": "deepseek-v4-flash",
+      "timeout_s": 60,
+      "send_raw_titles": false,
+      "language": "zh"
+    }
+  }
+}
+```
+
+To enable AI, set `insights.ai.enabled=true` and fill in `base_url`/`api_key`/`model`. If
+`%USERPROFILE%\.config\opencode\opencode.json` already exists on this machine, the module auto-discovers
+`opencodego` (`https://opencode.ai/zen/go/v1`, preferring the `deepseek-v4-flash` model) and falls back to
+`sensenova`; explicit config.json values always take precedence over auto-discovery.
+
+> **Privacy notice**: once AI insights are enabled, aggregate statistics (duration/session counts/top categories/top apps —
+> **without** window titles, URLs, or contact names) are sent to the API endpoint you configure. Only
+> `send_raw_titles=true` additionally includes top title/URL samples; contact names are never uploaded under any setting.
+> Rule insights always stay offline.
 
 ## Installation and Auto-start
 
@@ -325,6 +388,7 @@ The monthly summary is written under `<data_root>\YYYY-MM\` (as `report_month.md
 | `terminal_tools` | terminal TUI tool detection (window-title keywords → term_tool field) |
 | `subcategories` | secondary subcategory rules (main category → exe keyword → subcategory field) |
 | `browser_history_enabled` / `browser_history` | URL-level history parsing toggle and each browser's user_data path (null = auto-detect) |
+| `insights` | smart insights: `enabled`/`in_report`, rule thresholds (`rules`), AI endpoint and privacy switch (`ai`, off by default) |
 | `title_blacklist` | title privacy blacklist (regex); matches are recorded as `[hidden]` (also applies to parsed history URLs/titles) |
 
 ### aliases.json (contact aliases)
@@ -405,11 +469,14 @@ is a list of custom group names. If the file is missing or corrupted it is treat
 - **Private local config is not committed**: `aliases.json` (real contact aliases) is ignored; the repo provides the `aliases.example.json` template
 - The code itself contains no personal data; classification rules, keywords, and the blacklist all live in `config.json` (generic rules that can be committed)
 - No network upload by default; the dashboard only listens on 127.0.0.1; screenshots/screen recording/OCR/keyboard hooks/clipboard reads are all unimplemented
+- The only exception: if you explicitly enable `insights.ai.enabled=true`, **aggregate statistics** (without titles/URLs/contact names)
+  are sent to the AI API endpoint you configure; the repo default keeps it off
 - Data is cleaned up automatically after 90 days by default (adjustable in `config.json`)
 
 ## Privacy and Security (Runtime)
 
-- All data is stored only in the local `data_root`; **no network upload of any kind**
+- All data is stored only in the local `data_root` by default; **no network upload of any kind**, with one exception:
+  if you explicitly enable `insights.ai.enabled=true`, aggregate statistics (without titles/URLs/contact names) are sent to the configured AI endpoint
 - Only metadata is recorded (app name, window title, time, category); chat messages, passwords, input content, and file content are never read
 - Any title matched by `title_blacklist` is recorded as `[hidden]`; the raw text never touches disk
 - **Dashboard anti-theft (CSRF protection)**: every `/api/*` endpoint validates `Origin`/`Referer`, which must point to
@@ -438,12 +505,13 @@ is a list of custom group names. If the file is missing or corrupted it is treat
 
 ```powershell
 python monitor.py --test 30   # test mode (runs for N seconds then exits and prints a summary)
-python test_all.py            # full integration tests (152 assertions, ~1 minute)
+python test_all.py            # full integration tests (199 assertions)
 ```
 
 test_all.py monkey-patches the foreground window/idle/process tree to cover: timing on switch, no timing while idle, WeChat contacts,
 browser classification, terminal AI tools, AI false-positive protection, midnight rollover, cross-day isolation, privacy blacklist, pause/resume,
-retention cleanup, the reporting pipeline, inventory scan, browser history, alias tables, and reclassification.
+retention cleanup, the reporting pipeline, inventory scan, browser history, alias tables, reclassification, app grouping, and smart insights
+(rules / AI-prompt privacy / AI call / cache / dashboard API / report section).
 
 **Acceptance criteria**: switch between 3 apps for 1 minute each → the daily report shows each app's duration; lock the screen for 10 minutes → no timing;
 the scheduled task pulls the daemon back up after a restart; idle CPU usage < 0.1%.
@@ -459,7 +527,13 @@ and privacy rules.
 ## FAQ
 
 **Q: Where is my data stored? Is it uploaded?**
-A: It is stored in date folders under `data_root` (project script directory when empty in config.json); **fully local, never uploaded anywhere**.
+A: It is stored in date folders under `data_root` (project script directory when empty in config.json); **fully local by default — nothing is uploaded anywhere**.
+The only exception is AI insights, which you must explicitly enable (`insights.ai.enabled=true`); it sends aggregate statistics without titles/URLs/contact names.
+
+**Q: Does AI insights send my data out?**
+A: Not by default (`insights.ai.enabled=false`). Only when you explicitly enable it and configure an API endpoint will
+**aggregate statistics** be sent (duration/session counts/top categories/top apps). Window titles and URLs are excluded unless
+`send_raw_titles=true`; contact names are never uploaded. Rule insights always stay offline.
 
 **Q: Why is the "browser dwell time" in the daily report much larger than the "active time"?**
 A: The two metrics differ: browser dwell time is **foreground-tab timing** (the tab counts as long as it's open, including idle and multi-tab overlap, so it can exceed 24 hours);

@@ -295,7 +295,6 @@ def _extract_firefox_visits(db_copy_path: str, day_str: str, config: dict) -> li
     换算到与 Chromium 一致的 FILETIME 空间后复用 _local_day_ft_range 的日界。
     """
     start_ft, end_ft = _local_day_ft_range(day_str)
-    day_start_epoch = start_ft / 1e6 - _FILETIME_EPOCH_OFFSET
     day_end_epoch = end_ft / 1e6 - _FILETIME_EPOCH_OFFSET
     # PRTime 空间 = FILETIME 空间 - 微秒偏移；firefox 无跨天时长，无需放宽下界
     lower = start_ft - _FILETIME_EPOCH_OFFSET_US
