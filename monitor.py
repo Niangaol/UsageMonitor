@@ -145,6 +145,29 @@ def _run_balloon_scheduler(data_root: str) -> None:
         stop_event.wait(60)
 
 
+def _run_update_checker(data_root: str, config: dict, delay: float = 15.0) -> None:
+    """启动后延迟检查一次新版本；发现更新且托盘就绪时气泡提示。
+
+    失败静默（离线/限流不影响守护）；config 的 update.api_base 可覆盖检测源。
+    """
+    time.sleep(max(1.0, delay))
+    try:
+        up = config.get("update") if isinstance(config.get("update"), dict) else {}
+        if not up.get("check_on_startup", True):
+            return
+        import updater  # noqa: PLC0415 —— 惰性导入
+        result = updater.check_for_update(api_base=str(up.get("api_base") or "").strip() or None,
+                                          timeout=6.0)
+        if result.get("has_update") and _hwnd_tray_ready():
+            import tray  # noqa: PLC0415
+            tray.show_balloon(
+                "发现新版本 v" + str(result.get("latest") or ""),
+                "点击托盘「检查更新」或打开仪表盘查看并安装",
+            )
+    except Exception:  # noqa: BLE001 —— 更新检查失败静默
+        pass
+
+
 # ---------------------------------------------------------------------------
 # 日志与写入
 # ---------------------------------------------------------------------------
@@ -477,6 +500,14 @@ def run_daemon(config: dict, test_seconds: int | None = None, verbose: bool = Fa
                 break
             if stop_event.is_set():
                 break
+            # 应用内更新信号：dashboard「应用更新」时写入，优雅退出供更新脚本替换 exe
+            if os.path.isfile(os.path.join(data_root, ".update-requested")):
+                try:
+                    import applog  # noqa: PLC0415
+                    applog.get_logger("monitor").info("收到应用内更新请求，正在优雅退出")
+                except Exception:  # noqa: BLE001
+                    pass
+                break
             time.sleep(poll_interval)
 
         except Exception as exc:  # noqa: BLE001 —— 单次轮询失败不中断守护
@@ -549,19 +580,26 @@ def _find_electron_shell() -> list[str] | None:
     return None
 
 
-def open_dashboard(data_root: str, port: int = 8765, view: str | None = None) -> None:
+def open_dashboard(data_root: str, port: int = 8765, view: str | None = None,
+                   params: dict | None = None) -> None:
     """打开本地仪表盘（幂等）。
 
     优先 Electron 桌面壳（独立应用窗口，不弹默认浏览器；壳内部自行
     探测/启动仪表盘服务）；无壳时回退：端口空闲则后台起服务 + 开浏览器。
-    view 指定初始视图（overview / report / detail），为空用默认视图。
+    view 指定初始视图（overview / report / detail），为空用默认视图；
+    params 附加查询参数（如 {"update": "1"} 让设置页自动检查更新）。
     """
     import socket
     import webbrowser
 
     url = f"http://127.0.0.1:{port}/"
+    query = []
     if view:
-        url += f"?view={view}"
+        query.append(f"view={view}")
+    if params:
+        query.extend(f"{k}={v}" for k, v in params.items() if v is not None)
+    if query:
+        url += "?" + "&".join(query)
 
     # 优先 Electron 壳（USAGEMON_USE_BROWSER=1 可强制回退浏览器，调试用）
     if os.environ.get("USAGEMON_USE_BROWSER") != "1":
@@ -704,12 +742,18 @@ def main(argv: list[str] | None = None) -> int:
             threading.Thread(
                 target=_run_balloon_scheduler, args=(data_root,), daemon=True
             ).start()
+            # 启动后延迟检查新版本（有更新时托盘气泡提示）
+            threading.Thread(
+                target=_run_update_checker, args=(data_root, config), daemon=True
+            ).start()
             tray.run(
                 config,
                 overview_fn=lambda: overview_text(data_root),
                 set_paused_fn=set_paused,
                 is_paused_fn=is_paused,
                 open_dashboard_fn=lambda view=None: open_dashboard(data_root, view=view),
+                check_update_fn=lambda: open_dashboard(
+                    data_root, view="settings", params={"update": "1"}),
                 stop_event=stop_event,
             )
             return 0

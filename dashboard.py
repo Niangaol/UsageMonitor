@@ -39,6 +39,7 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 import webbrowser
@@ -212,6 +213,49 @@ def _save_ai_settings(root: str, config_path: str | None, payload: dict) -> dict
     os.replace(tmp_path, path)
     classifier.invalidate_config_cache(path)
     return _ai_settings_view(cfg)
+
+
+# ---------------------------------------------------------------------------
+# 软件更新（updater.py 的仪表盘侧状态与辅助）
+# ---------------------------------------------------------------------------
+_UPDATE_CHECK_CACHE: dict = {"ts": 0.0, "result": None}
+_UPDATE_STATE: dict = {
+    "state": "idle",           # idle | downloading | ready | error | applying
+    "downloaded": 0,
+    "total": 0,
+    "path": None,
+    "latest": "",
+    "error": None,
+}
+_UPDATE_LOCK = threading.Lock()
+
+
+def _update_api_base(config: dict) -> str | None:
+    """config.json 的 update.api_base（空则用默认 GitHub API）。"""
+    up = config.get("update") if isinstance(config.get("update"), dict) else {}
+    return str(up.get("api_base") or "").strip() or None
+
+
+def _update_progress(got: int, total: int | None) -> None:
+    with _UPDATE_LOCK:
+        _UPDATE_STATE["downloaded"] = int(got or 0)
+        _UPDATE_STATE["total"] = int(total or 0)
+
+
+def _run_download(asset: dict, dest: str) -> None:
+    try:
+        import updater  # noqa: PLC0415 —— 惰性导入
+        updater.download(
+            str(asset.get("url") or ""), dest,
+            expected_size=int(asset.get("size") or 0) or None,
+            expected_digest=str(asset.get("digest") or "") or None,
+            progress=_update_progress,
+        )
+        with _UPDATE_LOCK:
+            _UPDATE_STATE.update(state="ready", path=dest, error=None)
+    except Exception as exc:  # noqa: BLE001 —— 下载失败转为可展示状态
+        with _UPDATE_LOCK:
+            _UPDATE_STATE.update(state="error", path=None, error=str(exc))
 
 
 def _month_days_for(data_root: str, month_str: str) -> list[str]:
@@ -841,6 +885,29 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
           <span class="set-note" id="aiSaveNote"></span>
         </div>
         <div class="set-note" id="aiCfgNote" style="margin-top:8px"></div>
+      </div>
+      <div class="set-group">
+        <h3>🔄 软件更新</h3>
+        <div class="desc">当前版本 <b id="upCurrent">…</b>。从 GitHub Releases 检测新版本，
+          可在应用内下载并安装（替换 exe 后自动重启；开发模式仅支持检测）。</div>
+        <div class="controls" style="margin:10px 0 6px">
+          <button class="btn" id="upCheck">检查更新</button>
+          <span class="set-note" id="upStatus"></span>
+        </div>
+        <div id="upPanel" style="display:none;margin-top:6px">
+          <div id="upInfo" style="font-size:12.5px;line-height:1.7"></div>
+          <div class="controls" style="margin-top:10px">
+            <button class="btn primary" id="upDownload" style="display:none">下载并安装</button>
+            <button class="btn primary" id="upApply" style="display:none">立即重启应用完成更新</button>
+          </div>
+          <div id="upBarWrap" style="display:none;margin-top:10px">
+            <div style="height:8px;border-radius:4px;background:rgba(128,128,128,.18);overflow:hidden;max-width:420px">
+              <i id="upBar" style="display:block;height:100%;width:0%;background:var(--accent);transition:width .3s"></i>
+            </div>
+            <span class="hint" id="upBarText" style="font-size:11.5px"></span>
+          </div>
+        </div>
+        <div class="set-note" id="upNote" style="margin-top:8px"></div>
       </div>
       <div class="set-group">
         <h3>🗄️ 数据备份</h3>
@@ -1869,6 +1936,158 @@ function wireAiModule(){
   if(imf) imf.onchange = aiModImport;
 }
 
+/* ---------- 软件更新 ---------- */
+let upPollTimer = null;
+function fmtMB(n){
+  const v = Number(n) || 0;
+  return (v / 1048576).toFixed(1) + " MB";
+}
+async function loadUpdateInfo(){
+  try{
+    const d = await api("/api/update/status");
+    const el = $("#upCurrent");
+    if(el) el.textContent = "v" + (d.current || "?");
+    if(d.dev){
+      const st = $("#upStatus");
+      if(st){ st.textContent = "开发模式：仅支持检测新版本，不支持应用内安装"; st.style.color = "var(--dim)"; }
+    }
+  }catch(e){ /* 忽略：更新信息非关键 */ }
+}
+async function checkUpdate(){
+  const st = $("#upStatus");
+  if(!st) return;
+  st.textContent = "正在检查更新…";
+  st.style.color = "var(--dim)";
+  const btn = $("#upCheck");
+  if(btn) btn.disabled = true;
+  try{
+    const d = await api("/api/update/check");
+    renderUpdate(d);
+  }catch(e){
+    st.textContent = "检查失败：" + e.message;
+    st.style.color = "var(--danger)";
+  }finally{
+    if(btn) btn.disabled = false;
+  }
+}
+function renderUpdate(d){
+  const st = $("#upStatus");
+  if(!st) return;
+  const panel = $("#upPanel");
+  if(d.error){
+    st.textContent = d.error;
+    st.style.color = "var(--danger)";
+    if(panel) panel.style.display = "none";
+    return;
+  }
+  if(!d.has_update){
+    st.textContent = "已是最新版本（v" + esc(d.current) + "）";
+    st.style.color = "var(--ok)";
+    if(panel) panel.style.display = "none";
+    return;
+  }
+  st.textContent = "发现新版本 v" + esc(d.latest);
+  st.style.color = "var(--ok)";
+  if(panel) panel.style.display = "";
+  const info = $("#upInfo");
+  if(info){
+    const size = d.asset && d.asset.size ? " · " + fmtMB(d.asset.size) : "";
+    info.innerHTML = '<b style="font-size:13px">v' + esc(d.latest) + "</b>" +
+      ' · 发布于 ' + esc(String(d.published_at || "").slice(0, 10)) + size +
+      (d.notes ? '<div class="hint" style="margin-top:6px;white-space:pre-wrap;max-height:130px;overflow:auto">' +
+        esc(String(d.notes).slice(0, 600)) + '</div>' : '');
+  }
+  const dl = $("#upDownload");
+  if(dl){
+    dl.style.display = d.asset ? "" : "none";
+    dl.textContent = "下载并安装" + (d.asset && d.asset.size ? "（" + fmtMB(d.asset.size) + "）" : "");
+  }
+  const ap = $("#upApply");
+  if(ap) ap.style.display = "none";
+  const bw = $("#upBarWrap");
+  if(bw) bw.style.display = "none";
+}
+async function startDownload(){
+  const btn = $("#upDownload");
+  if(!btn) return;
+  btn.disabled = true;
+  btn.textContent = "下载中…";
+  const bw = $("#upBarWrap");
+  if(bw) bw.style.display = "";
+  const bar = $("#upBar"), bt = $("#upBarText");
+  if(bar) bar.style.width = "0%";
+  if(bt) bt.textContent = "";
+  try{
+    const r = await postJson("/api/update/download", {});
+    if(r && r.error) throw new Error(r.error);
+    if(upPollTimer) clearInterval(upPollTimer);
+    upPollTimer = setInterval(pollDownload, 700);
+  }catch(e){
+    btn.disabled = false;
+    btn.textContent = "下载并安装";
+    const st = $("#upStatus");
+    if(st){ st.textContent = "下载失败：" + e.message; st.style.color = "var(--danger)"; }
+    if(bw) bw.style.display = "none";
+  }
+}
+async function pollDownload(){
+  let d;
+  try{ d = await api("/api/update/status"); }
+  catch(e){ return; }
+  const bar = $("#upBar"), bt = $("#upBarText");
+  if(d.state === "downloading"){
+    const pct = d.total ? Math.round(d.downloaded / d.total * 100) : 0;
+    if(bar) bar.style.width = pct + "%";
+    if(bt) bt.textContent = fmtMB(d.downloaded) + " / " + fmtMB(d.total);
+  }else if(d.state === "ready"){
+    if(upPollTimer){ clearInterval(upPollTimer); upPollTimer = null; }
+    if(bar) bar.style.width = "100%";
+    if(bt) bt.textContent = "下载完成";
+    const dl = $("#upDownload");
+    if(dl) dl.style.display = "none";
+    const ap = $("#upApply");
+    if(ap) ap.style.display = "";
+  }else if(d.state === "error"){
+    if(upPollTimer){ clearInterval(upPollTimer); upPollTimer = null; }
+    const bw = $("#upBarWrap");
+    if(bw) bw.style.display = "none";
+    const dl = $("#upDownload");
+    if(dl){ dl.disabled = false; dl.textContent = "重试下载"; }
+    const st = $("#upStatus");
+    if(st){ st.textContent = "下载失败：" + (d.error || "未知错误"); st.style.color = "var(--danger)"; }
+  }else if(d.state === "applying"){
+    if(upPollTimer){ clearInterval(upPollTimer); upPollTimer = null; }
+    const st = $("#upStatus");
+    if(st){ st.textContent = "正在应用更新…"; st.style.color = "var(--ok)"; }
+  }
+}
+async function applyUpdate(){
+  const st = $("#upStatus");
+  if(!st) return;
+  st.textContent = "正在应用更新…仪表盘即将关闭，更新完成后会自动重启";
+  st.style.color = "var(--ok)";
+  const btn = $("#upApply");
+  if(btn) btn.disabled = true;
+  try{
+    const r = await postJson("/api/update/apply", {});
+    if(r && r.error) throw new Error(r.error);
+    st.textContent = "更新已启动，仪表盘即将关闭，请稍候自动重启";
+  }catch(e){
+    st.textContent = "应用失败：" + e.message;
+    st.style.color = "var(--danger)";
+    if(btn) btn.disabled = false;
+  }
+}
+function wireUpdate(){
+  const ck = $("#upCheck");
+  if(ck) ck.onclick = checkUpdate;
+  const dl = $("#upDownload");
+  if(dl) dl.onclick = startDownload;
+  const ap = $("#upApply");
+  if(ap) ap.onclick = applyUpdate;
+  loadUpdateInfo();
+}
+
 /* ---------- 初始化 ---------- */
 function startApp(){
   buildHeadControls();
@@ -1878,6 +2097,7 @@ function startApp(){
   wireInsights();
   wireAiSettings();
   wireAiModule();
+  wireUpdate();
   monthInit();
   $("#bkDownload").onclick = bkDownload;
   $("#bkPick").onclick = () => { $("#bkFile").click(); };
@@ -1908,7 +2128,8 @@ function startApp(){
     $("#daySel").value = state.day;
 
     // URL 视图
-    const v = new URLSearchParams(location.search).get("view");
+    const qs = new URLSearchParams(location.search);
+    const v = qs.get("view");
     const target = v && TITLES[v] ? v : "overview";
     groupsInit();
     armLogTimer();
@@ -1918,6 +2139,14 @@ function startApp(){
     });
     if(target !== "overview") switchView(target, false);
     else { state.loaded.overview = true; loadOverview(); }
+    // 托盘「检查更新」→ ?view=settings&update=1：自动触发检查并滚动到更新分组
+    if(target === "settings" && qs.get("update") === "1"){
+      setTimeout(()=>{
+        checkUpdate();
+        const st = $("#upStatus");
+        if(st) st.scrollIntoView({behavior:"smooth", block:"center"});
+      }, 600);
+    }
   }).catch(err => {
     if(String(err.message).includes("口令")) return; // 认证流程已接管
     $("#daySel").innerHTML = '<option>加载失败</option>';
@@ -2270,6 +2499,46 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"ai module export failed: {exc}"}, 500)
             return
 
+        if path == "/api/update/check":
+            # 新版本检测（GitHub Releases API，结果缓存 5 分钟）
+            config = _load_config_for_root(root, self.server.config_path)
+            try:
+                import updater  # noqa: PLC0415 —— 惰性导入
+                now = time.monotonic()
+                if now - _UPDATE_CHECK_CACHE["ts"] > 300 or _UPDATE_CHECK_CACHE["result"] is None:
+                    _UPDATE_CHECK_CACHE["result"] = updater.check_for_update(
+                        api_base=_update_api_base(config), timeout=8.0)
+                    _UPDATE_CHECK_CACHE["ts"] = now
+                self._send_json(dict(_UPDATE_CHECK_CACHE["result"]))
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({
+                    "current": version.VERSION, "latest": "", "has_update": False,
+                    "notes": "", "published_at": "", "url": "", "asset": None,
+                    "error": f"检查更新失败：{exc}",
+                })
+            return
+
+        if path == "/api/update/status":
+            # 更新下载/应用状态（前端轮询）
+            try:
+                import updater  # noqa: PLC0415
+                frozen = updater.is_frozen()
+            except Exception:  # noqa: BLE001
+                frozen = False
+            with _UPDATE_LOCK:
+                state = dict(_UPDATE_STATE)
+            self._send_json({
+                "current": version.VERSION,
+                "frozen": frozen,
+                "dev": not frozen,
+                "state": state["state"],
+                "downloaded": state["downloaded"],
+                "total": state["total"],
+                "latest": state["latest"],
+                "error": state["error"],
+            })
+            return
+
         if path == "/api/hourly":
             date = self._valid_date(query)
             if not date:
@@ -2566,6 +2835,60 @@ class Handler(BaseHTTPRequestHandler):
                 })
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": f"import failed: {exc}"}, 400)
+            return
+
+        if path == "/api/update/download":
+            # 下载最新版 exe 到 %TEMP%（后台线程，前端轮询 /api/update/status）
+            config = _load_config_for_root(root, self.server.config_path)
+            with _UPDATE_LOCK:
+                if _UPDATE_STATE["state"] == "downloading":
+                    self._send_json({"error": "正在下载中，请稍候"}, 409)
+                    return
+            try:
+                import updater  # noqa: PLC0415
+                result = updater.check_for_update(api_base=_update_api_base(config), timeout=8.0)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": f"检查更新失败：{exc}"}, 400)
+                return
+            if result.get("error"):
+                self._send_json({"error": result["error"]}, 400)
+                return
+            if not result.get("has_update") or not result.get("asset"):
+                self._send_json({"error": "已是最新版本，无需下载"}, 400)
+                return
+            asset = result["asset"]
+            dest_dir = os.path.join(tempfile.gettempdir(), "usagemonitor-update")
+            dest = os.path.join(dest_dir, f"UsageMonitor-{result['latest']}.exe")
+            with _UPDATE_LOCK:
+                _UPDATE_STATE.update(state="downloading", downloaded=0, total=0,
+                                     path=None, error=None, latest=str(result["latest"]))
+            threading.Thread(target=_run_download, args=(asset, dest), daemon=True).start()
+            self._send_json({"ok": True})
+            return
+
+        if path == "/api/update/apply":
+            # 应用已下载的更新：写信号让 monitor 优雅退出，启动更新脚本替换 exe 并重启。
+            # dryrun=true（仅测试/预览）只生成脚本不执行。
+            dryrun = bool(body.get("dryrun"))
+            with _UPDATE_LOCK:
+                state = dict(_UPDATE_STATE)
+            if state.get("state") != "ready" or not state.get("path"):
+                self._send_json({"error": "没有已下载的更新（请先下载）"}, 400)
+                return
+            try:
+                import updater  # noqa: PLC0415
+                if not dryrun:
+                    updater.request_update(root)  # 通知 monitor 优雅退出
+                result = updater.apply_update(state["path"], dry_run=dryrun)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": f"应用更新失败：{exc}"}, 400)
+                return
+            if not dryrun:
+                with _UPDATE_LOCK:
+                    _UPDATE_STATE.update(state="applying")
+                # 响应发出后关闭仪表盘服务（更新脚本会等待全部进程退出后替换 exe）
+                threading.Timer(2.5, lambda: self.server.shutdown()).start()
+            self._send_json({"ok": True, "dry_run": dryrun, "script": result.get("script", "")})
             return
 
         if path == "/api/groups/set":

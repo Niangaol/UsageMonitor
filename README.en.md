@@ -42,6 +42,7 @@ Implemented against the requirements document *《项目需求与开发文档.md
 - [Architecture](#architecture)
 - [Quick Start](#quick-start-requires-python-310-64-bit-windows-1011)
 - [Packaging as an EXE (Run Without Python)](#packaging-as-an-exe-run-without-python)
+- [Software Updates](#software-updates)
 - [Installation and Auto-start](#installation-and-auto-start)
 - [Configuration](#configuration)
 - [Data](#data)
@@ -103,7 +104,10 @@ Implemented against the requirements document *《项目需求与开发文档.md
 - **Smart insights**: an offline rule engine generates study/game/health/efficiency/balance/trend advice and appends a
   "Today's suggestions" section to the daily report; optional AI insights (OpenAI-compatible API, off by default,
   privacy-filtered aggregate statistics, zero third-party dependencies)
-- **Tray icon (optional)**: today's overview / open today's report / pause · resume / exit
+- **Tray icon (optional)**: today's overview / open today's report / check for updates / pause · resume / exit
+- **Update check & in-app update**: checks GitHub Releases for new versions on startup (tray balloon) and on demand
+  (tray menu or dashboard Settings → Software Update); downloads with SHA256 verification and replaces the exe
+  with an automatic restart (dev mode: check only, no install)
 - **Auto-start on boot**: install.ps1 registers a scheduled task (auto-restart on crash); data is cleaned up automatically after 90 days by default
 
 ## Quick Start (requires Python 3.10+, 64-bit Windows 10/11)
@@ -169,7 +173,7 @@ A single EXE bundles all three sub-tools and dispatches on the first argument:
 | `UsageMonitor.exe --dashboard --open` | Start the local dashboard and open the browser |
 | `UsageMonitor.exe --test 30` | Test mode (no console output; verify via today's data files) |
 
-Tray right-click menu: **Today's Overview / Open Dashboard / Pause · Resume / Exit** (both "Today's Overview" and "Open Dashboard" open the local dashboard; the former navigates to the overview view; the daily report feature has been merged into the dashboard's "Report" view).
+Tray right-click menu: **Today's Overview / Open Dashboard / Check for Updates / Pause · Resume / Exit** (both "Today's Overview" and "Open Dashboard" open the local dashboard; the former navigates to the overview view; "Check for Updates" opens the dashboard Settings page and checks automatically; the daily report feature has been merged into the dashboard's "Report" view).
 `install.ps1` automatically registers the EXE first when `dist\UsageMonitor.exe` exists, otherwise falls back to pythonw + scripts.
 
 **Single-instance protection**: daemon mode uses a Windows named mutex (`UsageMonitorMutex`) to guarantee only one monitoring instance runs at a time
@@ -364,6 +368,40 @@ lets you point to any OpenAI-compatible endpoint for a fully custom provider.
 > `send_raw_titles=true` additionally includes top title/URL samples; contact names are never uploaded under any setting.
 > Rule insights always stay offline.
 
+## Software Updates
+
+UsageMonitor supports **update checking** and **in-app updates** (v1.6.0+): the packaged EXE can download and replace itself in one click; source/dev mode only supports checking, not installing.
+
+### Features
+
+- **Automatic check on startup**: after the daemon starts (about 15s), it checks GitHub Releases once and shows a tray balloon when a new version is available
+  (disable with `update.check_on_startup=false` in `config.json`)
+- **Manual check**: right-click the tray icon → **Check for Updates** to open the dashboard Settings page and check automatically; or open the dashboard → **Settings → 🔄 Software Update** → "Check for Updates"
+- **Update details**: shows the latest version, release date, release notes, and download size
+- **One-click download and install** (packaged build only):
+  - Downloads the latest EXE in the background to `%TEMP%\usagemonitor-update\` with a progress bar in the UI
+  - Verifies the Content-Length size and the SHA256 digest provided by GitHub; aborts automatically if verification fails
+  - To apply: writes an update signal so the daemon exits gracefully → a PowerShell script waits for all UsageMonitor processes to exit (60s timeout, then force-kills) → replaces the EXE → restarts automatically → cleans up
+- **Dev mode**: source runs only show that a new version exists; the in-app install button clearly reports that it is unavailable
+
+### Configuration
+
+| Setting | Description |
+|---|---|
+| `update.check_on_startup` | Check automatically on startup, default `true` |
+| `update.api_base` | Override the check source (default GitHub Releases API; use a custom latest-release API for testing/mirrors) |
+
+### Command Line
+
+```powershell
+python updater.py --check          # check for the latest version
+python updater.py --check --json   # JSON output (for scripts/CI)
+```
+
+### Privacy Note
+
+Checking for updates only requests **public release metadata** (version, release date, download URL, size) from the GitHub Releases API (or the `update.api_base` URL). It never uploads usage records, window titles, URLs, or contact information; the downloaded file comes from the release asset and is verified with SHA256.
+
 ## Installation and Auto-start
 
 ### Option 1: GUI installer wizard (recommended)
@@ -410,6 +448,7 @@ install.ps1 registers two scheduled tasks:
 ├─ browser_history.py      # browser URL-level history parsing (Chromium family)
 ├─ dashboard.py            # local web dashboard (127.0.0.1 only)
 ├─ tray.py                 # tray icon (optional)
+├─ updater.py              # update check & in-app update (pure stdlib; installable in packaged builds)
 ├─ test_all.py             # full integration tests (headless and deterministic)
 ├─ install.ps1 / uninstall.ps1   # script install / uninstall (scheduled-task registration)
 ├─ installer.ps1 / uninstaller.ps1 # GUI install wizard / GUI uninstaller (zero deps, -Silent supported)
@@ -456,6 +495,7 @@ The monthly summary is written under `<data_root>\YYYY-MM\` (as `report_month.md
 | `subcategories` | secondary subcategory rules (main category → exe keyword → subcategory field) |
 | `browser_history_enabled` / `browser_history` | URL-level history parsing toggle and each browser's user_data path (null = auto-detect) |
 | `insights` | smart insights: `enabled`/`in_report`, rule thresholds (`rules`), AI endpoint and privacy switch (`ai`, off by default) |
+| `update` | updates: `check_on_startup` (check automatically on startup, default true), `api_base` (override the check source; default GitHub Releases API) |
 | `title_blacklist` | title privacy blacklist (regex); matches are recorded as `[hidden]` (also applies to parsed history URLs/titles) |
 
 ### aliases.json (contact aliases)
@@ -538,12 +578,16 @@ is a list of custom group names. If the file is missing or corrupted it is treat
 - No network upload by default; the dashboard only listens on 127.0.0.1; screenshots/screen recording/OCR/keyboard hooks/clipboard reads are all unimplemented
 - The only exception: if you explicitly enable `insights.ai.enabled=true`, **aggregate statistics** (without titles/URLs/contact names)
   are sent to the AI API endpoint you configure; the repo default keeps it off
+- Update checks / in-app updates only request public GitHub Releases metadata (version / download URL / size);
+  no usage data is uploaded. You can disable the startup check with `update.check_on_startup=false`
 - Data is cleaned up automatically after 90 days by default (adjustable in `config.json`)
 
 ## Privacy and Security (Runtime)
 
 - All data is stored only in the local `data_root` by default; **no network upload of any kind**, with one exception:
   if you explicitly enable `insights.ai.enabled=true`, aggregate statistics (without titles/URLs/contact names) are sent to the configured AI endpoint
+- Update checks only request public release metadata from the GitHub Releases API (or `update.api_base`);
+  they contain no usage records, titles, URLs, or contact information
 - Only metadata is recorded (app name, window title, time, category); chat messages, passwords, input content, and file content are never read
 - Any title matched by `title_blacklist` is recorded as `[hidden]`; the raw text never touches disk
 - **Dashboard anti-theft (CSRF protection)**: every `/api/*` endpoint validates `Origin`/`Referer`, which must point to
@@ -591,6 +635,8 @@ code style (zero third-party dependencies, Chinese comments, type annotations), 
 branch & PR workflow, release process (`git tag vX.Y.Z` → CI builds the Release automatically),
 and privacy rules.
 
+See the full changelog in [CHANGELOG.md](CHANGELOG.md) (简体中文) or [CHANGELOG.en.md](CHANGELOG.en.md).
+
 ## FAQ
 
 **Q: Where is my data stored? Is it uploaded?**
@@ -625,6 +671,13 @@ A: Consider code-signing the packaged EXE; you can also add the `data_root` dire
 **Q: How long is data kept?**
 A: 90 days by default (`retention_days` in `config.json`); date folders beyond that are cleaned up automatically.
 
+**Q: How do I check for / install updates?**
+A: Right-click the tray icon → "Check for Updates", or open the dashboard → **Settings → 🔄 Software Update** → "Check for Updates".
+The packaged build can download and install in one click (click "Restart now to apply" after the download finishes; it replaces the EXE and restarts automatically). Dev mode only checks, it does not install.
+
+**Q: Does checking for updates leak my usage data?**
+A: No. It only requests public release metadata (version / release date / download URL / size) from the GitHub Releases API (or `update.api_base`). It never uploads usage records, window titles, URLs, or contact information. You can also set `update.check_on_startup=false` to disable the startup check.
+
 ## Known Limitations
 
 - **Window titles of elevated applications may not be readable** (normal privileges cannot read them); run as administrator for full titles
@@ -633,6 +686,8 @@ A: 90 days by default (`retention_days` in `config.json`); date folders beyond t
 - **URL-level history parsing only covers Chromium-family browsers** (auto-detects Chrome/Edge/Tabbit, etc.);
   Firefox uses a different places.sqlite structure and is not supported yet; for other browsers configure a user_data path in `browser_history`
 - **Process names for tools like pi agent** need to be confirmed against your actual install and added to `ai_keywords` (the protection against python/pip false positives is already built into the code)
+- **In-app updates only work in packaged EXE builds**: source/dev mode can only detect new versions, not install them
+- **Checking for updates requires access to GitHub**: if the network is restricted, set `update.api_base` to a mirror/self-hosted latest-release API; if GitHub is unreachable, the startup check fails silently and monitoring/local data are unaffected
 - **Antivirus false positives**: consider code-signing the packaged EXE; you can also add `data_root` (the data directory) to the antivirus allowlist
 
 ## Technical Highlights

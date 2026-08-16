@@ -57,6 +57,7 @@ IDM_OVERVIEW = 1001
 IDM_OPEN_DASHBOARD = 1002
 IDM_PAUSE = 1003
 IDM_EXIT = 1004
+IDM_CHECK_UPDATE = 1005
 
 IDI_APPLICATION = 32512
 MB_OK = 0x0000
@@ -183,6 +184,10 @@ def _open_dashboard_fn(view=None) -> None:
     return None
 
 
+def _check_update_fn() -> None:
+    return None
+
+
 _stop_event = None
 _data_root = paths.default_data_root()
 
@@ -272,6 +277,7 @@ def _popup_menu(hwnd: int) -> None:
     try:
         user32.AppendMenuW(menu, MF_STRING, IDM_OVERVIEW, "今日概览")
         user32.AppendMenuW(menu, MF_STRING, IDM_OPEN_DASHBOARD, "打开仪表盘")
+        user32.AppendMenuW(menu, MF_STRING, IDM_CHECK_UPDATE, "检查更新")
         user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         pause_label = "继续监控" if _is_paused_fn() else "暂停监控"
         user32.AppendMenuW(menu, MF_STRING, IDM_PAUSE, pause_label)
@@ -294,6 +300,8 @@ def _handle_command(hwnd: int, cmd: int) -> None:
         _open_dashboard_fn(view="overview")
     elif cmd == IDM_OPEN_DASHBOARD:
         _open_dashboard_fn()
+    elif cmd == IDM_CHECK_UPDATE:
+        _check_update_fn()
     elif cmd == IDM_PAUSE:
         _set_paused_fn(not _is_paused_fn())
     elif cmd == IDM_EXIT:
@@ -331,10 +339,11 @@ def run(
     set_paused_fn=None,
     is_paused_fn=None,
     open_dashboard_fn=None,
+    check_update_fn=None,
     stop_event=None,
 ) -> None:
     """启动托盘并阻塞运行，直到用户选择退出。"""
-    global _overview_fn, _set_paused_fn, _is_paused_fn, _open_dashboard_fn, _stop_event, _data_root, _hwnd
+    global _overview_fn, _set_paused_fn, _is_paused_fn, _open_dashboard_fn, _check_update_fn, _stop_event, _data_root, _hwnd
 
     if overview_fn is not None:
         _overview_fn = overview_fn
@@ -344,6 +353,8 @@ def run(
         _is_paused_fn = is_paused_fn
     if open_dashboard_fn is not None:
         _open_dashboard_fn = open_dashboard_fn
+    if check_update_fn is not None:
+        _check_update_fn = check_update_fn
     if stop_event is not None:
         _stop_event = stop_event
     _data_root = config.get("data_root") or paths.default_data_root()

@@ -1022,5 +1022,9 @@
       "language": "zh"
     }
   },
+  "update": {
+    "check_on_startup": true,
+    "api_base": ""
+  },
   "_comment": "分类与阈值规则，可编辑；修改后重启 monitor 生效"
 }

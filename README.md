@@ -44,6 +44,7 @@
 - [架构](#架构)
 - [快速开始](#快速开始需要-python-31064-位-windows-1011)
 - [打包为 exe（免 Python 运行）](#打包为-exe免-python-运行)
+- [软件更新](#软件更新)
 - [安装与自启](#安装与自启)
 - [配置文件说明](#配置文件说明)
 - [数据说明](#数据说明)
@@ -101,7 +102,10 @@
   覆盖层（`app_groups.json`）优先级最高、实时生效（TTL 5s 缓存，无需重启）
 - **智能洞察**：离线规则引擎生成学习/游戏/健康/效率/平衡/趋势建议并写入日报「今日建议」；
   可选 AI 洞察（OpenAI 兼容 API，默认关闭，聚合统计隐私过滤，零第三方依赖）
-- **托盘图标（可选）**：今日概览 / 打开今日日报 / 暂停·继续 / 退出
+- **托盘图标（可选）**：今日概览 / 打开今日日报 / 检查更新 / 暂停·继续 / 退出
+- **新版本检测与应用内更新**：启动时自动检查 GitHub Releases 新版本（托盘气泡提示），
+  托盘菜单或仪表盘「设置 → 软件更新」可手动检查；支持应用内下载（SHA256 校验）并
+  一键替换 exe 自动重启（开发模式仅检测不安装）
 - **开机自启**：install.ps1 注册计划任务（崩溃自动重启）；数据默认保留 90 天自动清理
 
 ## 快速开始（需要 Python 3.10+，64 位 Windows 10/11）
@@ -167,7 +171,7 @@ python -m PyInstaller UsageMonitor.spec --noconfirm
 | `UsageMonitor.exe --dashboard --open` | 启动本地仪表盘并打开浏览器 |
 | `UsageMonitor.exe --test 30` | 测试模式（无控制台输出，看当日数据文件验证） |
 
-托盘右键菜单：**今日概览 / 打开仪表盘 / 暂停·继续 / 退出**（今日概览与打开仪表盘均打开本地仪表盘，前者定位到概览视图；日报功能已并入仪表盘「日报」视图）。
+托盘右键菜单：**今日概览 / 打开仪表盘 / 检查更新 / 暂停·继续 / 退出**（今日概览与打开仪表盘均打开本地仪表盘，前者定位到概览视图；「检查更新」直接打开仪表盘设置页并自动检查；日报功能已并入仪表盘「日报」视图）。
 `install.ps1` 自动优先注册 exe（存在 dist\UsageMonitor.exe 时），否则回退 pythonw + 脚本。
 
 **单实例保护**：守护模式通过 Windows 命名互斥锁（`UsageMonitorMutex`）保证同一时间只有一个监控实例
@@ -360,6 +364,43 @@ OpenAI 兼容端点，完全自定义 provider。
 > URL、联系人名）会发送到你配置的 API 端点。`send_raw_titles=true` 才会附加 Top 标题/URL
 > 样本；联系人名在任何情况下都不上送。规则洞察始终离线。
 
+## 软件更新
+
+UsageMonitor 支持**新版本检测**与**应用内更新**（v1.6.0+）：打包版 exe 可一键下载并替换升级；源码/开发模式仅支持检测，不执行安装。
+
+### 功能
+
+- **启动自动检查**：monitor 启动后延迟约 15 秒检查一次 GitHub Releases，发现新版本时托盘气泡提示
+  （可在 `config.json` 的 `update.check_on_startup=false` 关闭）
+- **手动检查**：托盘右键「检查更新」直接打开仪表盘设置页并自动检查；或打开仪表盘 → **设置 → 🔄 软件更新** →「检查更新」
+- **更新信息**：展示最新版本号、发布时间、更新说明与下载体积
+- **一键下载并安装**（打包版）：
+  - 后台线程流式下载到 `%TEMP%\usagemonitor-update\`，界面显示进度条
+  - 校验 Content-Length 大小与 GitHub 提供的 SHA256 digest，校验失败自动中止
+  - 应用更新时先写更新信号让守护进程优雅退出 → PowerShell 脚本等待全部 UsageMonitor 进程退出
+    （60 秒超时强杀兜底）→ 替换 exe → 自动重启 → 自清理
+- **开发模式**：源码运行时仅显示「有新版本」，应用内安装按钮会明确提示不可用
+
+### 配置
+
+| 配置项 | 说明 |
+|---|---|
+| `update.check_on_startup` | 启动时自动检查更新，默认 `true` |
+| `update.api_base` | 检测源覆盖（默认 GitHub Releases API；测试/镜像可填自定义 latest release API 地址） |
+
+### 命令行
+
+```powershell
+python updater.py --check          # 检查最新版本
+python updater.py --check --json   # JSON 输出（脚本/CI 用）
+```
+
+### 隐私说明
+
+检查更新只会向 GitHub Releases API（或 `update.api_base` 指定的地址）请求**公开的版本元数据**
+（版本号、发布时间、下载地址、体积），不会上传任何使用记录、窗口标题、URL 或联系人信息；
+下载文件来自 Release 附件并经过 SHA256 校验。
+
 ## 安装与自启
 
 ### 方式一：安装向导（推荐，免命令行）
@@ -408,6 +449,7 @@ install.ps1 注册两个计划任务：
 ├─ browser_history.py      # 浏览器 URL 级历史解析（Chromium 系）
 ├─ dashboard.py            # 本地网页仪表盘（仅 127.0.0.1）
 ├─ tray.py                 # 托盘图标（可选）
+├─ updater.py              # 新版本检测与应用内更新（纯标准库，打包版可安装）
 ├─ test_all.py             # 完整集成测试（无头确定性）
 ├─ install.ps1 / uninstall.ps1   # 脚本安装 / 卸载（计划任务注册）
 ├─ installer.ps1 / uninstaller.ps1 # 图形安装向导 / 图形卸载器（零依赖，支持 -Silent）
@@ -454,6 +496,7 @@ install.ps1 注册两个计划任务：
 | `subcategories` | 二级子分类规则（大类 → exe 关键词 → 子类字段） |
 | `browser_history_enabled` / `browser_history` | URL 级历史解析开关与各浏览器 user_data 路径（null=自动探测） |
 | `insights` | 智能洞察：`enabled`/`in_report`、规则阈值（`rules`）、AI 端点与隐私开关（`ai`，默认关闭） |
+| `update` | 更新：`check_on_startup`（启动自动检查，默认 true）、`api_base`（检测源覆盖，默认 GitHub Releases API） |
 | `title_blacklist` | 标题隐私黑名单（正则），命中记 `[已隐藏]`（历史解析的 URL/标题同样生效） |
 
 ### aliases.json（联系人别名）
@@ -537,12 +580,16 @@ install.ps1 注册两个计划任务：
 - 默认无任何联网上传；仪表盘仅监听 127.0.0.1；截屏/录屏/OCR/键盘钩子/剪贴板读取均未实现
 - 唯一例外：你主动开启 `insights.ai.enabled=true` 后，**聚合统计**（不含标题/URL/联系人名）
   会发送到配置的 AI API 端点；仓库默认配置保持关闭
+- 新版本检测 / 应用内更新只请求 GitHub Releases 公开元数据（版本号 / 下载地址 / 体积），
+  不上传任何使用数据；可设 `update.check_on_startup=false` 关闭启动检查
 - 数据默认保留 90 天自动清理（`config.json` 可调）
 
 ## 隐私与安全（运行时）
 
 - 所有数据默认仅保存在本机 `data_root`，**无任何联网上传**；唯一例外是你主动开启
   `insights.ai.enabled=true` 后，聚合统计（不含标题/URL/联系人名）会发送到配置的 AI 端点
+- 新版本检测仅向 GitHub Releases API（或 `update.api_base` 指定地址）请求公开版本元数据，
+  不包含任何使用记录、标题、URL 或联系人信息
 - 只记录元数据（应用名、窗口标题、时间、类别）；不读取聊天消息、密码、输入内容、文件内容
 - `title_blacklist` 命中的标题一律记为 `[已隐藏]`，不落盘原文
 - **仪表盘防偷读（CSRF 防护）**：所有 `/api/*` 校验 `Origin`/`Referer`，必须指向
@@ -588,6 +635,8 @@ test_all.py 通过猴子补丁模拟前台窗口/空闲/进程树，覆盖：切
 测试规范（`python test_all.py` 全量通过）、提交规范（`feat:/fix:/docs:/ci:/test:/chore:` 前缀）、
 分支与 PR 流程、发布流程（`git tag vX.Y.Z` → CI 自动构建 Release）与隐私约定。
 
+完整变更历史见 [CHANGELOG.md](CHANGELOG.md)（[English](CHANGELOG.en.md)）。
+
 ## FAQ
 
 **Q: 数据存在哪里？会不会上传？**
@@ -621,6 +670,15 @@ A: 打包的 exe 建议代码签名；可将 `data_root` 目录加入杀软白�
 **Q: 数据保留多久？**
 A: 默认 90 天（`config.json` 的 `retention_days`），超期日期文件夹自动清理。
 
+**Q: 如何检查 / 安装更新？**
+A: 托盘右键「检查更新」，或打开仪表盘 → **设置 → 🔄 软件更新** →「检查更新」。
+打包版可一键下载并安装（下载完成后再点「立即重启应用完成更新」，会自动替换 exe 并重启）；开发模式仅检测不安装。
+
+**Q: 检查更新会泄露我的使用数据吗？**
+A: 不会。它只向 GitHub Releases API（或 `update.api_base` 指定地址）请求公开的版本元数据
+（版本号 / 发布时间 / 下载地址 / 体积），不上传任何使用记录、窗口标题、URL 或联系人信息；
+也可设置 `update.check_on_startup=false` 关闭启动检查。
+
 ## 已知局限
 
 - **管理员权限运行的窗口标题可能读不到**（普通权限无法读取）；如需完整标题，请以管理员身份运行
@@ -629,6 +687,9 @@ A: 默认 90 天（`config.json` 的 `retention_days`），超期日期文件夹
 - **URL 级历史解析仅覆盖 Chromium 系浏览器**（Chrome/Edge/Tabbit 等自动探测）；
   Firefox 使用 places.sqlite 结构不同，暂不支持；其他浏览器可在 `browser_history` 配置 user_data 路径
 - **pi agent 等工具的进程名**需按实际安装确认后补充到 `ai_keywords`（防误伤 python/pip 已在代码中防护）
+- **应用内更新仅打包 exe 支持**：源码/开发模式只能检测新版本，不能自动安装
+- **检查更新需要能访问 GitHub**：网络受限时可配置 `update.api_base` 指向镜像/自建 latest release API；
+  无法访问时启动检查静默失败，不影响监控与本地数据
 - **杀软误报**：打包 exe 建议代码签名；可将 `data_root`（数据目录）加入杀软白名单
 
 ## 技术要点

@@ -6,6 +6,25 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布流程：`git tag vX.Y.Z` 后由 CI 自动构建并发布 Release。
 
+> 🌐 English version: [CHANGELOG.en.md](CHANGELOG.en.md)
+
+## [1.6.0] - 2026-08-17
+
+### 新增
+- **新版本检测**：
+  - 启动后自动检查 GitHub Releases 最新版本，有新版本时托盘气泡提示（可配置
+    `update.check_on_startup` 关闭；`update.api_base` 可覆盖检测源，测试/镜像用）
+  - 托盘菜单新增「检查更新」，直接打开仪表盘设置页并自动检查
+  - 仪表盘「设置 → 软件更新」可手动检查，展示最新版本、发布时间、更新说明与体积
+- **应用内更新**：
+  - 一键下载最新版 exe（后台线程 + 进度条；校验 Content-Length 大小与 GitHub 提供的
+    SHA256 digest，校验失败自动中止）
+  - 应用更新：写更新信号让守护进程优雅退出 → PowerShell 脚本等待全部进程退出
+    （60 秒超时强杀兜底）→ 替换 exe → 自动重启 → 自清理
+  - 开发模式（源码运行）仅支持检测，应用内安装会明确提示不可用
+  - 新增 `/api/update/check`、`/api/update/status`、`/api/update/download`、
+    `/api/update/apply`（apply 支持 `dryrun` 预览，测试用）
+
 ## [1.5.0] - 2026-08-17
 
 ### 新增
@@ -160,6 +179,12 @@
 - 测试：test_all 新增 11 项 dashboard API 测试（端点 / 403 / 安全头 / 错误码 / 路径穿越），
   构建后 `UsageMonitor.exe --version` 冒烟，全量 125 项门禁通过。
 
-[未发布]: https://github.com/Niangaol/UsageMonitor/compare/v1.1.0...HEAD
+[1.6.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.6.0
+[1.5.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.5.0
+[1.4.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.4.0
+[1.3.1]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.3.1
+[1.3.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.3.0
+[1.2.1]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.2.1
+[1.2.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.0.0
