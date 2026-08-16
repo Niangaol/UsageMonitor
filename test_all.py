@@ -1248,7 +1248,7 @@ def test_insights_cache():
     })
     calls: list[int] = []
 
-    def fake_chat(_cfg, _prompt):
+    def fake_chat(_cfg, _prompt, **_kw):
         calls.append(1)
         return '[{"type":"study","title":"学习","detail":"测试建议"}]'
 
@@ -1275,7 +1275,7 @@ def test_insights_cache():
         # 失败：不写缓存
         day2 = "2026-08-11"
 
-        def fail_chat(_cfg, _prompt):
+        def fail_chat(_cfg, _prompt, **_kw):
             raise insights.InsightsError("模拟失败")
         insights._chat_completion = fail_chat
         r_fail = insights.ai_insights(day2, tmp, cfg)
