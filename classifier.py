@@ -195,8 +195,12 @@ def load_aliases(path: str | None = None) -> dict:
 # 基础匹配
 # ---------------------------------------------------------------------------
 def resolve_app_name(exe: str, config: dict) -> str:
-    """exe -> 显示名；未映射则去掉扩展名后按首字母大写返回。"""
+    """exe -> 显示名；用户 app_groups.json 的 app_names 优先，其次配置 apps，最后去扩展名。"""
     exe_l = (exe or "").lower()
+    groups = load_app_groups(config.get("data_root"))
+    custom = (groups.get("app_names") or {}).get(exe_l)
+    if custom:
+        return custom
     mapped = (config.get("apps") or {}).get(exe_l)
     if mapped:
         return mapped
@@ -206,8 +210,13 @@ def resolve_app_name(exe: str, config: dict) -> str:
 
 # ---------------------------------------------------------------------------
 # 应用分组覆盖层（用户自定义：把应用放进/移出分组，新增/删除分组）
-# 数据文件：<data_root>/app_groups.json —— {"exe_groups": {"steam.exe": "游戏"},
-#          "custom_categories": ["我的分组"]}
+# 数据文件：<data_root>/app_groups.json ——
+#   {
+#     "exe_groups": {"steam.exe": "游戏"},
+#     "custom_categories": ["我的分组"],
+#     "app_names": {"steam.exe": "Steam 自定义名"},
+#     "group_meta": {"我的分组": {"description": "..."}}
+#   }
 # ---------------------------------------------------------------------------
 _groups_cache: dict = {"ts": 0.0, "data": None}
 _GROUPS_TTL = 5.0  # 秒
@@ -223,7 +232,12 @@ def load_app_groups(data_root: str | None = None) -> dict:
     now = time.monotonic()
     if _groups_cache["data"] is not None and now - _groups_cache["ts"] < _GROUPS_TTL:
         return _groups_cache["data"]
-    groups: dict = {"exe_groups": {}, "custom_categories": []}
+    groups: dict = {
+        "exe_groups": {},
+        "custom_categories": [],
+        "app_names": {},
+        "group_meta": {},
+    }
     root = data_root
     if root is None:
         root = paths.default_data_root()
@@ -241,6 +255,16 @@ def load_app_groups(data_root: str | None = None) -> dict:
                 cc = data.get("custom_categories")
                 if isinstance(cc, list):
                     groups["custom_categories"] = [str(x) for x in cc if str(x)]
+                an = data.get("app_names")
+                if isinstance(an, dict):
+                    groups["app_names"] = {
+                        str(k).lower(): str(v) for k, v in an.items() if str(v)
+                    }
+                gm = data.get("group_meta")
+                if isinstance(gm, dict):
+                    groups["group_meta"] = {
+                        str(k): dict(v) for k, v in gm.items() if isinstance(v, dict)
+                    }
         except Exception:  # noqa: BLE001
             pass
     _groups_cache["ts"] = now
@@ -251,9 +275,14 @@ def load_app_groups(data_root: str | None = None) -> dict:
 def save_app_groups(groups: dict, data_root: str) -> None:
     """原子写覆盖层（临时文件 + os.replace），并刷新缓存。"""
     global _groups_cache
-    clean = {
+    clean: dict = {
         "exe_groups": {str(k).lower(): str(v) for k, v in groups.get("exe_groups", {}).items() if str(v)},
         "custom_categories": [str(x) for x in groups.get("custom_categories", []) if str(x)],
+        "app_names": {str(k).lower(): str(v) for k, v in groups.get("app_names", {}).items() if str(v)},
+        "group_meta": {
+            str(k): {str(kk): str(vv) for kk, vv in v.items()} if isinstance(v, dict) else {}
+            for k, v in groups.get("group_meta", {}).items()
+        },
     }
     path = app_groups_path(data_root)
     tmp = path + ".tmp"

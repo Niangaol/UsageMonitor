@@ -229,6 +229,8 @@ Dashboard features (v3):
   - Search/browse all known apps (software inventory + exes that appeared in usage.jsonl over the last 14 days)
   - **Move** an app to any group (including custom groups), or **move it out** of a group to restore automatic classification
   - **Create groups** (type a name and press Enter/click a button) and **delete groups** (apps in a deleted group automatically revert to automatic classification)
+  - **Custom display names**: rename any app (e.g. show `steam.exe` as "Steam Game Platform"); new sessions and the dashboard pick it up immediately
+  - **Export / import configuration**: download `app_groups.json` or import a saved/shared grouping config
   - Overlay priority: **user groups (exact exe match) > config keywords (exe/title)**, takes effect immediately (TTL 5s cache)
 - **Insights view**:
   - Rule cards for study/game/health/efficiency/balance/trend with severity colors (blue=suggestion / orange=caution / red=alert)
@@ -240,22 +242,32 @@ Dashboard features (v3):
 Data file `<data_root>/app_groups.json` (auto-generated at runtime; falls back to an empty structure if missing or corrupted):
 
 ```json
-{ "exe_groups": { "steam.exe": "my group" }, "custom_categories": ["my group"] }
+{
+  "exe_groups": { "steam.exe": "my group" },
+  "custom_categories": ["my group"],
+  "app_names": { "steam.exe": "Steam custom name" },
+  "group_meta": { "my group": { "description": "optional" } }
+}
 ```
 
 | Field | Description |
 |---|---|
 | `exe_groups` | exe (lowercase) → group name; matched exactly during classification, highest priority |
 | `custom_categories` | list of user-defined groups (supplements the 13 built-in categories) |
+| `app_names` | exe (lowercase) → custom display name; takes priority over the `apps` mapping in `config.json` |
+| `group_meta` | custom group metadata (descriptions, etc.; preserved for export/import) |
 
 API (127.0.0.1 only; POST requests validated against same-origin Origin):
 
 | Endpoint | Method | Request body | Description |
 |---|---|---|---|
-| `/api/groups` | GET | - | All known apps with their current classification, and the group lists (`apps`/`categories`/`custom_categories`/`exe_groups`) |
+| `/api/groups` | GET | - | All known apps with their current classification, group lists, display names, and metadata (`apps`/`categories`/`custom_categories`/`exe_groups`/`app_names`/`group_meta`) |
 | `/api/groups/set` | POST | `{"exe":"steam.exe","category":"my group"}` | Set an app's group; empty `category` = remove from group (restore automatic classification); unknown groups are auto-registered as custom |
+| `/api/groups/rename` | POST | `{"exe":"steam.exe","display_name":"Steam custom name"}` | Set/clear a custom display name (empty `display_name` = restore default) |
 | `/api/groups/add` | POST | `{"name":"learning tools"}` | Add a custom group (idempotent if it already exists) |
 | `/api/groups/delete` | POST | `{"name":"learning tools"}` | Delete a custom group (apps in the group automatically revert to automatic classification) |
+| `/api/groups/export` | GET | - | Download the full current `app_groups.json` |
+| `/api/groups/import` | POST | `app_groups.json` object | Import and replace the current grouping configuration |
 
 The same settings apply on the command line: monitor classification, daily/weekly/monthly reports, `--reclassify`, and the software inventory all go through `classify_category()`, so you never need to restart any process after changing groups.
 
@@ -511,7 +523,7 @@ is a list of custom group names. If the file is missing or corrupted it is treat
 
 ```powershell
 python monitor.py --test 30   # test mode (runs for N seconds then exits and prints a summary)
-python test_all.py            # full integration tests (216 assertions)
+python test_all.py            # full integration tests (223 assertions)
 ```
 
 test_all.py monkey-patches the foreground window/idle/process tree to cover: timing on switch, no timing while idle, WeChat contacts,

@@ -932,7 +932,37 @@ def test_app_groups():
         check(classifier.classify_category("steam.exe", "", cfg) == "游戏", "删分组后恢复自动")
         s, d = req("GET", "/api/groups")
         check("学习工具" not in d["categories"], "分组已删除")
-        # 7) 恶意 Origin 对 POST 同样拒绝
+
+        # 7) 自定义显示名（客制化）
+        s, d = req("POST", "/api/groups/rename", {"exe": "steam.exe", "display_name": "Steam 自定义名"})
+        check(s == 200 and d.get("ok") is True, "重命名 API")
+        s, d = req("GET", "/api/groups")
+        steam = next(a for a in d["apps"] if a["exe"] == "steam.exe")
+        check(steam["app"] == "Steam 自定义名", "显示名在列表中生效", str(steam))
+        check(classifier.resolve_app_name("steam.exe", cfg) == "Steam 自定义名", "resolve_app_name 使用自定义名")
+
+        # 8) 导出配置
+        s, d = req("GET", "/api/groups/export")
+        check(s == 200 and d.get("app_names", {}).get("steam.exe") == "Steam 自定义名",
+              "导出包含自定义显示名", str(d))
+
+        # 9) 导入配置（整份覆盖）
+        import_groups = {
+            "exe_groups": {"wechat.exe": "我的分组"},
+            "custom_categories": ["我的分组"],
+            "app_names": {"wechat.exe": "微信自定义"},
+            "group_meta": {"我的分组": {"description": "测试描述"}},
+        }
+        s, d = req("POST", "/api/groups/import", import_groups)
+        check(s == 200 and d.get("ok") is True, "导入 API")
+        s, d = req("GET", "/api/groups")
+        wechat = next(a for a in d["apps"] if a["exe"] == "wechat.exe")
+        check(wechat["app"] == "微信自定义" and wechat["category"] == "我的分组",
+              "导入后显示名/分组生效", str(wechat))
+        check(d.get("group_meta", {}).get("我的分组", {}).get("description") == "测试描述",
+              "导入后分组元数据生效", str(d.get("group_meta")))
+
+        # 10) 恶意 Origin 对 POST 同样拒绝
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
         conn.request("POST", "/api/groups/set", body='{"exe":"a","category":"b"}',
                      headers={"Content-Type": "application/json", "Origin": "https://evil.example"})

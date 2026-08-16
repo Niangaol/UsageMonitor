@@ -82,12 +82,12 @@
 | `report.py` | 日报末尾追加「📌 今日建议」段（仅离线规则洞察） | ✅ |
 | `dashboard.py` | `/api/insights`、`/api/insights/ai`、`/api/insights/settings` + 「洞察」视图 + 设置页 AI 开关/预设/自定义保存 | ✅ |
 | `UsageMonitor.spec` | `hiddenimports` 增加 `'insights'` | ✅ |
-| `test_all.py` | 新增 8 组（规则、AI 提示词隐私、AI 调用、provider 预设、缓存、仪表盘 API、AI 设置 API、日报段落），全量 **216 项通过** | ✅ |
+| `test_all.py` | 新增 8 组（规则、AI 提示词隐私、AI 调用、provider 预设、缓存、仪表盘 API、AI 设置 API、日报段落），全量 **223 项通过** | ✅ |
 | `ruff.toml` | 锁定基础规则集（E4/E7/E9/F），并清理存量 E/F 违规；`ruff check .` 零违规 | ✅ |
 | `README.md` / `README.en.md` / `CHANGELOG.md` | 功能特性、智能洞察章节、Provider 预设/设置开关说明、配置说明、隐私声明同步 | ✅ |
 
 执行记录：
-1. `python test_all.py` 全量回归 → **216 项通过**（原 152 + 新增 64 项断言）
+1. `python test_all.py` 全量回归 → **223 项通过**（原 152 + 新增 71 项断言）
 2. `python insights.py --day 2026-08-10 --data-root demo_data` 命中学习/游戏/趋势 3 条规则
 3. `python insights.py --day 2026-08-10 --json` 真实数据命中 5 条规则
 4. AI 真实调用受外部网络限制返回 HTTP 403，错误态正常；`_chat_completion` 已用 monkeypatch 测试覆盖 URL/请求体/HTTP 错误/超时
@@ -111,7 +111,7 @@
 - **Python**：默认 `python`=3.11（有 PyInstaller）；`py -3`=3.14（无 PyInstaller）
 - **构建**：`python -m PyInstaller UsageMonitor.spec --noconfirm`（先停守护任务，exe 会被占用）
 - **发布**：`git tag vX.Y.Z && git push origin vX.Y.Z` → CI 自动测试→构建→冒烟→Release
-- **测试**：`python test_all.py`（216 项全过）；`python -m ruff check .`（零违规）
+- **测试**：`python test_all.py`（223 项全过）；`python -m ruff check .`（零违规）
 - **视觉验收**：Edge headless 截图 + qwen3.7-plus（key 自动读 `~/.config/opencode/opencode.json`）
 - **守护**：计划任务 `UsageMonitor`（exe）/`UsageMonitorReport`（每日 19:30 日报）
 - **测试管线文件**（temp 目录，未入库）：`shot_views.py`（5 视图截图）、`qwen_ui_qa.py`（视觉验收）

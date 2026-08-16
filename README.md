@@ -227,6 +227,8 @@ UsageMonitor.exe --dashboard --open           # exe 方式
   - 搜索/浏览全部已知应用（软件清单 + 最近 14 天 usage.jsonl 出现的 exe）
   - 把应用**移动到**任意分组（含自定义分组），或**移出**分组恢复自动分类
   - **新增分组**（输入名称回车/按钮）与**删除分组**（组内应用自动恢复自动分类）
+  - **自定义显示名**：每个应用可单独改名（如把 `steam.exe` 显示为“Steam 游戏平台”），新会话与仪表盘即时生效
+  - **导出 / 导入配置**：一键下载 `app_groups.json`，也可导入备份/分享的分组配置
   - 覆盖层优先级：**用户分组(exe 精确) > 配置关键词(exe/title)**，实时生效（TTL 5s 缓存）
 - **洞察视图**：
   - 规则卡片：学习/游戏/健康/效率/平衡/趋势，severity 配色（蓝=建议 / 橙=注意 / 红=提醒）
@@ -238,22 +240,32 @@ UsageMonitor.exe --dashboard --open           # exe 方式
 数据文件 `<data_root>/app_groups.json`（运行期自动生成，缺省/损坏自动回退空结构）：
 
 ```json
-{ "exe_groups": { "steam.exe": "我的分组" }, "custom_categories": ["我的分组"] }
+{
+  "exe_groups": { "steam.exe": "我的分组" },
+  "custom_categories": ["我的分组"],
+  "app_names": { "steam.exe": "Steam 自定义名" },
+  "group_meta": { "我的分组": { "description": "可选说明" } }
+}
 ```
 
 | 字段 | 说明 |
 |---|---|
 | `exe_groups` | exe（小写）→ 分组名；分类时精确匹配，优先级最高 |
 | `custom_categories` | 用户自定义分组列表（内置 13 类之外的补充） |
+| `app_names` | exe（小写）→ 自定义显示名；优先于 `config.json` 的 `apps` 映射 |
+| `group_meta` | 自定义分组元数据（描述等，当前用于导出/导入保留） |
 
 API（仅 127.0.0.1，POST 带同源 Origin 校验）：
 
 | 端点 | 方法 | 请求体 | 说明 |
 |---|---|---|---|
-| `/api/groups` | GET | - | 全部已知应用及其当前分类、分组列表（`apps`/`categories`/`custom_categories`/`exe_groups`） |
+| `/api/groups` | GET | - | 全部已知应用及其当前分类、分组列表、显示名、元数据（`apps`/`categories`/`custom_categories`/`exe_groups`/`app_names`/`group_meta`） |
 | `/api/groups/set` | POST | `{"exe":"steam.exe","category":"我的分组"}` | 设置应用分组；`category` 为空 = 移出（恢复自动分类）；未知分组自动登记为自定义 |
+| `/api/groups/rename` | POST | `{"exe":"steam.exe","display_name":"Steam 自定义名"}` | 设置/清除自定义显示名（`display_name` 为空 = 恢复默认） |
 | `/api/groups/add` | POST | `{"name":"学习工具"}` | 新增自定义分组（已存在则幂等） |
 | `/api/groups/delete` | POST | `{"name":"学习工具"}` | 删除自定义分组（组内应用自动移出恢复自动分类） |
+| `/api/groups/export` | GET | - | 下载当前完整 `app_groups.json` |
+| `/api/groups/import` | POST | `app_groups.json` 对象 | 整份导入并覆盖当前分组配置 |
 
 命令行同样生效：monitor 分类、日报/周报/月报、`--reclassify`、软件清单全部走 `classify_category()`，
 改分组无需重启任何进程。
@@ -509,7 +521,7 @@ install.ps1 注册两个计划任务：
 
 ```powershell
 python monitor.py --test 30   # 测试模式（跑 N 秒后退出并打印汇总）
-python test_all.py            # 完整集成测试（216 项断言）
+python test_all.py            # 完整集成测试（223 项断言）
 ```
 
 test_all.py 通过猴子补丁模拟前台窗口/空闲/进程树，覆盖：切换计时、空闲不计时、微信联系人、

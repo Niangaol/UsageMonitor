@@ -6,6 +6,16 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布流程：`git tag vX.Y.Z` 后由 CI 自动构建并发布 Release。
 
+## [1.3.0] - 2026-08-16
+
+### 新增
+- 应用分组更细粒度客制化：
+  - `app_groups.json` 新增 `app_names`（每个 exe 的自定义显示名）与 `group_meta`（分组元数据）
+  - 仪表盘「分组」视图新增「显示名」编辑列，改名后新会话/仪表盘即时生效
+  - 新增 `/api/groups/rename`、`/api/groups/export`、`/api/groups/import`
+  - 分组视图新增「导出配置 / 导入配置」按钮，可整份备份/迁移分组配置
+- `classifier.resolve_app_name()` 支持用户自定义显示名优先于 `config.json` 的 `apps` 映射。
+
 ## [1.2.1] - 2026-08-16
 
 ### 修复

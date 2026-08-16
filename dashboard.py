@@ -724,14 +724,18 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
           <input type="text" id="grpSearch" placeholder="搜索应用…" style="width:200px">
           <input type="text" id="grpNewName" placeholder="新分组名称" style="width:150px" maxlength="20">
           <button class="btn primary" id="grpAdd">新增分组</button>
+          <button class="btn" id="grpExport">导出配置</button>
+          <input type="file" id="grpImportFile" accept=".json,application/json" style="width:170px">
+          <button class="btn" id="grpImport">导入配置</button>
           <span id="grpStatus" style="color:var(--faint);font-size:11.5px"></span>
         </div>
         <div id="grpCats" style="margin-bottom:14px;line-height:2"></div>
         <div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>应用</th><th>当前分组</th><th>移动到</th></tr></thead>
+          <thead><tr><th>应用</th><th>显示名</th><th>当前分组</th><th>移动到</th></tr></thead>
           <tbody id="grpBody"></tbody>
         </table></div>
         <div id="grpCount" style="color:var(--faint);font-size:11.5px;margin-top:8px"></div>
+        <div class="set-note" id="grpImportNote" style="margin-top:8px"></div>
       </div>
     </section>
 
@@ -1474,15 +1478,16 @@ function renderGroups(){
   const q = $("#grpSearch").value.toLowerCase();
   const d = state.groups || {apps:[]};
   const rows = d.apps.filter(a => (a.app+" "+a.exe).toLowerCase().includes(q));
-  $("#grpCount").textContent = rows.length + " / " + d.apps.length + " 个应用（下拉选分组即时生效；清空=恢复自动分类）";
+  $("#grpCount").textContent = rows.length + " / " + d.apps.length + " 个应用（下拉选分组即时生效；清空=恢复自动分类；显示名可自定义）";
   $("#grpBody").innerHTML = rows.map(a=>{
     const opts = ['<option value="">自动分类</option>'].concat(
       d.categories.map(c=>'<option value="'+esc(c)+'"'+(a.overridden && a.category===c ? " selected" : "")+'>'+esc(c)+'</option>')
     ).join("");
     return "<tr><td>"+esc(a.app)+"<span class='url-cell' style='margin-left:8px'>"+esc(a.exe)+"</span></td>"+
+      "<td><input class='grp-name' data-exe='"+esc(a.exe)+"' value='"+esc(a.app)+"' placeholder='默认' style='width:140px'></td>"+
       "<td>"+(a.overridden ? '<span class="tag ai">'+esc(a.category)+'</span>' : '<span style="color:var(--dim)">'+esc(a.category)+'</span>')+"</td>"+
       "<td><select data-exe='"+esc(a.exe)+"'>"+opts+"</select></td></tr>";
-  }).join("") || '<tr><td colspan="3" class="empty">无匹配应用</td></tr>';
+  }).join("") || '<tr><td colspan="4" class="empty">无匹配应用</td></tr>';
   $$("#grpBody select").forEach(sel=>{
     sel.onchange = async ()=>{
       try{
@@ -1493,6 +1498,40 @@ function renderGroups(){
       }catch(e){ grpFlash("保存失败：" + e.message); }
     };
   });
+  $$("#grpBody .grp-name").forEach(inp=>{
+    inp.onchange = async ()=>{
+      const name = inp.value.trim();
+      try{
+        await postJson("/api/groups/rename", {exe: inp.dataset.exe, display_name: name});
+        grpFlash("已更新显示名：" + (name || "恢复默认"));
+        await loadGroups();
+        if(state.loaded.overview) loadOverview();
+      }catch(e){ grpFlash("保存失败：" + e.message); }
+    };
+  });
+}
+async function grpExport(){
+  try{
+    await downloadToFile("/api/groups/export", "app_groups.json");
+  }catch(e){ alert("导出失败：" + e.message); }
+}
+async function grpImport(){
+  const file = $("#grpImportFile").files[0];
+  const note = $("#grpImportNote");
+  if(!file){ note.textContent = "请先选择要导入的 app_groups.json 文件。"; note.style.color = "var(--danger)"; return; }
+  try{
+    const text = await file.text();
+    const obj = JSON.parse(text);
+    const d = await postJson("/api/groups/import", obj);
+    note.textContent = "导入成功：" + Object.keys((d.groups && d.groups.exe_groups) || {}).length + " 个应用分组配置。";
+    note.style.color = "var(--ok)";
+    $("#grpImportFile").value = "";
+    await loadGroups();
+    if(state.loaded.overview) loadOverview();
+  }catch(e){
+    note.textContent = "导入失败：" + e.message;
+    note.style.color = "var(--danger)";
+  }
 }
 async function groupsInit(){
   $("#grpAdd").onclick = async ()=>{
@@ -1519,6 +1558,8 @@ async function groupsInit(){
       if(state.loaded.overview) loadOverview();
     }catch(err){ grpFlash("删除失败：" + err.message); }
   };
+  $("#grpExport").onclick = grpExport;
+  $("#grpImport").onclick = grpImport;
 }
 
 /* ---------- 智能洞察（规则 + AI） ---------- */
@@ -2104,22 +2145,36 @@ class Handler(BaseHTTPRequestHandler):
                 groups = _clf.load_app_groups(root)
                 cats = _clf.all_categories(config, groups)
                 known = _collect_known_apps(root)
+                custom_names = groups.get("app_names", {})
                 entries = []
                 for exe, name in sorted(known.items(), key=lambda kv: kv[1].lower()):
                     entries.append({
                         "exe": exe,
-                        "app": name,
+                        "app": custom_names.get(exe) or name,
                         "category": _clf.classify_category(exe, "", config),
                         "overridden": exe in groups["exe_groups"],
                     })
                 self._send_json({
                     "exe_groups": groups["exe_groups"],
                     "custom_categories": groups["custom_categories"],
+                    "app_names": groups.get("app_names", {}),
+                    "group_meta": groups.get("group_meta", {}),
                     "categories": cats,
                     "apps": entries,
                 })
             except Exception:  # noqa: BLE001
                 self._send_json({"error": "groups unavailable"}, 500)
+            return
+
+        if path == "/api/groups/export":
+            # 导出应用分组配置（app_groups.json 完整内容，含分组/显示名/元数据）
+            try:
+                import classifier as _clf  # noqa: PLC0415
+                groups = _clf.load_app_groups(root)
+                data = json.dumps(groups, ensure_ascii=False, indent=2).encode("utf-8")
+                self._send_blob(data, "application/json; charset=utf-8", "app_groups.json")
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": f"export failed: {exc}"}, 500)
             return
 
         if path == "/favicon.ico":
@@ -2222,6 +2277,39 @@ class Handler(BaseHTTPRequestHandler):
                 groups["exe_groups"].pop(exe, None)
             _clf.save_app_groups(groups, root)
             self._send_json({"ok": True})
+            return
+
+        if path == "/api/groups/rename":
+            # 客制化显示名：{"exe":"steam.exe","display_name":"Steam 自定义名"}；display_name 为空=恢复默认
+            exe = str(body.get("exe", "")).lower()
+            display_name = str(body.get("display_name", "")).strip()
+            if not exe:
+                self._send_json({"error": "exe required"}, 400)
+                return
+            groups = _clf.load_app_groups(root)
+            groups.setdefault("app_names", {})
+            if display_name:
+                groups["app_names"][exe] = display_name
+            else:
+                groups["app_names"].pop(exe, None)
+            _clf.save_app_groups(groups, root)
+            self._send_json({"ok": True, "app": display_name})
+            return
+
+        if path == "/api/groups/import":
+            # 导入应用分组配置：可传 {"groups": {...}} 或直接传 app_groups.json 对象
+            data = body.get("groups") if isinstance(body.get("groups"), dict) else body
+            if not isinstance(data, dict):
+                self._send_json({"error": "invalid groups payload"}, 400)
+                return
+            groups = {
+                "exe_groups": data.get("exe_groups", {}),
+                "custom_categories": data.get("custom_categories", []),
+                "app_names": data.get("app_names", {}),
+                "group_meta": data.get("group_meta", {}),
+            }
+            _clf.save_app_groups(groups, root)
+            self._send_json({"ok": True, "groups": _clf.load_app_groups(root)})
             return
 
         if path == "/api/groups/add":
