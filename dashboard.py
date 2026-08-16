@@ -187,7 +187,9 @@ def _save_ai_settings(root: str, config_path: str | None, payload: dict) -> dict
     # 选择内置预设且用户未手填时，把预设的 base_url/model 落盘，方便界面回显
     try:
         import insights  # noqa: PLC0415
-        preset_map = {p["id"]: p for p in insights.list_provider_presets()}
+        custom = insights.load_ai_custom(root)
+        preset_map = {p["id"]: p for p in
+                      insights.list_provider_presets(custom.get("providers"))}
         preset = preset_map.get(ai["provider"].lower(), {})
         if not ai["base_url"]:
             ai["base_url"] = preset.get("base_url", "")
@@ -725,7 +727,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
           <input type="text" id="grpNewName" placeholder="新分组名称" style="width:150px" maxlength="20">
           <button class="btn primary" id="grpAdd">新增分组</button>
           <button class="btn" id="grpExport">导出配置</button>
-          <input type="file" id="grpImportFile" accept=".json,application/json" style="width:170px">
+          <input type="file" id="grpImportFile" accept=".json,application/json" style="display:none">
           <button class="btn" id="grpImport">导入配置</button>
           <span id="grpStatus" style="color:var(--faint);font-size:11.5px"></span>
         </div>
@@ -758,6 +760,43 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         <div class="set-note" id="inAiError" style="display:none"></div>
         <div id="inAiCards" style="margin-top:12px"></div>
       </div>
+      <div class="panel">
+        <h2>AI 洞察模块 <span class="hint">客制化 · 持久化于数据目录 ai_custom.json · 可导入导出</span></h2>
+        <div class="controls" style="margin-bottom:12px">
+          <button class="btn primary" id="aiModSave">保存模块设置</button>
+          <button class="btn" id="aiModExport">导出配置</button>
+          <input type="file" id="aiModImportFile" accept=".json,application/json" style="display:none">
+          <button class="btn" id="aiModImport">导入配置</button>
+          <span id="aiModStatus" style="color:var(--faint);font-size:11.5px"></span>
+        </div>
+        <div style="margin-bottom:14px">
+          <b style="font-size:13px">自定义 Provider 预设</b>
+          <div class="hint" style="margin:2px 0 8px">显示在「设置 → Provider 预设」下拉中，优先于内置预设；ID 仅限小写字母 / 数字 / _ / -。</div>
+          <div class="tbl-wrap"><table class="tbl">
+            <thead><tr><th>ID</th><th>名称</th><th>Base URL</th><th>Model</th><th style="width:44px"></th></tr></thead>
+            <tbody id="aiModProvBody"></tbody>
+          </table></div>
+          <button class="btn" id="aiModAddProv" style="margin-top:8px">＋ 新增 Provider</button>
+        </div>
+        <div style="margin-bottom:14px">
+          <b style="font-size:13px">发送给 AI 的数据内容</b>
+          <div class="hint" style="margin:2px 0 8px">勾选决定提示词包含哪些统计段；仅聚合数字，不含标题 / URL / 联系人名。</div>
+          <div id="aiModSections" style="display:flex;flex-wrap:wrap;gap:10px 18px"></div>
+        </div>
+        <div style="margin-bottom:14px">
+          <b style="font-size:13px">洞察数量</b>
+          <div style="margin-top:6px">
+            <input type="number" id="aiModMin" min="1" max="10" style="width:80px"> ~
+            <input type="number" id="aiModMax" min="1" max="10" style="width:80px"> 条
+          </div>
+        </div>
+        <div>
+          <b style="font-size:13px">自定义指令</b>
+          <div class="hint" style="margin:2px 0 8px">附加到提示词末尾，让 AI 聚焦你的关注点（最多 500 字）。</div>
+          <textarea id="aiModInstruction" maxlength="500" rows="2" placeholder="例如：我最近在备考，请重点分析学习时段与干扰来源…" style="width:min(560px,100%)"></textarea>
+        </div>
+        <div class="set-note" id="aiModNote" style="margin-top:8px"></div>
+      </div>
     </section>
 
     <!-- 设置（备份/恢复/口令/主题） -->
@@ -783,8 +822,13 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
             <input type="password" id="aiApiKey" placeholder="留空保持不变" autocomplete="off" style="width:min(420px,100%);margin-top:4px">
           </label>
           <label style="display:block;margin:8px 0">Model
-            <input type="text" id="aiModel" placeholder="model-name" style="width:min(420px,100%);margin-top:4px">
+            <input type="text" id="aiModel" placeholder="model-name（Ollama 可点下方按钮拉取列表）" style="width:min(420px,100%);margin-top:4px" list="aiModelList">
+            <datalist id="aiModelList"></datalist>
           </label>
+          <div id="aiOllamaBox" style="display:none;margin:8px 0">
+            <button class="btn" id="aiOllamaFetch" type="button">刷新 Ollama 模型列表</button>
+            <span class="hint" id="aiOllamaHint"></span>
+          </div>
           <label style="display:block;margin:8px 0">超时（秒）
             <input type="number" id="aiTimeout" min="1" max="600" value="60" style="width:min(180px,100%);margin-top:4px">
           </label>
@@ -809,8 +853,10 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         <div class="desc">选择上文备份生成的 zip 上传，解压校验后按日期目录/配置合并覆盖到当前数据目录。
           相同日期目录会被覆盖、缺失的会补齐；不会删除已有的其他数据。</div>
         <div class="set-restore">
-          <input type="file" id="bkFile" accept=".zip,application/zip">
+          <input type="file" id="bkFile" accept=".zip,application/zip" style="display:none">
+          <button class="btn" id="bkPick">选择备份文件</button>
           <button class="btn primary" id="bkRestore">恢复上传</button>
+          <span class="hint" id="bkPickName"></span>
         </div>
         <div class="set-note" id="bkNote"></div>
       </div>
@@ -1285,6 +1331,7 @@ async function bkRestore(){
       (result.files||[]).length + " 项（如需查看请刷新页面重新载入日期）。";
     note.style.color = "var(--ok)";
     $("#bkFile").value = "";
+    $("#bkPickName").textContent = "";
   }catch(e){
     note.textContent = "恢复失败：" + e.message;
     note.style.color = "var(--danger)";
@@ -1323,6 +1370,7 @@ function applyAiSettingsView(d){
     ? "AI 洞察已开启。" + (ai.api_key_set ? " API Key 已配置。" : " 尚未配置 API Key（部分本地端点可留空）。")
     : "AI 洞察当前关闭（可选功能，默认关闭）。规则洞察始终离线。";
   note.style.color = ai.enabled ? "var(--ok)" : "var(--dim)";
+  updateAiOllamaBox();
 }
 async function loadSettings(){
   $("#authNote").textContent = AUTH_REQUIRED ?
@@ -1367,6 +1415,44 @@ async function saveAiSettings(){
     note.style.color = "var(--danger)";
   }
 }
+function updateAiOllamaBox(){
+  const box = $("#aiOllamaBox");
+  if(!box) return;
+  const sel = $("#aiProvider");
+  const isOllama = sel && sel.value === "ollama";
+  box.style.display = isOllama ? "" : "none";
+  if(isOllama) fetchOllamaModels();
+}
+async function fetchOllamaModels(){
+  const hint = $("#aiOllamaHint");
+  if(!hint) return;
+  const btn = $("#aiOllamaFetch");
+  if(btn) btn.disabled = true;
+  hint.textContent = "正在连接 Ollama…";
+  hint.style.color = "var(--dim)";
+  try{
+    const d = await api("/api/insights/ollama/models");
+    const list = $("#aiModelList");
+    if(list) list.innerHTML = (d.models || []).map(m=>'<option value="'+esc(m)+'"></option>').join("");
+    if(d.error){
+      hint.textContent = d.error;
+      hint.style.color = "var(--danger)";
+    }else if(d.models && d.models.length){
+      const cur = $("#aiModel");
+      if(cur && !cur.value) cur.value = d.models[0];
+      hint.textContent = "已连接，共 " + d.models.length + " 个模型（输入框可下拉选择）";
+      hint.style.color = "var(--ok)";
+    }else{
+      hint.textContent = "已连接，但本地还没有模型（先运行 ollama pull <模型名>）";
+      hint.style.color = "var(--dim)";
+    }
+  }catch(e){
+    hint.textContent = "无法获取模型列表：" + e.message;
+    hint.style.color = "var(--danger)";
+  }finally{
+    if(btn) btn.disabled = false;
+  }
+}
 function wireAiSettings(){
   const sel = $("#aiProvider");
   if(sel){
@@ -1376,10 +1462,13 @@ function wireAiSettings(){
         if(opt.dataset.base && $("#aiBaseUrl")) $("#aiBaseUrl").value = opt.dataset.base;
         if(opt.dataset.model && $("#aiModel")) $("#aiModel").value = opt.dataset.model;
       }
+      updateAiOllamaBox();
     };
   }
   const btn = $("#aiSave");
   if(btn) btn.onclick = saveAiSettings;
+  const ollamaBtn = $("#aiOllamaFetch");
+  if(ollamaBtn) ollamaBtn.onclick = fetchOllamaModels;
 }
 
 /* ---------- 会话 ---------- */
@@ -1516,21 +1605,25 @@ async function grpExport(){
   }catch(e){ alert("导出失败：" + e.message); }
 }
 async function grpImport(){
-  const file = $("#grpImportFile").files[0];
+  const input = $("#grpImportFile");
+  const file = input.files[0];
   const note = $("#grpImportNote");
   if(!file){ note.textContent = "请先选择要导入的 app_groups.json 文件。"; note.style.color = "var(--danger)"; return; }
+  note.textContent = "正在导入「" + file.name + "」…";
+  note.style.color = "var(--dim)";
   try{
     const text = await file.text();
     const obj = JSON.parse(text);
     const d = await postJson("/api/groups/import", obj);
     note.textContent = "导入成功：" + Object.keys((d.groups && d.groups.exe_groups) || {}).length + " 个应用分组配置。";
     note.style.color = "var(--ok)";
-    $("#grpImportFile").value = "";
     await loadGroups();
     if(state.loaded.overview) loadOverview();
   }catch(e){
     note.textContent = "导入失败：" + e.message;
     note.style.color = "var(--danger)";
+  }finally{
+    input.value = "";  // 清空输入，保证再次选择同一文件也能触发 change
   }
 }
 async function groupsInit(){
@@ -1559,7 +1652,8 @@ async function groupsInit(){
     }catch(err){ grpFlash("删除失败：" + err.message); }
   };
   $("#grpExport").onclick = grpExport;
-  $("#grpImport").onclick = grpImport;
+  $("#grpImport").onclick = () => { $("#grpImportFile").click(); };
+  $("#grpImportFile").onchange = grpImport;
 }
 
 /* ---------- 智能洞察（规则 + AI） ---------- */
@@ -1595,6 +1689,7 @@ async function loadInsights(){
     ? d.rules.map(insightCardHTML).join("")
     : '<div class="empty">当日暂无规则洞察（数据为空或 insights.enabled=false）</div>';
   renderAiPanel(d);
+  loadAiModule().catch(() => { /* 模块面板加载失败不影响规则/AI 展示 */ });
 }
 function renderAiPanel(d){
   const btn = $("#inGen"), meta = $("#inAiMeta"), err = $("#inAiError"), cards = $("#inAiCards");
@@ -1650,6 +1745,130 @@ function wireInsights(){
   };
 }
 
+/* ---------- AI 洞察模块（客制化，同应用分组模式） ---------- */
+let aiModFlashTimer = null;
+function aiModFlash(msg, ok){
+  const el = $("#aiModStatus");
+  if(!el) return;
+  el.textContent = msg;
+  el.style.color = ok === false ? "var(--danger)" : "var(--ok)";
+  if(aiModFlashTimer) clearTimeout(aiModFlashTimer);
+  aiModFlashTimer = setTimeout(()=>{ el.textContent = ""; }, 4000);
+}
+async function loadAiModule(){
+  const d = await api("/api/ai/module");
+  state.aiModule = d;
+  renderAiModule(d);
+}
+function renderAiModule(d){
+  const c = d.custom || {providers:[], prompt:{sections:{}, min_insights:3, max_insights:6, instruction:""}};
+  const p = c.prompt || {};
+  const body = $("#aiModProvBody");
+  if(body) body.innerHTML = (c.providers || []).map((pr,i)=>aiModProvRow(pr, i)).join("");
+  const sec = $("#aiModSections");
+  if(sec && d.sections){
+    const s = p.sections || {};
+    sec.innerHTML = d.sections.map(x=>
+      '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px">'+
+      '<input type="checkbox" class="aim-sec" data-key="'+esc(x.key)+'"'+(s[x.key] !== false ? " checked" : "")+'> '+esc(x.label)+'</label>'
+    ).join("");
+  }
+  if($("#aiModMin")) $("#aiModMin").value = p.min_insights || 3;
+  if($("#aiModMax")) $("#aiModMax").value = p.max_insights || 6;
+  if($("#aiModInstruction")) $("#aiModInstruction").value = p.instruction || "";
+}
+function aiModProvRow(pr, i){
+  return '<tr>' +
+    '<td><input class="aim-prov" data-f="id" value="'+esc(pr.id)+'" placeholder="my-provider" style="width:130px"></td>' +
+    '<td><input class="aim-prov" data-f="name" value="'+esc(pr.name)+'" placeholder="我的服务" style="width:140px"></td>' +
+    '<td><input class="aim-prov" data-f="base_url" value="'+esc(pr.base_url)+'" placeholder="https://…/v1" style="width:220px"></td>' +
+    '<td><input class="aim-prov" data-f="model" value="'+esc(pr.model)+'" placeholder="model-name" style="width:150px"></td>' +
+    '<td><button class="btn aim-prov-del" data-i="'+i+'" title="删除" style="padding:2px 8px;color:var(--danger)">✕</button></td></tr>';
+}
+function collectAiModule(){
+  const providers = [];
+  $$("#aiModProvBody tr").forEach(tr=>{
+    const row = {};
+    [...tr.querySelectorAll(".aim-prov")].forEach(inp=>{ row[inp.dataset.f] = inp.value.trim(); });
+    if(!row.id && !row.name && !row.base_url && !row.model) return; // 全空行忽略
+    providers.push(row);
+  });
+  const sections = {};
+  $$("#aiModSections input.aim-sec").forEach(cb=>{ sections[cb.dataset.key] = cb.checked; });
+  return {
+    providers,
+    prompt: {
+      sections,
+      min_insights: parseInt($("#aiModMin").value || "3", 10),
+      max_insights: parseInt($("#aiModMax").value || "6", 10),
+      instruction: $("#aiModInstruction").value.trim()
+    }
+  };
+}
+async function saveAiModule(){
+  const payload = collectAiModule();
+  for(const pr of payload.providers){
+    if(!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(pr.id || "")){
+      aiModFlash("Provider ID 非法（小写字母/数字开头，仅含 a-z 0-9 _ -）", false);
+      return;
+    }
+    if(!pr.base_url || !pr.model){
+      aiModFlash("Provider 需填写 Base URL 与 Model：" + pr.id, false);
+      return;
+    }
+  }
+  const mn = payload.prompt.min_insights, mx = payload.prompt.max_insights;
+  if(mn < 1 || mn > 10 || mx < 1 || mx > 10 || mx < mn){
+    aiModFlash("洞察数量需在 1-10 之间，且最大值不小于最小值", false);
+    return;
+  }
+  try{
+    const d = await postJson("/api/ai/module", payload);
+    renderAiModule(d);
+    aiModFlash("已保存：自定义 Provider " + (d.custom.providers || []).length + " 个");
+  }catch(e){ aiModFlash("保存失败：" + e.message, false); }
+}
+async function aiModExport(){
+  try{ await downloadToFile("/api/ai/module/export", "ai_custom.json"); }
+  catch(e){ aiModFlash("导出失败：" + e.message, false); }
+}
+async function aiModImport(){
+  const input = $("#aiModImportFile");
+  const file = input.files[0];
+  if(!file){ aiModFlash("请先选择要导入的 ai_custom.json 文件。", false); return; }
+  try{
+    const text = await file.text();
+    const obj = JSON.parse(text);
+    const d = await postJson("/api/ai/module/import", obj);
+    renderAiModule(d);
+    aiModFlash("导入成功：自定义 Provider " + (d.custom.providers || []).length + " 个");
+  }catch(e){ aiModFlash("导入失败：" + e.message, false); }
+  finally{ input.value = ""; } // 保证再次选择同一文件也能触发 change
+}
+function wireAiModule(){
+  const addBtn = $("#aiModAddProv");
+  if(addBtn) addBtn.onclick = () => {
+    const body = $("#aiModProvBody");
+    if(body) body.insertAdjacentHTML("beforeend", aiModProvRow({id:"",name:"",base_url:"",model:""}, body.children.length));
+  };
+  const body = $("#aiModProvBody");
+  if(body) body.onclick = (e) => {
+    const del = e.target.closest(".aim-prov-del");
+    if(!del) return;
+    e.preventDefault();
+    const tr = del.closest("tr");
+    if(tr) tr.remove();
+  };
+  const save = $("#aiModSave");
+  if(save) save.onclick = saveAiModule;
+  const ex = $("#aiModExport");
+  if(ex) ex.onclick = aiModExport;
+  const im = $("#aiModImport");
+  if(im) im.onclick = () => { $("#aiModImportFile").click(); };
+  const imf = $("#aiModImportFile");
+  if(imf) imf.onchange = aiModImport;
+}
+
 /* ---------- 初始化 ---------- */
 function startApp(){
   buildHeadControls();
@@ -1658,8 +1877,14 @@ function startApp(){
   wireExportButtons();
   wireInsights();
   wireAiSettings();
+  wireAiModule();
   monthInit();
   $("#bkDownload").onclick = bkDownload;
+  $("#bkPick").onclick = () => { $("#bkFile").click(); };
+  $("#bkFile").onchange = () => {
+    const f = $("#bkFile").files[0];
+    $("#bkPickName").textContent = f ? "已选择：" + f.name : "";
+  };
   $("#bkRestore").onclick = bkRestore;
 
   // 导航
@@ -1963,13 +2188,14 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/insights/settings":
-            # AI 设置（可选功能开关 + provider 预设 + 自定义端点）
+            # AI 设置（可选功能开关 + provider 预设 + 自定义端点）；预设含 ai_custom.json 自定义项
             config = _load_config_for_root(root, self.server.config_path)
             try:
                 import insights  # noqa: PLC0415
+                custom = insights.load_ai_custom(root)
                 self._send_json({
                     "ai": _ai_settings_view(config),
-                    "presets": insights.list_provider_presets(),
+                    "presets": insights.list_provider_presets(custom.get("providers")),
                 })
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": f"insights settings unavailable: {exc}"}, 500)
@@ -2003,6 +2229,45 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"date": date, "ai_enabled": True, "ai": ai})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": f"insights ai unavailable: {exc}"}, 500)
+            return
+
+        if path == "/api/insights/ollama/models":
+            # 读取 Ollama 本地模型列表（供设置页下拉/校验；失败返回可展示错误）
+            config = _load_config_for_root(root, self.server.config_path)
+            try:
+                import insights  # noqa: PLC0415
+                ins_cfg = config.get("insights") if isinstance(config.get("insights"), dict) else {}
+                ai_cfg = ins_cfg.get("ai") if isinstance(ins_cfg.get("ai"), dict) else {}
+                base_url = str(ai_cfg.get("base_url") or "").strip()
+                models = insights.ollama_models(base_url or None)
+                self._send_json({"models": models, "error": None})
+            except Exception as exc:  # noqa: BLE001 —— 连接失败不拖垮设置页
+                self._send_json({"models": [], "error": str(exc)})
+            return
+
+        if path == "/api/ai/module":
+            # AI 洞察客制化模块（自定义 provider + 提示词定制），持久化于 <root>/ai_custom.json
+            try:
+                import insights  # noqa: PLC0415
+                custom = insights.load_ai_custom(root)
+                self._send_json({
+                    "custom": custom,
+                    "sections": insights.PROMPT_SECTION_ITEMS,
+                    "presets": insights.list_provider_presets(custom.get("providers")),
+                })
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": f"ai module unavailable: {exc}"}, 500)
+            return
+
+        if path == "/api/ai/module/export":
+            # 导出 AI 客制化模块配置（ai_custom.json 完整内容）
+            try:
+                import insights  # noqa: PLC0415
+                custom = insights.load_ai_custom(root)
+                data = json.dumps(custom, ensure_ascii=False, indent=2).encode("utf-8")
+                self._send_blob(data, "application/json; charset=utf-8", "ai_custom.json")
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": f"ai module export failed: {exc}"}, 500)
             return
 
         if path == "/api/hourly":
@@ -2245,7 +2510,9 @@ class Handler(BaseHTTPRequestHandler):
             model = str(body.get("model") or "").strip()
             try:
                 import insights  # noqa: PLC0415
-                preset_map = {p["id"]: p for p in insights.list_provider_presets()}
+                custom = insights.load_ai_custom(root)
+                preset_map = {p["id"]: p for p in
+                              insights.list_provider_presets(custom.get("providers"))}
                 preset = preset_map.get(provider.lower(), {})
                 eff_base = base_url or preset.get("base_url") or ""
                 eff_model = model or preset.get("model") or ""
@@ -2255,9 +2522,50 @@ class Handler(BaseHTTPRequestHandler):
                     }, 400)
                     return
                 ai = _save_ai_settings(root, self.server.config_path, body)
-                self._send_json({"ok": True, "ai": ai, "presets": insights.list_provider_presets()})
+                self._send_json({
+                    "ok": True, "ai": ai,
+                    "presets": insights.list_provider_presets(custom.get("providers")),
+                })
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": f"save failed: {exc}"}, 400)
+            return
+
+        if path == "/api/ai/module":
+            # 保存 AI 洞察客制化模块（providers + prompt 定制）
+            if not (isinstance(body.get("providers"), list)
+                    or isinstance(body.get("prompt"), dict)):
+                self._send_json({"error": "invalid ai module payload"}, 400)
+                return
+            try:
+                import insights  # noqa: PLC0415
+                custom = insights.save_ai_custom(root, body)
+                self._send_json({
+                    "ok": True, "custom": custom,
+                    "sections": insights.PROMPT_SECTION_ITEMS,
+                    "presets": insights.list_provider_presets(custom.get("providers")),
+                })
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": f"save failed: {exc}"}, 400)
+            return
+
+        if path == "/api/ai/module/import":
+            # 导入 AI 洞察客制化模块：可传 {"custom": {...}} 或直接传 ai_custom.json 对象
+            data = body.get("custom") if isinstance(body.get("custom"), dict) else body
+            if not (isinstance(data, dict)
+                    and (isinstance(data.get("providers"), list)
+                         or isinstance(data.get("prompt"), dict))):
+                self._send_json({"error": "invalid ai module payload"}, 400)
+                return
+            try:
+                import insights  # noqa: PLC0415
+                custom = insights.save_ai_custom(root, data)
+                self._send_json({
+                    "ok": True, "custom": custom,
+                    "sections": insights.PROMPT_SECTION_ITEMS,
+                    "presets": insights.list_provider_presets(custom.get("providers")),
+                })
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": f"import failed: {exc}"}, 400)
             return
 
         if path == "/api/groups/set":

@@ -286,7 +286,37 @@ python insights.py --day 2026-08-10 --json           # JSON 输出
   由 `insights.enabled` 与 `insights.in_report` 控制。
 - **AI 洞察（可选、默认关闭）**：把**聚合统计**发送到 OpenAI 兼容 `chat/completions`
   端点（纯 `urllib`，零第三方依赖），成功后缓存到 `<data_root>/YYYY-MM-DD/insights.json`。
-  并发调用由模块级锁单飞；`--refresh` 或仪表盘「重新生成」强制刷新。
+  并发调用由模块级锁单飞；`--refresh` 或仪表盘「重新生成」强制刷新。发送给 AI 的数据
+  除时长/会话数/分类/应用/AI 工具/浏览器 Top 外，还包括时段分布（上午/下午/晚上/深夜）、
+  首次末次活跃、平均会话时长、工作/学习占比、子分类与终端工具 Top、近 7 天对比等维度。
+
+#### AI 洞察客制化模块（ai_custom.json，与应用分组同模式）
+
+打开仪表盘 → **洞察** →「AI 洞察模块」即可客制化，配置持久化于数据目录
+`ai_custom.json`，可整份导出/导入（迁移、备份）：
+
+- **自定义 Provider 预设**：任意新增/删除 OpenAI 兼容端点（ID/名称/Base URL/Model），
+  显示在「设置 → Provider 预设」下拉中，与内置预设冲突时自定义优先
+- **提示词定制**：逐段勾选发送给 AI 的数据内容（类别/应用/AI 工具/浏览器/子分类/
+  终端工具/时段分布与作息/联系人计数/近 7 天对比），调整洞察数量范围（1-10 条），
+  填写自定义指令（最多 500 字，附加到提示词末尾，让 AI 聚焦你的关注点）
+
+```json
+// <data_root>/ai_custom.json（示例）
+{
+  "providers": [
+    {"id": "home-ollama", "name": "家里 Ollama", "base_url": "http://192.168.1.8:11434/v1", "model": "qwen2.5:14b"}
+  ],
+  "prompt": {
+    "sections": {"categories": true, "apps": true, "ai_tools": true, "browser": true,
+                 "subcategories": true, "terminal": true, "schedule": true,
+                 "contacts": false, "weekly": true},
+    "min_insights": 3,
+    "max_insights": 6,
+    "instruction": "我最近在备考，请重点分析学习时段与干扰来源"
+  }
+}
+```
 
 #### 配置（config.json 的 insights 段）
 
@@ -332,6 +362,25 @@ OpenAI 兼容端点，完全自定义 provider。
 
 ## 安装与自启
 
+### 方式一：安装向导（推荐，免命令行）
+
+双击或运行 `installer.ps1` 弹出**图形安装向导**（类似成熟软件的安装器，零依赖、无需管理员），自动完成：
+
+- 复制程序到安装目录（默认 `%LOCALAPPDATA%\UsageMonitor`，可自选；数据默认跟随程序目录）
+- 注册计划任务：登录自启 + 每日 19:30 自动生成日报
+- 创建开始菜单 / 桌面快捷方式（含「打开仪表盘」）
+- 登记到系统「添加或删除程序」——之后可从 设置 → 应用 → UsageMonitor 一键卸载（可勾选连数据一起删除）
+
+```powershell
+# 图形安装向导
+powershell -ExecutionPolicy Bypass -File installer.ps1
+
+# 静默安装（自动化/CI 场景）
+powershell -ExecutionPolicy Bypass -File installer.ps1 -Silent -InstallDir "D:\UsageMonitor" -NoLaunch
+```
+
+### 方式二：脚本安装（最小化）
+
 ```powershell
 # 以 PowerShell 运行（如注册失败，请用管理员权限）
 powershell -ExecutionPolicy Bypass -File install.ps1
@@ -360,7 +409,8 @@ install.ps1 注册两个计划任务：
 ├─ dashboard.py            # 本地网页仪表盘（仅 127.0.0.1）
 ├─ tray.py                 # 托盘图标（可选）
 ├─ test_all.py             # 完整集成测试（无头确定性）
-├─ install.ps1 / uninstall.ps1   # 安装 / 卸载（计划任务注册）
+├─ install.ps1 / uninstall.ps1   # 脚本安装 / 卸载（计划任务注册）
+├─ installer.ps1 / uninstaller.ps1 # 图形安装向导 / 图形卸载器（零依赖，支持 -Silent）
 ├─ config.json             # 配置（分类/阈值/黑名单；data_root 为空=脚本目录）
 ├─ aliases.example.json    # 联系人别名模板（真实 aliases.json 不入库）
 ├─ make_demo_data.py       # 生成虚构演示数据（截图/试用，可复现）

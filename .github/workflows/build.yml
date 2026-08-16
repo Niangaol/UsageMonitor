@@ -78,12 +78,18 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: UsageMonitor-windows
-          path: dist/UsageMonitor.exe
+          path: |
+            dist/UsageMonitor.exe
+            installer.ps1
+            uninstaller.ps1
 
       - name: Create GitHub Release (tag push only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/UsageMonitor.exe
+          files: |
+            dist/UsageMonitor.exe
+            installer.ps1
+            uninstaller.ps1
           generate_release_notes: true
           overwrite_files: true

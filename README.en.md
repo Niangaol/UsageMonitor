@@ -288,6 +288,37 @@ python insights.py --day 2026-08-10 --json           # JSON output
 - **AI insights (optional, off by default)**: sends **aggregate statistics** to an OpenAI-compatible `chat/completions` endpoint
   (pure `urllib`, zero third-party dependencies); successful results are cached at `<data_root>/YYYY-MM-DD/insights.json`.
   Concurrent calls are single-flighted by a module-level lock; `--refresh` or the dashboard's "Regenerate" button forces regeneration.
+  Besides durations/session counts/top categories/apps/AI tools/browser categories, the prompt also includes day-part split
+  (morning/afternoon/evening/night), first/last active time, average session length, work/study share, subcategory and
+  terminal-tool tops, and a 7-day comparison.
+
+#### Customizable AI module (`ai_custom.json`, same pattern as app groups)
+
+Open the dashboard → **Insights** → "AI Insights Module" to customize; the configuration persists in the data
+root as `ai_custom.json` and can be exported/imported as a whole (migration, backup):
+
+- **Custom provider presets**: add/remove any OpenAI-compatible endpoint (ID/name/base URL/model);
+  they appear in the Settings → Provider presets dropdown and take priority over built-in presets on ID conflicts
+- **Prompt customization**: toggle which data sections are sent to the AI (categories/apps/AI tools/browser/
+  subcategories/terminal tools/schedule & routine/contact count/7-day comparison), adjust the insight count range
+  (1–10), and add a custom instruction (up to 500 chars, appended to the prompt to focus the AI on your concerns)
+
+```json
+// <data_root>/ai_custom.json (example)
+{
+  "providers": [
+    {"id": "home-ollama", "name": "Home Ollama", "base_url": "http://192.168.1.8:11434/v1", "model": "qwen2.5:14b"}
+  ],
+  "prompt": {
+    "sections": {"categories": true, "apps": true, "ai_tools": true, "browser": true,
+                 "subcategories": true, "terminal": true, "schedule": true,
+                 "contacts": false, "weekly": true},
+    "min_insights": 3,
+    "max_insights": 6,
+    "instruction": "I am preparing for exams; please focus on study periods and distractions"
+  }
+}
+```
 
 #### Configuration (the `insights` section in config.json)
 
@@ -335,6 +366,23 @@ lets you point to any OpenAI-compatible endpoint for a fully custom provider.
 
 ## Installation and Auto-start
 
+### Option 1: GUI installer wizard (recommended)
+
+Run `installer.ps1` to open a graphical installer (zero dependencies, no admin required)
+that handles everything: install location (default `%LOCALAPPDATA%\UsageMonitor`),
+auto-start + daily report scheduled tasks, Start Menu / desktop shortcuts, and an
+"Add or Remove Programs" entry (Settings → Apps → UsageMonitor → Uninstall).
+
+```powershell
+# GUI wizard
+powershell -ExecutionPolicy Bypass -File installer.ps1
+
+# Silent install (automation / CI)
+powershell -ExecutionPolicy Bypass -File installer.ps1 -Silent -InstallDir "D:\UsageMonitor" -NoLaunch
+```
+
+### Option 2: Minimal script install
+
 ```powershell
 # Run with PowerShell (use administrative privileges if registration fails)
 powershell -ExecutionPolicy Bypass -File install.ps1
@@ -363,7 +411,8 @@ install.ps1 registers two scheduled tasks:
 ├─ dashboard.py            # local web dashboard (127.0.0.1 only)
 ├─ tray.py                 # tray icon (optional)
 ├─ test_all.py             # full integration tests (headless and deterministic)
-├─ install.ps1 / uninstall.ps1   # install / uninstall (scheduled-task registration)
+├─ install.ps1 / uninstall.ps1   # script install / uninstall (scheduled-task registration)
+├─ installer.ps1 / uninstaller.ps1 # GUI install wizard / GUI uninstaller (zero deps, -Silent supported)
 ├─ config.json             # configuration (categories/thresholds/blacklist; empty data_root = script directory)
 ├─ aliases.example.json    # contact alias template (the real aliases.json is never committed)
 ├─ make_demo_data.py       # generates fake demo data (screenshots/trial, reproducible)

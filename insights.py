@@ -97,6 +97,11 @@ PROVIDER_PRESETS: dict[str, dict] = {
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "model": "qwen-plus",
     },
+    "ollama": {
+        "name": "Ollama 本地",
+        "base_url": "http://127.0.0.1:11434/v1",
+        "model": "qwen2.5:7b",
+    },
     "custom": {
         "name": "自定义",
         "base_url": "",
@@ -139,13 +144,185 @@ def _provider_preset(name: str) -> dict:
     return dict(PROVIDER_PRESETS.get((name or "").strip().lower(), {}))
 
 
-def list_provider_presets() -> list[dict]:
-    """返回给仪表盘设置页使用的预设列表（不含任何密钥）。"""
+def list_provider_presets(custom_providers: list | None = None) -> list[dict]:
+    """返回给仪表盘设置页使用的预设列表（不含任何密钥）。
+
+    custom_providers 来自 ai_custom.json（AI 洞察客制化模块）；与内置 id
+    冲突时自定义优先。顺序：内置在前、自定义追加在后。
+    """
+    merged: dict[str, dict] = {key: dict(value) for key, value in PROVIDER_PRESETS.items()}
+    for item in (custom_providers or []):
+        if not isinstance(item, dict):
+            continue
+        pid = str(item.get("id") or "").strip().lower()
+        if not pid:
+            continue
+        merged[pid] = {
+            "name": str(item.get("name") or "").strip() or pid,
+            "base_url": str(item.get("base_url") or "").strip(),
+            "model": str(item.get("model") or "").strip(),
+        }
     return [
         {"id": key, "name": value.get("name", key),
          "base_url": value.get("base_url", ""), "model": value.get("model", "")}
-        for key, value in PROVIDER_PRESETS.items()
+        for key, value in merged.items()
     ]
+
+
+OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434/v1"
+
+
+def ollama_models(base_url: str | None = None, timeout: float = 3.0) -> list[str]:
+    """从 Ollama 服务获取本地已安装的模型名列表（GET <base>/api/tags）。
+
+    base_url 为空时使用默认 http://127.0.0.1:11434/v1；兼容“/v1”结尾或裸地址两种写法。
+    失败抛 InsightsError（中文可读信息），供仪表盘「刷新模型列表」展示。
+    """
+    base = str(base_url or OLLAMA_DEFAULT_BASE_URL).strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")]
+    url = f"{base}/api/tags"
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=max(1.0, timeout)) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        raise InsightsError(f"Ollama 返回 HTTP {exc.code}（{url}）") from exc
+    except urllib.error.URLError as exc:
+        raise InsightsError(
+            f"无法连接 Ollama（{url}）：{exc.reason}。请确认 Ollama 已启动（ollama serve）"
+        ) from exc
+    except TimeoutError as exc:
+        raise InsightsError(f"连接 Ollama 超时（{url}）") from exc
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise InsightsError("Ollama 返回的不是有效 JSON") from exc
+    models = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(models, list):
+        raise InsightsError("Ollama 响应缺少 models 列表")
+    names: list[str] = []
+    for item in models:
+        name = item.get("name") if isinstance(item, dict) else None
+        if name:
+            names.append(str(name))
+    return names
+
+
+# ---------------------------------------------------------------------------
+# AI 洞察客制化模块（ai_custom.json，与应用分组 app_groups.json 同模式）
+# ---------------------------------------------------------------------------
+# 提示词可选数据段：客制化面板勾选决定 build_ai_prompt 包含哪些统计段。
+PROMPT_SECTION_ITEMS: list[dict] = [
+    {"key": "categories", "label": "类别时长"},
+    {"key": "apps", "label": "应用时长"},
+    {"key": "ai_tools", "label": "AI 工具时长"},
+    {"key": "browser", "label": "浏览器分类时长"},
+    {"key": "subcategories", "label": "子分类时长"},
+    {"key": "terminal", "label": "终端工具时长"},
+    {"key": "schedule", "label": "时段分布与作息"},
+    {"key": "contacts", "label": "联系人计数"},
+    {"key": "weekly", "label": "近 7 天对比"},
+]
+_PROMPT_SECTION_KEYS = [item["key"] for item in PROMPT_SECTION_ITEMS]
+
+_DEFAULT_PROMPT = {
+    "sections": {key: True for key in _PROMPT_SECTION_KEYS},
+    "min_insights": 3,
+    "max_insights": 6,
+    "instruction": "",
+}
+
+# 注意：不可共享 _DEFAULT_PROMPT 的 sections（否则任一调用方原地修改会污染全局默认值）
+_DEFAULT_AI_CUSTOM = {
+    "providers": [],
+    "prompt": {
+        "sections": {key: True for key in _PROMPT_SECTION_KEYS},
+        "min_insights": 3,
+        "max_insights": 6,
+        "instruction": "",
+    },
+}
+
+_AI_CUSTOM_FILE = "ai_custom.json"
+_PROVIDER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+_MAX_INSTRUCTION_LEN = 500
+_MAX_PROVIDERS = 20
+
+
+def load_ai_custom(data_root: str | None = None) -> dict:
+    """读取数据根目录 ai_custom.json（客制化 AI 模块）。
+
+    文件缺失 / 损坏时返回默认配置；返回结构始终完整（与 _DEFAULT_AI_CUSTOM 同形）。
+    """
+    path = os.path.join(data_root or DEFAULT_DATA_ROOT, _AI_CUSTOM_FILE)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except Exception:  # noqa: BLE001 —— 缺失/损坏都回退默认
+        raw = None
+    return _normalize_custom(raw)
+
+
+def save_ai_custom(data_root: str, custom: dict) -> dict:
+    """校验并原子写入 ai_custom.json，返回规范化后的配置（非法项丢弃/修正）。"""
+    normalized = _normalize_custom(custom)
+    path = os.path.join(data_root or DEFAULT_DATA_ROOT, _AI_CUSTOM_FILE)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as fh:
+        json.dump(normalized, fh, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+    return normalized
+
+
+def _normalize_custom(raw) -> dict:
+    """把任意输入规范化为 AI 客制化模块配置：未知键丢弃、非法值修正。"""
+    if not isinstance(raw, dict):
+        raw = {}
+    providers: list[dict] = []
+    seen: set[str] = set()
+    raw_providers = raw.get("providers") if isinstance(raw.get("providers"), list) else []
+    for item in raw_providers[:_MAX_PROVIDERS]:
+        if not isinstance(item, dict):
+            continue
+        pid = str(item.get("id") or "").strip().lower()
+        if not _PROVIDER_ID_RE.fullmatch(pid) or pid in seen:
+            continue
+        base_url = str(item.get("base_url") or "").strip()
+        model = str(item.get("model") or "").strip()
+        if not base_url or not model:
+            continue
+        seen.add(pid)
+        providers.append({
+            "id": pid,
+            "name": str(item.get("name") or "").strip() or pid,
+            "base_url": base_url,
+            "model": model,
+        })
+    raw_prompt = raw.get("prompt") if isinstance(raw.get("prompt"), dict) else {}
+    raw_sections = raw_prompt.get("sections") if isinstance(raw_prompt.get("sections"), dict) else {}
+    sections = {key: bool(raw_sections.get(key, True)) for key in _PROMPT_SECTION_KEYS}
+    try:
+        min_n = max(1, min(10, int(raw_prompt.get("min_insights") or 3)))
+    except (TypeError, ValueError):
+        min_n = 3
+    try:
+        max_n = max(1, min(10, int(raw_prompt.get("max_insights") or 6)))
+    except (TypeError, ValueError):
+        max_n = 6
+    if max_n < min_n:
+        max_n = min_n
+    instruction = str(raw_prompt.get("instruction") or "").strip()[:_MAX_INSTRUCTION_LEN]
+    return {
+        "providers": providers,
+        "prompt": {
+            "sections": sections,
+            "min_insights": min_n,
+            "max_insights": max_n,
+            "instruction": instruction,
+        },
+    }
 
 
 def _fmt_hours(ms: int | float) -> str:
@@ -313,16 +490,48 @@ def _top_items(mapping: dict, limit: int) -> list[tuple[str, int]]:
     return items[:max(0, limit)]
 
 
-def build_ai_prompt(agg: dict, config: dict, prev_agg: dict | None, include_raw: bool) -> str:
+_WEEKDAY_ZH = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+
+def _period_split(hourly: list) -> dict:
+    """hourly_ms -> 上午/下午/晚上/深夜 累计毫秒（缺段为 0）。"""
+    buckets = {"morning": 0, "afternoon": 0, "evening": 0, "night": 0}
+    for h in range(min(24, len(hourly))):
+        ms = int(hourly[h] or 0)
+        if 6 <= h < 12:
+            buckets["morning"] += ms
+        elif 12 <= h < 18:
+            buckets["afternoon"] += ms
+        elif 18 <= h < 23:
+            buckets["evening"] += ms
+        else:
+            buckets["night"] += ms
+    return buckets
+
+
+def build_ai_prompt(
+    agg: dict, config: dict, prev_agg: dict | None, include_raw: bool = False,
+    custom: dict | None = None, week: dict | None = None,
+) -> str:
     """构建发给 AI 的提示词。
 
-    隐私过滤：默认只含聚合数字（日期、时长、会话数、主要活跃时段、分类/应用/
-    AI工具/浏览器 Top 列表、联系人计数），不含窗口标题、URL、联系人名；
+    隐私过滤：默认只含聚合数字（日期、时长、会话数、时段分布、分类/应用/AI工具/
+    浏览器/子分类/终端工具 Top 列表、联系人计数），不含窗口标题、URL、联系人名；
     include_raw=True 时才附加 Top 标题 / URL（联系人名仍然不上送）。
+
+    custom：ai_custom.json 客制化模块（决定包含哪些统计段、洞察数量范围、
+    自定义指令）；week：近 7 天统计 {"total_ms","sessions"}（weekly 段开启时使用）。
     """
     ins = _insights_config(config or {})
     language = str(ins["ai"].get("language") or "zh").lower()
     is_en = language.startswith("en")
+    custom = _normalize_custom(custom)
+    sections = custom["prompt"]["sections"]
+    min_n = int(custom["prompt"].get("min_insights") or 3)
+    max_n = int(custom["prompt"].get("max_insights") or 6)
+    if max_n < min_n:
+        max_n = min_n
+    instruction = str(custom["prompt"].get("instruction") or "").strip()
 
     def fmt_min(ms: int | float) -> str:
         minutes = max(0, int(ms)) / 60000
@@ -340,8 +549,18 @@ def build_ai_prompt(agg: dict, config: dict, prev_agg: dict | None, include_raw:
     by_ai = agg.get("by_ai") if isinstance(agg.get("by_ai"), dict) else {}
     by_browser = agg.get("by_browser") if isinstance(agg.get("by_browser"), dict) else {}
     by_contact = agg.get("by_contact") if isinstance(agg.get("by_contact"), dict) else {}
+    by_subcategory = agg.get("by_subcategory") if isinstance(agg.get("by_subcategory"), dict) else {}
+    by_term_tool = agg.get("by_term_tool") if isinstance(agg.get("by_term_tool"), dict) else {}
     contact_count = sum(len(v) if isinstance(v, dict) else 0 for v in by_contact.values())
     hourly = agg.get("hourly_ms") if isinstance(agg.get("hourly_ms"), list) else []
+
+    weekday = ""
+    is_weekend = False
+    try:
+        weekday = _WEEKDAY_ZH[datetime.date.fromisoformat(str(agg.get("date", ""))).weekday()]
+        is_weekend = datetime.date.fromisoformat(str(agg.get("date", ""))).weekday() >= 5
+    except (ValueError, TypeError):
+        pass
 
     active_hours = [
         (h, int(hourly[h] or 0)) for h in range(min(24, len(hourly))) if int(hourly[h] or 0) > 0
@@ -356,23 +575,73 @@ def build_ai_prompt(agg: dict, config: dict, prev_agg: dict | None, include_raw:
             f"Total active time: {fmt_min(total)}",
             f"Sessions: {len(sessions)}",
             f"Longest continuous session: {longest_min:.1f} min",
-            "Most active hours: " + (
-                ", ".join(f"{h:02d}:00 ({fmt_min(ms)})" for h, ms in top_hours) or "none"
-            ),
-            "Time by category (top 6): " + (
-                ", ".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_category, 6)) or "none"
-            ),
-            "Time by app (top 8): " + (
-                ", ".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_app, 8)) or "none"
-            ),
-            "Time by AI tool (top 3): " + (
-                ", ".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_ai, 3)) or "none"
-            ),
-            "Time by browser category: " + (
-                ", ".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_browser, 10)) or "none"
-            ),
-            f"Contact count (names omitted for privacy): {contact_count}",
         ]
+        if sections.get("schedule"):
+            if weekday:
+                lines.append(f"Weekday: {weekday} ({'weekend' if is_weekend else 'workday'})")
+            if active_hours:
+                first_h = min(h for h, _ms in active_hours)
+                last_h = max(h for h, _ms in active_hours)
+                lines.append(f"First active: {first_h:02d}:00, last active: {last_h:02d}:59")
+                lines.append("Most active hours: " + (
+                    ", ".join(f"{h:02d}:00 ({fmt_min(ms)})" for h, ms in top_hours) or "none"
+                ))
+            if durations:
+                avg_min = sum(durations) / len(durations) / 60000
+                lines.append(f"Average session: {avg_min:.0f} min")
+            split = _period_split(hourly)
+            lines.append(
+                "Day parts: morning " + fmt_min(split["morning"]) +
+                ", afternoon " + fmt_min(split["afternoon"]) +
+                ", evening " + fmt_min(split["evening"]) +
+                ", night " + fmt_min(split["night"])
+            )
+        if sections.get("categories"):
+            lines.append("Time by category (top 6): " + (
+                ", ".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_category, 6)) or "none"
+            ))
+            if total > 0:
+                focus_ms = sum(int(by_category.get(k, 0) or 0) for k in
+                               ("AI编程", "开发工具", "办公学习", "设计创作"))
+                lines.append(
+                    f"Work/study share: {focus_ms / total * 100:.0f}% "
+                    "(AI coding + dev tools + office/study + design)"
+                )
+        if sections.get("apps"):
+            lines.append("Time by app (top 8): " + (
+                ", ".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_app, 8)) or "none"
+            ))
+        if sections.get("ai_tools"):
+            lines.append("Time by AI tool (top 3): " + (
+                ", ".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_ai, 3)) or "none"
+            ))
+        if sections.get("browser"):
+            lines.append("Time by browser category: " + (
+                ", ".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_browser, 10)) or "none"
+            ))
+        if sections.get("subcategories"):
+            lines.append("Time by subcategory (top 5): " + (
+                ", ".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_subcategory, 5)) or "none"
+            ))
+        if sections.get("terminal"):
+            lines.append("Time by terminal tool (top 3): " + (
+                ", ".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_term_tool, 3)) or "none"
+            ))
+        if sections.get("contacts"):
+            lines.append(f"Contact count (names omitted for privacy): {contact_count}")
+        if sections.get("weekly"):
+            if isinstance(prev_agg, dict) and int(prev_agg.get("total_active_ms") or 0) > 0:
+                prev_total = int(prev_agg.get("total_active_ms") or 0)
+                lines.append(
+                    f"Previous day active time: {fmt_min(prev_total)} "
+                    f"({int(prev_agg.get('session_count') or 0)} sessions)"
+                )
+            if isinstance(week, dict) and int(week.get("total_ms") or 0) > 0:
+                avg_week = int(week.get("total_ms")) / 7 / 60000
+                lines.append(
+                    f"Last 7 days: daily average {avg_week:.0f} min, "
+                    f"total sessions {int(week.get('sessions') or 0)}"
+                )
     else:
         lines = [
             "你是一名个人电脑使用情况分析师。请只依据下方聚合数据给出建议，不要编造数据。",
@@ -380,35 +649,73 @@ def build_ai_prompt(agg: dict, config: dict, prev_agg: dict | None, include_raw:
             f"总活跃时长：{fmt_min(total)}",
             f"会话数：{len(sessions)}",
             f"最长连续会话：{longest_min:.1f} 分钟",
-            "主要活跃时段：" + (
-                "、".join(f"{h:02d}:00（{fmt_min(ms)}）" for h, ms in top_hours) or "无"
-            ),
-            "按类别时长（前 6）：" + (
-                "、".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_category, 6)) or "无"
-            ),
-            "按应用时长（前 8）：" + (
-                "、".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_app, 8)) or "无"
-            ),
-            "按 AI 工具时长（前 3）：" + (
-                "、".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_ai, 3)) or "无"
-            ),
-            "浏览器分类时长：" + (
-                "、".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_browser, 10)) or "无"
-            ),
-            f"联系人数量（出于隐私不上送联系人名）：{contact_count}",
         ]
-
-    if isinstance(prev_agg, dict) and int(prev_agg.get("total_active_ms") or 0) > 0:
-        prev_total = int(prev_agg.get("total_active_ms") or 0)
-        if is_en:
+        if sections.get("schedule"):
+            if weekday:
+                lines.append(f"星期：{weekday}（{'周末' if is_weekend else '工作日'}）")
+            if active_hours:
+                first_h = min(h for h, _ms in active_hours)
+                last_h = max(h for h, _ms in active_hours)
+                lines.append(f"首次活跃：{first_h:02d}:00，末次活跃：{last_h:02d}:59")
+                lines.append("主要活跃时段：" + (
+                    "、".join(f"{h:02d}:00（{fmt_min(ms)}）" for h, ms in top_hours) or "无"
+                ))
+            if durations:
+                avg_min = sum(durations) / len(durations) / 60000
+                lines.append(f"平均会话时长：{avg_min:.0f} 分钟")
+            split = _period_split(hourly)
             lines.append(
-                f"Previous day active time: {fmt_min(prev_total)} "
-                f"({int(prev_agg.get('session_count') or 0)} sessions)"
+                "时段分布：上午 " + fmt_min(split["morning"]) +
+                "、下午 " + fmt_min(split["afternoon"]) +
+                "、晚上 " + fmt_min(split["evening"]) +
+                "、深夜 " + fmt_min(split["night"])
             )
-        else:
-            lines.append(
-                f"昨日活跃时长：{fmt_min(prev_total)}（会话数 {int(prev_agg.get('session_count') or 0)}）"
-            )
+        if sections.get("categories"):
+            lines.append("按类别时长（前 6）：" + (
+                "、".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_category, 6)) or "无"
+            ))
+            if total > 0:
+                focus_ms = sum(int(by_category.get(k, 0) or 0) for k in
+                               ("AI编程", "开发工具", "办公学习", "设计创作"))
+                lines.append(
+                    f"工作/学习占比：{focus_ms / total * 100:.0f}%"
+                    "（AI 编程 + 开发工具 + 办公学习 + 设计创作）"
+                )
+        if sections.get("apps"):
+            lines.append("按应用时长（前 8）：" + (
+                "、".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_app, 8)) or "无"
+            ))
+        if sections.get("ai_tools"):
+            lines.append("按 AI 工具时长（前 3）：" + (
+                "、".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_ai, 3)) or "无"
+            ))
+        if sections.get("browser"):
+            lines.append("浏览器分类时长：" + (
+                "、".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_browser, 10)) or "无"
+            ))
+        if sections.get("subcategories"):
+            lines.append("按子分类时长（前 5）：" + (
+                "、".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_subcategory, 5)) or "无"
+            ))
+        if sections.get("terminal"):
+            lines.append("按终端工具时长（前 3）：" + (
+                "、".join(f"{k} {fmt_min(v)}" for k, v in _top_items(by_term_tool, 3)) or "无"
+            ))
+        if sections.get("contacts"):
+            lines.append(f"联系人数量（出于隐私不上送联系人名）：{contact_count}")
+        if sections.get("weekly"):
+            if isinstance(prev_agg, dict) and int(prev_agg.get("total_active_ms") or 0) > 0:
+                prev_total = int(prev_agg.get("total_active_ms") or 0)
+                lines.append(
+                    f"昨日活跃时长：{fmt_min(prev_total)}"
+                    f"（会话数 {int(prev_agg.get('session_count') or 0)}）"
+                )
+            if isinstance(week, dict) and int(week.get("total_ms") or 0) > 0:
+                avg_week = int(week.get("total_ms")) / 7 / 60000
+                lines.append(
+                    f"近 7 天：日均活跃 {avg_week:.0f} 分钟，"
+                    f"总会话 {int(week.get('sessions') or 0)}"
+                )
 
     if include_raw:
         raw_rows = []
@@ -428,15 +735,21 @@ def build_ai_prompt(agg: dict, config: dict, prev_agg: dict | None, include_raw:
             else:
                 lines.append("原始样本（用户明确开启后才会上送）：\n" + "\n".join(raw_rows))
 
+    if instruction:
+        if is_en:
+            lines.append(f"User focus: {instruction}")
+        else:
+            lines.append(f"用户自定义关注点：{instruction}")
+
     if is_en:
         lines.append(
-            "Return ONLY a JSON array of 3-6 insights, each object shaped like "
+            f"Return ONLY a JSON array of {min_n}-{max_n} insights, each object shaped like "
             '{"type":"study|game|health|efficiency|balance|trend","title":"short title",'
             '"detail":"one-sentence actionable advice"}. No markdown, no extra text.'
         )
     else:
         lines.append(
-            "请只返回一个 JSON 数组，包含 3-6 条洞察，每条对象格式为 "
+            f"请只返回一个 JSON 数组，包含 {min_n}-{max_n} 条洞察，每条对象格式为 "
             '{"type":"study|game|health|efficiency|balance|trend","title":"简短标题",'
             '"detail":"一句话可执行建议"}。不要输出 Markdown 或其他多余文字。'
         )
@@ -696,10 +1009,16 @@ def _discover_ai_config(config: dict) -> dict | None:
     }
 
 
-def _chat_completion(cfg: dict, prompt: str) -> str:
+def _token_budget(max_insights: int) -> int:
+    """按洞察数量估算输出 token 预算，避免 JSON 数组被 max_tokens 截断。"""
+    n = max(1, int(max_insights or 6))
+    return max(256, min(1600, 256 + n * 160))
+
+
+def _chat_completion(cfg: dict, prompt: str, max_tokens: int = 800) -> str:
     """OpenAI 兼容 chat/completions 调用（纯 urllib）。
 
-    请求体固定 temperature=0.7、max_tokens=800；失败抛中文 InsightsError。
+    temperature 固定 0.7；max_tokens 按洞察数量自适应（默认 800）；失败抛中文 InsightsError。
     """
     base_url = str(cfg.get("base_url") or "").rstrip("/")
     if not base_url:
@@ -716,7 +1035,7 @@ def _chat_completion(cfg: dict, prompt: str) -> str:
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.7,
-        "max_tokens": 800,
+        "max_tokens": max(200, int(max_tokens or 800)),
     }
     headers = {"Content-Type": "application/json"}
     api_key = str(cfg.get("api_key") or "")
@@ -765,6 +1084,21 @@ def _chat_completion(cfg: dict, prompt: str) -> str:
     raise InsightsError("AI 服务响应缺少 content")
 
 
+def _week_stats(date_str: str, data_root: str) -> dict:
+    """近 7 天（含当日）活跃汇总 {total_ms, sessions}，供提示词「近 7 天对比」段。"""
+    days = [
+        (datetime.date.fromisoformat(date_str) - datetime.timedelta(days=i)).isoformat()
+        for i in range(7)
+    ]
+    total = 0
+    sessions = 0
+    for day in days:
+        agg = report.aggregate(day, data_root)
+        total += int(agg.get("total_active_ms") or 0)
+        sessions += int(agg.get("session_count") or 0)
+    return {"total_ms": total, "sessions": sessions}
+
+
 def _ai_insights_locked(date_str: str, data_root: str, config: dict) -> dict:
     """单飞锁内实际执行：聚合 -> 提示词 -> 调用 -> 解析 -> 写缓存。"""
     cfg = _discover_ai_config(config)
@@ -778,11 +1112,19 @@ def _ai_insights_locked(date_str: str, data_root: str, config: dict) -> dict:
         agg = report.aggregate(date_str, data_root)
         prev_day = (datetime.date.fromisoformat(date_str) - datetime.timedelta(days=1)).isoformat()
         prev_agg = report.aggregate(prev_day, data_root)
+        custom = load_ai_custom(data_root)
+        week = None
+        if custom["prompt"]["sections"].get("weekly"):
+            week = _week_stats(date_str, data_root)
         prompt = build_ai_prompt(
             agg, config, prev_agg,
             include_raw=bool(_insights_config(config)["ai"].get("send_raw_titles")),
+            custom=custom, week=week,
         )
-        text = _chat_completion(cfg, prompt)
+        text = _chat_completion(
+            cfg, prompt,
+            max_tokens=_token_budget(int(custom["prompt"].get("max_insights") or 6)),
+        )
         insights_list = _parse_ai_response(text)
         payload = {
             "generated_at": datetime.datetime.now().isoformat(timespec="seconds"),
