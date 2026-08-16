@@ -839,28 +839,26 @@ def test_electron_shell_detection():
     else:
         check(monitor._find_electron_shell() is None or True, "无 dev 环境时跳过（不失败）")
 
-    # 打包模式：dist/*.exe 优先于 dev
-    fake = fresh_tmp("shelltest")
-    os.makedirs(os.path.join(fake, "dist"), exist_ok=True)
-    fake_exe = os.path.join(fake, "dist", "UsageMonitor-Desktop-1.0.0.exe")
-    open(fake_exe, "w").close()
-    os.makedirs(os.path.join(fake, "node_modules", "electron", "dist"), exist_ok=True)
-    open(os.path.join(fake, "node_modules", "electron", "dist", "electron.exe"), "w").close()
-    open(os.path.join(fake, "main.js"), "w").close()
-    # 直接测试探测优先级逻辑：dist 下的 exe 应优先于 dev 模式
-    calls = {}
-
-    def fake_find():
-        # 模拟在 fake 目录下的探测结果：dist exe 应优先
-        d = os.path.join(fake, "dist")
-        for name in sorted(os.listdir(d)):
-            if name.lower().endswith(".exe"):
-                return [os.path.join(d, name)]
-        return None
-
-    calls["packed"] = fake_find()
-    check(calls["packed"] and calls["packed"][0] == fake_exe, "打包 exe 优先", str(calls["packed"]))
-    shutil.rmtree(fake, ignore_errors=True)
+    # 打包模式：exe 位于 <root>/dist，electron-app 位于项目根 <root>（父目录）
+    fake_root = fresh_tmp("shell_frozen")
+    fake_dist = os.path.join(fake_root, "dist")
+    os.makedirs(fake_dist, exist_ok=True)
+    fake_app = os.path.join(fake_root, "electron-app")
+    os.makedirs(os.path.join(fake_app, "node_modules", "electron", "dist"), exist_ok=True)
+    fake_elec = os.path.join(fake_app, "node_modules", "electron", "dist", "electron.exe")
+    open(fake_elec, "w").close()
+    open(os.path.join(fake_app, "main.js"), "w").close()
+    os.makedirs(os.path.join(fake_app, "dist"), exist_ok=True)
+    fake_packed = os.path.join(fake_app, "dist", "UsageMonitor-Desktop-2.0.0.exe")
+    open(fake_packed, "w").close()
+    real_script_dir = monitor.paths.script_dir
+    try:
+        monitor.paths.script_dir = lambda: fake_dist
+        cmd = monitor._find_electron_shell()
+        check(cmd and cmd[0] == fake_packed, "打包 exe 优先（父目录项目根）", str(cmd))
+    finally:
+        monitor.paths.script_dir = real_script_dir
+    shutil.rmtree(fake_root, ignore_errors=True)
 
 
 def test_app_groups():

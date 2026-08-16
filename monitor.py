@@ -518,20 +518,34 @@ def _find_electron_shell() -> list[str] | None:
     返回启动命令列表（含 main.js 参数）或 None：
     1) electron-app/dist/*.exe        —— electron-builder 打包的便携版
     2) electron-app/node_modules/electron/dist/electron.exe + main.js —— dev 模式
+
+    兼容源码运行与 PyInstaller 打包运行：打包时 `__file__` 在临时解压目录，
+    不能作为项目根；改用 paths.script_dir()（exe 所在目录），并同时探测其父目录
+    （exe 放在 dist/ 子目录时，项目根是父目录）与 USAGEMON_PROJECT_DIR。
     """
-    base = os.path.dirname(os.path.abspath(__file__))
-    app_dir = os.path.join(base, "electron-app")
-    # 1) 打包便携版
-    dist_dir = os.path.join(app_dir, "dist")
-    if os.path.isdir(dist_dir):
-        for name in sorted(os.listdir(dist_dir)):
-            if name.lower().endswith(".exe"):
-                return [os.path.join(dist_dir, name)]
-    # 2) dev 模式（npm install 后）
-    electron_exe = os.path.join(app_dir, "node_modules", "electron", "dist", "electron.exe")
-    main_js = os.path.join(app_dir, "main.js")
-    if os.path.isfile(electron_exe) and os.path.isfile(main_js):
-        return [electron_exe, main_js]
+    roots: list[str] = []
+    env_dir = os.environ.get("USAGEMON_PROJECT_DIR")
+    if env_dir:
+        roots.append(env_dir)
+    script_dir = paths.script_dir()
+    roots.append(script_dir)
+    parent = os.path.dirname(script_dir)
+    if parent and parent not in roots:
+        roots.append(parent)
+
+    for base in roots:
+        app_dir = os.path.join(base, "electron-app")
+        # 1) 打包便携版
+        dist_dir = os.path.join(app_dir, "dist")
+        if os.path.isdir(dist_dir):
+            for name in sorted(os.listdir(dist_dir)):
+                if name.lower().endswith(".exe"):
+                    return [os.path.join(dist_dir, name)]
+        # 2) dev 模式（npm install 后）
+        electron_exe = os.path.join(app_dir, "node_modules", "electron", "dist", "electron.exe")
+        main_js = os.path.join(app_dir, "main.js")
+        if os.path.isfile(electron_exe) and os.path.isfile(main_js):
+            return [electron_exe, main_js]
     return None
 
 
@@ -555,6 +569,9 @@ def open_dashboard(data_root: str, port: int = 8765, view: str | None = None) ->
         if shell:
             try:
                 env = dict(os.environ)
+                # 某些环境（如自动化沙箱）会设置 ELECTRON_RUN_AS_NODE=1，
+                # 会让 Electron 以 Node 模式运行而不是打开应用窗口；这里强制移除。
+                env.pop("ELECTRON_RUN_AS_NODE", None)
                 env["USAGEMON_DATA_ROOT"] = data_root
                 env["USAGEMON_PORT"] = str(port)
                 creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0

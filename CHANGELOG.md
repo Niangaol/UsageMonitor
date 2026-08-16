@@ -6,6 +6,13 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布流程：`git tag vX.Y.Z` 后由 CI 自动构建并发布 Release。
 
+## [1.2.1] - 2026-08-16
+
+### 修复
+- 修复打包版 exe 点击托盘「打开仪表盘」仍回退浏览器的问题：`_find_electron_shell()`
+  改用 `paths.script_dir()` 并探测父目录（exe 在 `dist/` 时项目根在父目录），
+  同时移除会令 Electron 以 Node 模式运行的 `ELECTRON_RUN_AS_NODE` 环境变量。
+
 ## [1.2.0] - 2026-08-16
 
 智能洞察大版本：离线规则建议 + 可选 AI 洞察（内置 Provider 预设 / 自定义端点 / 设置页开关）。
