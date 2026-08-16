@@ -115,25 +115,13 @@ def _hourly_distribution(sessions: list[dict]) -> list[int]:
     return hourly
 
 
-def aggregate(date_str: str, data_root: str) -> dict:
-    """按 应用/类别/联系人/AI工具/浏览器分类 聚合当天时长（毫秒）。
+def _aggregate_records(sessions: list[dict], date_str: str, data_root: str,
+                       aliases: dict | None = None) -> dict:
+    """按 应用/类别/联系人/AI工具/浏览器分类 聚合一组会话记录（毫秒）。
 
-    联系人经 aliases.json 别名映射（如 aaa123 -> 张三）。
-    结果带 LRU 缓存（文件 mtime/size 失效）；调用方不得修改返回的 dict。
+    供 JSONL 与 SQLite 两种数据源复用；调用方不得修改返回的 dict。
     """
-    path = os.path.join(data_root, date_str, "usage.jsonl")
-    try:
-        st = os.stat(path)
-    except OSError:
-        st = None
-    key = (date_str, data_root)
-    if st is not None:
-        hit = _agg_cache.get(key)
-        if hit is not None and hit[0] == st.st_mtime and hit[1] == st.st_size:
-            _agg_cache.move_to_end(key)
-            return hit[2]
-    sessions = read_sessions(date_str, data_root)
-    aliases = _get_aliases(data_root)
+    aliases = aliases if aliases is not None else _get_aliases(data_root)
     agg = {
         "date": date_str,
         "session_count": len(sessions),
@@ -177,6 +165,29 @@ def aggregate(date_str: str, data_root: str) -> dict:
         tool = s.get("term_tool")
         if tool:
             agg["by_term_tool"][tool] = agg["by_term_tool"].get(tool, 0) + dur
+    return agg
+
+
+def aggregate(date_str: str, data_root: str) -> dict:
+    """按 应用/类别/联系人/AI工具/浏览器分类 聚合当天时长（毫秒）。
+
+    联系人经 aliases.json 别名映射（如 aaa123 -> 张三）。
+    结果带 LRU 缓存（文件 mtime/size 失效）；调用方不得修改返回的 dict。
+    """
+    path = os.path.join(data_root, date_str, "usage.jsonl")
+    try:
+        st = os.stat(path)
+    except OSError:
+        st = None
+    key = (date_str, data_root)
+    if st is not None:
+        hit = _agg_cache.get(key)
+        if hit is not None and hit[0] == st.st_mtime and hit[1] == st.st_size:
+            _agg_cache.move_to_end(key)
+            return hit[2]
+    sessions = read_sessions(date_str, data_root)
+    aliases = _get_aliases(data_root)
+    agg = _aggregate_records(sessions, date_str, data_root, aliases)
     if st is not None:
         _agg_cache[key] = (st.st_mtime, st.st_size, agg)
         _agg_cache.move_to_end(key)
@@ -564,9 +575,37 @@ def _month_days(month_str: str) -> list[str]:
 
 
 def aggregate_month(month_str: str, data_root: str) -> dict:
-    """月度聚合：合并当月所有日期数据，并附每日明细。"""
+    """月度聚合：合并当月所有日期数据，并附每日明细。
+
+    若 data_root 下存在 usage.db（SQLite 后端），优先从 SQLite 读取当月数据，
+    避免逐日全量扫描 JSONL；SQLite 不可用/数据缺失时回退 JSONL。
+    """
+    days = _month_days(month_str)
+    # SQLite 快速路径
+    try:
+        import sqlite_store  # noqa: PLC0415 —— 惰性导入
+        if os.path.isfile(sqlite_store.db_path(data_root)):
+            rows = sqlite_store.query_range(data_root, days[0], days[-1])
+            if rows:
+                by_day: dict[str, list[dict]] = {}
+                for r in rows:
+                    by_day.setdefault(str(r.get("day") or ""), []).append(r)
+                agg = _aggregate_records(rows, month_str, data_root)
+                agg["month"] = month_str
+                per_day = []
+                for d in days:
+                    day_rows = by_day.get(d, [])
+                    if day_rows:
+                        a = _aggregate_records(day_rows, d, data_root)
+                        per_day.append({"date": d, "total_ms": a["total_active_ms"],
+                                        "count": a["session_count"]})
+                agg["per_day"] = per_day
+                return agg
+    except Exception:  # noqa: BLE001 —— SQLite 失败回退 JSONL
+        pass
+
     days = [
-        d for d in _month_days(month_str)
+        d for d in days
         if os.path.isfile(os.path.join(data_root, d, "usage.jsonl"))
     ]
     agg = _aggregate_days(days, data_root)

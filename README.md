@@ -45,6 +45,7 @@
 - [快速开始](#快速开始需要-python-31064-位-windows-1011)
 - [打包为 exe（免 Python 运行）](#打包为-exe免-python-运行)
 - [软件更新](#软件更新)
+- [SQLite 后端（可选）](#sqlite-后端可选)
 - [安装与自启](#安装与自启)
 - [配置文件说明](#配置文件说明)
 - [数据说明](#数据说明)
@@ -102,6 +103,10 @@
   覆盖层（`app_groups.json`）优先级最高、实时生效（TTL 5s 缓存，无需重启）
 - **智能洞察**：离线规则引擎生成学习/游戏/健康/效率/平衡/趋势建议并写入日报「今日建议」；
   可选 AI 洞察（OpenAI 兼容 API，默认关闭，聚合统计隐私过滤，零第三方依赖）
+- **AI 会话深度统计**（可选，默认关闭）：读取 opencode / ChatGPT / Claude 本地会话文件，
+  统计某天 AI 交互轮数、生成行数/字符数；仪表盘洞察页与 CLI 可查看
+- **SQLite 后端（可选）**：monitor 同步维护 `usage.db` 索引，`sqlite_store.py` 支持回填/重建/查询；
+  JSONL 始终为原始日志唯一事实源
 - **托盘图标（可选）**：今日概览 / 打开今日日报 / 检查更新 / 暂停·继续 / 退出
 - **新版本检测与应用内更新**：启动时自动检查 GitHub Releases 新版本（托盘气泡提示），
   托盘菜单或仪表盘「设置 → 软件更新」可手动检查；支持应用内下载（SHA256 校验）并
@@ -364,6 +369,34 @@ OpenAI 兼容端点，完全自定义 provider。
 > URL、联系人名）会发送到你配置的 API 端点。`send_raw_titles=true` 才会附加 Top 标题/URL
 > 样本；联系人名在任何情况下都不上送。规则洞察始终离线。
 
+#### AI 会话深度统计（可选，默认关闭）
+
+读取 opencode / ChatGPT / Claude 等本地会话文件（JSON / JSONL），统计某天 AI 交互轮数、
+用户/助手消息数、生成行数/字符数。**默认关闭**，开启后也只读取本地文件，不上传任何数据。
+
+```powershell
+python ai_sessions.py --day 2026-08-10            # 指定日期
+python ai_sessions.py --day 2026-08-10 --json     # JSON 输出
+python insights.py --day 2026-08-10 --ai-sessions # 与智能洞察一起查看
+```
+
+`config.json`：
+
+```json
+{
+  "ai_sessions": {
+    "enabled": false,
+    "paths": {
+      "opencode": ["C:\\Users\\me\\.local\\share\\opencode"],
+      "chatgpt": ["%APPDATA%\\ChatGPT"]
+    }
+  }
+}
+```
+
+`paths` 为空时自动探测常见目录；不同工具/版本的会话格式差异较大，解析为 best-effort，
+未知格式静默跳过，不影响监控。
+
 ## 软件更新
 
 UsageMonitor 支持**新版本检测**与**应用内更新**（v1.6.0+）：打包版 exe 可一键下载并替换升级；源码/开发模式仅支持检测，不执行安装。
@@ -400,6 +433,27 @@ python updater.py --check --json   # JSON 输出（脚本/CI 用）
 检查更新只会向 GitHub Releases API（或 `update.api_base` 指定的地址）请求**公开的版本元数据**
 （版本号、发布时间、下载地址、体积），不会上传任何使用记录、窗口标题、URL 或联系人信息；
 下载文件来自 Release 附件并经过 SHA256 校验。
+
+## SQLite 后端（可选）
+
+monitor 在写入 JSONL 的同时 best-effort 同步维护 `<data_root>/usage.db`，用于高效查询/长期聚合；
+**JSONL 仍是原始日志唯一事实源**，SQLite 只是额外镜像/索引，删除它不影响任何数据。
+
+```powershell
+python sqlite_store.py --status               # 查看 usage.db 状态
+python sqlite_store.py --backfill             # 把历史 JSONL 回填到 SQLite
+python sqlite_store.py --rebuild              # 删除并重建 usage.db，然后全量回填
+python sqlite_store.py --query 2026-08-10     # 从 SQLite 查询某天会话
+python sqlite_store.py --query 2026-08-10 --json
+```
+
+配置：
+
+```json
+{ "sqlite": { "enabled": true } }
+```
+
+`enabled` 默认 `true`；关闭后 monitor 不再写 SQLite，已有 `usage.db` 不会影响 JSONL 与报表。
 
 ## 安装与自启
 
@@ -450,6 +504,8 @@ install.ps1 注册两个计划任务：
 ├─ dashboard.py            # 本地网页仪表盘（仅 127.0.0.1）
 ├─ tray.py                 # 托盘图标（可选）
 ├─ updater.py              # 新版本检测与应用内更新（纯标准库，打包版可安装）
+├─ ai_sessions.py          # AI 会话深度统计（可选，默认关闭，读取本地会话文件）
+├─ sqlite_store.py         # 可选 SQLite 后端 usage.db（JSONL 之外的额外镜像/索引）
 ├─ test_all.py             # 完整集成测试（无头确定性）
 ├─ install.ps1 / uninstall.ps1   # 脚本安装 / 卸载（计划任务注册）
 ├─ installer.ps1 / uninstaller.ps1 # 图形安装向导 / 图形卸载器（零依赖，支持 -Silent）
@@ -497,6 +553,8 @@ install.ps1 注册两个计划任务：
 | `browser_history_enabled` / `browser_history` | URL 级历史解析开关与各浏览器 user_data 路径（null=自动探测） |
 | `insights` | 智能洞察：`enabled`/`in_report`、规则阈值（`rules`）、AI 端点与隐私开关（`ai`，默认关闭） |
 | `update` | 更新：`check_on_startup`（启动自动检查，默认 true）、`api_base`（检测源覆盖，默认 GitHub Releases API） |
+| `sqlite` | SQLite 后端：`enabled`（monitor 同步写 usage.db，默认 true；失败静默降级） |
+| `ai_sessions` | AI 会话深度统计：`enabled`（默认 false）、`paths`（工具→本地会话目录映射，缺省自动探测） |
 | `title_blacklist` | 标题隐私黑名单（正则），命中记 `[已隐藏]`（历史解析的 URL/标题同样生效） |
 
 ### aliases.json（联系人别名）
@@ -582,6 +640,7 @@ install.ps1 注册两个计划任务：
   会发送到配置的 AI API 端点；仓库默认配置保持关闭
 - 新版本检测 / 应用内更新只请求 GitHub Releases 公开元数据（版本号 / 下载地址 / 体积），
   不上传任何使用数据；可设 `update.check_on_startup=false` 关闭启动检查
+- AI 会话深度统计**默认关闭**；开启后仅读取本地 AI 会话文件，不上传任何数据
 - 数据默认保留 90 天自动清理（`config.json` 可调）
 
 ## 隐私与安全（运行时）
@@ -590,6 +649,8 @@ install.ps1 注册两个计划任务：
   `insights.ai.enabled=true` 后，聚合统计（不含标题/URL/联系人名）会发送到配置的 AI 端点
 - 新版本检测仅向 GitHub Releases API（或 `update.api_base` 指定地址）请求公开版本元数据，
   不包含任何使用记录、标题、URL 或联系人信息
+- AI 会话深度统计默认关闭；开启后仅读取用户配置/常见目录下的本地 AI 会话文件，
+  不上传任何数据
 - 只记录元数据（应用名、窗口标题、时间、类别）；不读取聊天消息、密码、输入内容、文件内容
 - `title_blacklist` 命中的标题一律记为 `[已隐藏]`，不落盘原文
 - **仪表盘防偷读（CSRF 防护）**：所有 `/api/*` 校验 `Origin`/`Referer`，必须指向
@@ -618,7 +679,7 @@ install.ps1 注册两个计划任务：
 
 ```powershell
 python monitor.py --test 30   # 测试模式（跑 N 秒后退出并打印汇总）
-python test_all.py            # 完整集成测试（223 项断言）
+python test_all.py            # 完整集成测试（239 项断言）
 ```
 
 test_all.py 通过猴子补丁模拟前台窗口/空闲/进程树，覆盖：切换计时、空闲不计时、微信联系人、
@@ -656,8 +717,8 @@ A: 普通权限无法读取提权窗口标题（Windows 安全限制）；需完
 A: 守护进程会降级为静默运行（托盘不可用时），数据记录不受影响；检查 `errors.log` 看托盘初始化错误。
 
 **Q: 支持 Firefox 吗？**
-A: 浏览器 URL 级解析目前支持 Chromium 系（Chrome/Edge/Tabbit 等，自动探测）；
-Firefox 用 places.sqlite 结构不同，暂不支持；其他浏览器可在 config 的 `browser_history` 配 user_data 路径。
+A: 支持。URL 级解析支持 Chromium 系（Chrome/Edge/Tabbit 等）与 Firefox（places.sqlite，自动发现最近 profile）；
+其他浏览器可在 config 的 `browser_history` 配 user_data 路径。
 
 **Q: AI 洞察会把我的数据发出去吗？**
 A: 默认完全不会（`insights.ai.enabled=false`）。只有你主动开启并配置 API 端点后，
@@ -684,8 +745,8 @@ A: 不会。它只向 GitHub Releases API（或 `update.api_base` 指定地址�
 - **管理员权限运行的窗口标题可能读不到**（普通权限无法读取）；如需完整标题，请以管理员身份运行
 - **UWP/商店应用标题可能为空**：按 exe 记录，不做深度分类
 - **后台标签页不计时**：本方案是「前台注意力」口径，后台放视频不记入浏览器时长
-- **URL 级历史解析仅覆盖 Chromium 系浏览器**（Chrome/Edge/Tabbit 等自动探测）；
-  Firefox 使用 places.sqlite 结构不同，暂不支持；其他浏览器可在 `browser_history` 配置 user_data 路径
+- **URL 级历史解析覆盖 Chromium 系（Chrome/Edge/Tabbit 等）与 Firefox**（均自动探测）；
+  其他浏览器可在 `browser_history` 配置 user_data 路径；Firefox 无逐条停留时长，按访问时间点记入
 - **pi agent 等工具的进程名**需按实际安装确认后补充到 `ai_keywords`（防误伤 python/pip 已在代码中防护）
 - **应用内更新仅打包 exe 支持**：源码/开发模式只能检测新版本，不能自动安装
 - **检查更新需要能访问 GitHub**：网络受限时可配置 `update.api_base` 指向镜像/自建 latest release API；

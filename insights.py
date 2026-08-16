@@ -1192,6 +1192,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--day", metavar="YYYY-MM-DD", help="指定日期（默认今天）")
     parser.add_argument("--today", action="store_true", help="今天")
     parser.add_argument("--ai", action="store_true", help="同时生成/读取 AI 洞察")
+    parser.add_argument("--ai-sessions", action="store_true",
+                        help="同时统计本地 AI 会话深度（需 ai_sessions.enabled=true）")
     parser.add_argument("--refresh", action="store_true", help="与 --ai 连用：忽略缓存强制重新生成")
     parser.add_argument("--json", action="store_true", help="输出 JSON")
     parser.add_argument("--data-root", default=None, help="数据根目录（默认取 config.json）")
@@ -1222,6 +1224,18 @@ def main(argv: list[str] | None = None) -> int:
     payload: dict = {"date": date_str, "rules": rules}
     if args.ai:
         payload["ai"] = ai_insights(date_str, data_root, cfg, refresh=args.refresh)
+    if args.ai_sessions:
+        try:
+            import ai_sessions  # noqa: PLC0415
+            payload["ai_sessions"] = ai_sessions.collect(date_str, cfg)
+        except Exception as exc:  # noqa: BLE001
+            payload["ai_sessions"] = {
+                "date": date_str, "enabled": False, "found": False,
+                "tools": {}, "total": {"files": 0, "turns": 0, "user_messages": 0,
+                                       "assistant_messages": 0, "generated_lines": 0,
+                                       "generated_chars": 0},
+                "error": str(exc),
+            }
 
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -1243,6 +1257,22 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"- [{item.get('title', 'AI')}] {item.get('detail', '')}")
         else:
             print("（无 AI 洞察）")
+    if args.ai_sessions:
+        s = payload["ai_sessions"]
+        print("")
+        print("## AI 会话深度")
+        if not s.get("enabled"):
+            print("未启用：config.json 的 ai_sessions.enabled=false（默认关闭）")
+        elif not s.get("found"):
+            print("（未发现该日期的本地 AI 会话记录；可配置 ai_sessions.paths 指向会话目录）")
+        else:
+            for tool, st in s.get("tools", {}).items():
+                print(f"- {tool}: 文件 {st['files']} 个，消息/轮数 {st['turns']}，"
+                      f"用户 {st['user_messages']} / 助手 {st['assistant_messages']}，"
+                      f"生成 {st['generated_lines']} 行 / {st['generated_chars']} 字符")
+            total = s.get("total", {})
+            print(f"合计: {total.get('turns', 0)} 条消息，"
+                  f"生成 {total.get('generated_lines', 0)} 行")
     return 0
 
 

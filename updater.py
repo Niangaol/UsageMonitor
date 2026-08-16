@@ -19,7 +19,6 @@ CLI：python updater.py --check [--api-base ...] [--json]
 from __future__ import annotations
 
 import argparse
-import datetime
 import hashlib
 import json
 import os

@@ -43,6 +43,7 @@ Implemented against the requirements document *《项目需求与开发文档.md
 - [Quick Start](#quick-start-requires-python-310-64-bit-windows-1011)
 - [Packaging as an EXE (Run Without Python)](#packaging-as-an-exe-run-without-python)
 - [Software Updates](#software-updates)
+- [SQLite Backend (Optional)](#sqlite-backend-optional)
 - [Installation and Auto-start](#installation-and-auto-start)
 - [Configuration](#configuration)
 - [Data](#data)
@@ -104,6 +105,10 @@ Implemented against the requirements document *《项目需求与开发文档.md
 - **Smart insights**: an offline rule engine generates study/game/health/efficiency/balance/trend advice and appends a
   "Today's suggestions" section to the daily report; optional AI insights (OpenAI-compatible API, off by default,
   privacy-filtered aggregate statistics, zero third-party dependencies)
+- **AI session deep stats** (optional, off by default): reads local session files from opencode / ChatGPT / Claude,
+  counts AI interaction turns and generated lines/chars per day; available on the dashboard Insights view and CLI
+- **SQLite backend (optional)**: the monitor mirrors records into `usage.db`; `sqlite_store.py` supports backfill/rebuild/query;
+  JSONL remains the single source of truth
 - **Tray icon (optional)**: today's overview / open today's report / check for updates / pause · resume / exit
 - **Update check & in-app update**: checks GitHub Releases for new versions on startup (tray balloon) and on demand
   (tray menu or dashboard Settings → Software Update); downloads with SHA256 verification and replaces the exe
@@ -368,6 +373,35 @@ lets you point to any OpenAI-compatible endpoint for a fully custom provider.
 > `send_raw_titles=true` additionally includes top title/URL samples; contact names are never uploaded under any setting.
 > Rule insights always stay offline.
 
+#### AI Session Deep Stats (optional, off by default)
+
+Reads local session files (JSON / JSONL) from opencode / ChatGPT / Claude, etc., and counts AI interaction
+turns, user/assistant messages, and generated lines/chars for a day. **Off by default**; when enabled it only
+reads local files and never uploads anything.
+
+```powershell
+python ai_sessions.py --day 2026-08-10            # specific date
+python ai_sessions.py --day 2026-08-10 --json     # JSON output
+python insights.py --day 2026-08-10 --ai-sessions # combine with smart insights
+```
+
+`config.json`:
+
+```json
+{
+  "ai_sessions": {
+    "enabled": false,
+    "paths": {
+      "opencode": ["C:\\Users\\me\\.local\\share\\opencode"],
+      "chatgpt": ["%APPDATA%\\ChatGPT"]
+    }
+  }
+}
+```
+
+When `paths` is empty, common directories are auto-detected. Session formats vary between tools/versions,
+so parsing is best-effort; unknown formats are skipped silently and never affect monitoring.
+
 ## Software Updates
 
 UsageMonitor supports **update checking** and **in-app updates** (v1.6.0+): the packaged EXE can download and replace itself in one click; source/dev mode only supports checking, not installing.
@@ -401,6 +435,29 @@ python updater.py --check --json   # JSON output (for scripts/CI)
 ### Privacy Note
 
 Checking for updates only requests **public release metadata** (version, release date, download URL, size) from the GitHub Releases API (or the `update.api_base` URL). It never uploads usage records, window titles, URLs, or contact information; the downloaded file comes from the release asset and is verified with SHA256.
+
+## SQLite Backend (Optional)
+
+The monitor best-effort maintains `<data_root>/usage.db` while appending JSONL records, for efficient queries and
+long-term aggregation. **JSONL remains the single source of truth**; SQLite is only an extra mirror/index, and
+deleting it never affects your data.
+
+```powershell
+python sqlite_store.py --status               # show usage.db status
+python sqlite_store.py --backfill             # backfill historical JSONL into SQLite
+python sqlite_store.py --rebuild              # delete and rebuild usage.db, then backfill everything
+python sqlite_store.py --query 2026-08-10     # query one day from SQLite
+python sqlite_store.py --query 2026-08-10 --json
+```
+
+Configuration:
+
+```json
+{ "sqlite": { "enabled": true } }
+```
+
+`enabled` defaults to `true`; when disabled the monitor stops writing to SQLite, and an existing `usage.db`
+does not affect JSONL or reports.
 
 ## Installation and Auto-start
 
@@ -449,6 +506,8 @@ install.ps1 registers two scheduled tasks:
 ├─ dashboard.py            # local web dashboard (127.0.0.1 only)
 ├─ tray.py                 # tray icon (optional)
 ├─ updater.py              # update check & in-app update (pure stdlib; installable in packaged builds)
+├─ ai_sessions.py          # AI session deep stats (optional, off by default; reads local session files)
+├─ sqlite_store.py         # optional SQLite backend usage.db (extra mirror/index beside JSONL)
 ├─ test_all.py             # full integration tests (headless and deterministic)
 ├─ install.ps1 / uninstall.ps1   # script install / uninstall (scheduled-task registration)
 ├─ installer.ps1 / uninstaller.ps1 # GUI install wizard / GUI uninstaller (zero deps, -Silent supported)
@@ -496,6 +555,8 @@ The monthly summary is written under `<data_root>\YYYY-MM\` (as `report_month.md
 | `browser_history_enabled` / `browser_history` | URL-level history parsing toggle and each browser's user_data path (null = auto-detect) |
 | `insights` | smart insights: `enabled`/`in_report`, rule thresholds (`rules`), AI endpoint and privacy switch (`ai`, off by default) |
 | `update` | updates: `check_on_startup` (check automatically on startup, default true), `api_base` (override the check source; default GitHub Releases API) |
+| `sqlite` | SQLite backend: `enabled` (monitor mirrors records into usage.db, default true; failures degrade silently) |
+| `ai_sessions` | AI session deep stats: `enabled` (default false), `paths` (tool → local session directory mapping; auto-detected when empty) |
 | `title_blacklist` | title privacy blacklist (regex); matches are recorded as `[hidden]` (also applies to parsed history URLs/titles) |
 
 ### aliases.json (contact aliases)
@@ -580,6 +641,7 @@ is a list of custom group names. If the file is missing or corrupted it is treat
   are sent to the AI API endpoint you configure; the repo default keeps it off
 - Update checks / in-app updates only request public GitHub Releases metadata (version / download URL / size);
   no usage data is uploaded. You can disable the startup check with `update.check_on_startup=false`
+- AI session deep stats are **off by default**; when enabled they only read local AI session files and upload nothing
 - Data is cleaned up automatically after 90 days by default (adjustable in `config.json`)
 
 ## Privacy and Security (Runtime)
@@ -588,6 +650,8 @@ is a list of custom group names. If the file is missing or corrupted it is treat
   if you explicitly enable `insights.ai.enabled=true`, aggregate statistics (without titles/URLs/contact names) are sent to the configured AI endpoint
 - Update checks only request public release metadata from the GitHub Releases API (or `update.api_base`);
   they contain no usage records, titles, URLs, or contact information
+- AI session deep stats are off by default; when enabled they only read local AI session files from configured/common
+  directories and upload nothing
 - Only metadata is recorded (app name, window title, time, category); chat messages, passwords, input content, and file content are never read
 - Any title matched by `title_blacklist` is recorded as `[hidden]`; the raw text never touches disk
 - **Dashboard anti-theft (CSRF protection)**: every `/api/*` endpoint validates `Origin`/`Referer`, which must point to
@@ -616,7 +680,7 @@ is a list of custom group names. If the file is missing or corrupted it is treat
 
 ```powershell
 python monitor.py --test 30   # test mode (runs for N seconds then exits and prints a summary)
-python test_all.py            # full integration tests (223 assertions)
+python test_all.py            # full integration tests (239 assertions)
 ```
 
 test_all.py monkey-patches the foreground window/idle/process tree to cover: timing on switch, no timing while idle, WeChat contacts,
@@ -662,8 +726,8 @@ A: Normal privileges cannot read elevated window titles (a Windows security rest
 A: The daemon degrades to running silently when the tray is unavailable (data recording is unaffected); check `errors.log` for the tray initialization error.
 
 **Q: Does this support Firefox?**
-A: URL-level parsing currently supports Chromium-family browsers (Chrome/Edge/Tabbit, etc., auto-detected);
-Firefox uses a different places.sqlite structure and is not supported yet; for other browsers you can configure a user_data path in the `browser_history` config.
+A: Yes. URL-level parsing supports Chromium-family browsers (Chrome/Edge/Tabbit, etc.) and Firefox (places.sqlite, latest profile auto-detected);
+for other browsers you can configure a user_data path in the `browser_history` config.
 
 **Q: Antivirus false positive?**
 A: Consider code-signing the packaged EXE; you can also add the `data_root` directory to the antivirus allowlist.
@@ -683,8 +747,8 @@ A: No. It only requests public release metadata (version / release date / downlo
 - **Window titles of elevated applications may not be readable** (normal privileges cannot read them); run as administrator for full titles
 - **UWP/Store app titles may be empty**: recorded by exe, not deep-classified
 - **Background tabs are not timed**: this uses a "foreground attention" metric; playing a video in the background isn't counted as browser time
-- **URL-level history parsing only covers Chromium-family browsers** (auto-detects Chrome/Edge/Tabbit, etc.);
-  Firefox uses a different places.sqlite structure and is not supported yet; for other browsers configure a user_data path in `browser_history`
+- **URL-level history parsing covers Chromium-family browsers (Chrome/Edge/Tabbit, etc.) and Firefox** (both auto-detected);
+  other browsers can be configured via `browser_history`; Firefox has no per-visit dwell time and is recorded as visit timestamps
 - **Process names for tools like pi agent** need to be confirmed against your actual install and added to `ai_keywords` (the protection against python/pip false positives is already built into the code)
 - **In-app updates only work in packaged EXE builds**: source/dev mode can only detect new versions, not install them
 - **Checking for updates requires access to GitHub**: if the network is restricted, set `update.api_base` to a mirror/self-hosted latest-release API; if GitHub is unreachable, the startup check fails silently and monitoring/local data are unaffected

@@ -8,6 +8,31 @@
 
 > 🌐 English version: [CHANGELOG.en.md](CHANGELOG.en.md)
 
+## [2.0.0] - 2026-08-17
+
+### 新增
+- **AI 会话深度统计**（§6.4.3，默认关闭）：
+  - 新增 `ai_sessions.py`：读取 opencode / ChatGPT / Claude 等本地会话文件（JSON / JSONL），
+    统计某天 AI 交互轮数、用户/助手消息数、生成行数/字符数
+  - 仪表盘「洞察」视图新增「AI 会话深度」面板；`python ai_sessions.py --day ...` 或
+    `python insights.py --ai-sessions` 可 CLI 查看
+  - `config.default.json` 新增 `ai_sessions` 段（`enabled` 默认 false，`paths` 可自定义，
+    缺省自动探测常见目录）
+- **SQLite 后端 usage.db**（§6.5，可选高效查询）：
+  - 新增 `sqlite_store.py`：在 data_root 下维护 `usage.db`，作为 JSONL 原始日志之外的额外镜像/索引
+  - monitor 写入 JSONL 后 best-effort 同步写 SQLite；
+    `python sqlite_store.py --backfill / --rebuild / --query / --status` 可回填与查询
+  - `config.default.json` 新增 `sqlite.enabled`（默认 true，失败静默降级，不影响 JSONL）
+- **GitHub Pages 文档站**（P2 #7）：
+  - 新增 `docs/index.md` 与 `.github/workflows/pages.yml`，推送 master 自动发布文档站
+- **Review 修正**：
+  - 移除 `updater.py` 未使用的 `datetime` 导入（ruff 0 违规）
+  - 修正 README 中 Firefox 支持说明（自 v1.1.0 起已支持 Firefox places.sqlite）
+
+### 变更
+- `UsageMonitor.spec` hiddenimports 增加 `sqlite_store`、`ai_sessions`
+- 版本号升至 2.0.0
+
 ## [1.6.0] - 2026-08-17
 
 ### 新增
@@ -179,6 +204,7 @@
 - 测试：test_all 新增 11 项 dashboard API 测试（端点 / 403 / 安全头 / 错误码 / 路径穿越），
   构建后 `UsageMonitor.exe --version` 冒烟，全量 125 项门禁通过。
 
+[2.0.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.0.0
 [1.6.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.6.0
 [1.5.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.5.0
 [1.4.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.4.0

@@ -1026,5 +1026,12 @@
     "check_on_startup": true,
     "api_base": ""
   },
+  "sqlite": {
+    "enabled": true
+  },
+  "ai_sessions": {
+    "enabled": false,
+    "paths": {}
+  },
   "_comment": "分类与阈值规则，可编辑；修改后重启 monitor 生效"
 }

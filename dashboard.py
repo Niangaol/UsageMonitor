@@ -805,6 +805,10 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         <div id="inAiCards" style="margin-top:12px"></div>
       </div>
       <div class="panel">
+        <h2>AI 会话深度 <span class="hint">可选 · 读取本地会话文件 · 默认关闭</span></h2>
+        <div class="set-note" id="inAiSessions" style="margin-top:6px"></div>
+      </div>
+      <div class="panel">
         <h2>AI 洞察模块 <span class="hint">客制化 · 持久化于数据目录 ai_custom.json · 可导入导出</span></h2>
         <div class="controls" style="margin-bottom:12px">
           <button class="btn primary" id="aiModSave">保存模块设置</button>
@@ -1756,7 +1760,30 @@ async function loadInsights(){
     ? d.rules.map(insightCardHTML).join("")
     : '<div class="empty">当日暂无规则洞察（数据为空或 insights.enabled=false）</div>';
   renderAiPanel(d);
+  renderAiSessions(d);
   loadAiModule().catch(() => { /* 模块面板加载失败不影响规则/AI 展示 */ });
+}
+function renderAiSessions(d){
+  const el = $("#inAiSessions");
+  if(!el) return;
+  if(!d.ai_sessions_enabled){
+    el.innerHTML = '未开启（config.json: ai_sessions.enabled=false）。开启后仅读取本地 AI 会话文件，不上传任何数据。';
+    return;
+  }
+  const s = d.ai_sessions;
+  if(!s || !s.found){
+    el.innerHTML = '未发现所选日期的本地 AI 会话记录（可配置 ai_sessions.paths 指向会话目录）。';
+    return;
+  }
+  let html = "";
+  for(const [tool, st] of Object.entries(s.tools || {})){
+    html += '<div style="margin:6px 0"><b>'+esc(tool)+'</b> · 文件 '+st.files+' · 消息/轮数 '+st.turns+
+            ' · 用户 '+st.user_messages+' / 助手 '+st.assistant_messages+
+            ' · 生成 '+st.generated_lines+' 行 / '+st.generated_chars+' 字符</div>';
+  }
+  const t = s.total || {};
+  html += '<div class="hint" style="margin-top:4px">合计：'+t.turns+' 条消息，生成 '+t.generated_lines+' 行</div>';
+  el.innerHTML = html;
 }
 function renderAiPanel(d){
   const btn = $("#inGen"), meta = $("#inAiMeta"), err = $("#inAiError"), cards = $("#inAiCards");
@@ -2408,9 +2435,20 @@ class Handler(BaseHTTPRequestHandler):
                 if ai_enabled:
                     ai = insights.ai_insights(date, root, config, refresh=False)
                     ai["provider"] = str(ai_cfg.get("provider") or "")
+                ai_sessions_cfg = config.get("ai_sessions") if isinstance(config.get("ai_sessions"), dict) else {}
+                ai_sessions_enabled = bool(ai_sessions_cfg.get("enabled", False))
+                ai_sessions_data = None
+                if ai_sessions_enabled:
+                    try:
+                        import ai_sessions  # noqa: PLC0415
+                        ai_sessions_data = ai_sessions.collect(date, config)
+                    except Exception:  # noqa: BLE001
+                        ai_sessions_data = None
                 self._send_json({
                     "date": date, "rules": rules,
                     "ai_enabled": ai_enabled, "ai": ai,
+                    "ai_sessions_enabled": ai_sessions_enabled,
+                    "ai_sessions": ai_sessions_data,
                 })
             except Exception as exc:  # noqa: BLE001 —— 洞察失败不拖垮仪表盘
                 self._send_json({"error": f"insights unavailable: {exc}"}, 500)

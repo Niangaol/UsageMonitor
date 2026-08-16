@@ -4,6 +4,15 @@
 > 远程仓库：https://github.com/Niangaol/UsageMonitor（master 分支）
 > 最后提交：P0 应用分组功能完成并推送（见下文执行记录）；此前提交 `06f1aa7`（Electron 桌面壳）
 
+## 2.0 ✅ 已完成（2026-08-17）
+
+| 项 | 内容 |
+|---|---|
+| AI 会话深度统计（P1 #3） | `ai_sessions.py`：JSON/JSONL 解析、按日统计、CLI、仪表盘洞察页面板；默认关闭 |
+| SQLite 后端 usage.db（P1 #10） | `sqlite_store.py`：schema/索引/回填/重建/查询；monitor 同步写 usage.db；JSONL 仍为原始日志 |
+| GitHub Pages 文档站（P2 #7） | `docs/index.md` + `.github/workflows/pages.yml` |
+| Review 修复 | 移除 `updater.py` 未使用的 `datetime` 导入；修正 README Firefox 支持说明 |
+
 ---
 
 ## P0 ✅ 已完成：应用分组自定义（2026-08-15 完成并提交）
@@ -35,14 +44,14 @@
 |---|---|---|
 | 1 | **仪表盘周报/月报视图** | ✅ `/api/week`、`/api/month`（复用 report 聚合）+ sidebar「周报/月报」视图 |
 | 2 | **仪表盘数据导出** | ✅ `/api/export?type=csv\|json&scope=day\|week\|month`，日报/周报/月报视图导出按钮（CSV 防注入清洗） |
-| 3 | **AI 会话深度统计**（需用户确认） | ⏸️ 未做（等待用户确认） |
+| 3 | **AI 会话深度统计**（需用户确认） | ✅ 已完成（v2.0.0） |
 | 4 | **数据备份/恢复** | ✅ `/api/backup`（zip 下载）+ `/api/backup/restore`（白名单+路径穿越防护，合并覆盖） |
 | 5 | **配置热重载** | ✅ classifier.load_config 缓存（mtime+TTL 3s+浅拷贝）；monitor 循环内每轮重读（data_root 保持启动值） |
 | 6 | **托盘通知** | ✅ 日报生成后气泡提示（19:30 后首次发现弹一次，防重启误弹，点击打开日报视图） |
 | 7 | **仪表盘主题切换** | ✅ 自动/浅色/深色（CSS 变量 + localStorage + 跟随系统 + canvas 重绘） |
 | 8 | **仪表盘访问口令** | ✅ `dashboard_token`（默认关闭；开启后所有 /api 需 X-Dashboard-Token，hmac 常量时间比较） |
 | 9 | **Firefox 历史支持** | ✅ places.sqlite（moz_places/moz_historyvisits，PRTime 换算），最近修改 profile 自动发现 |
-| 10 | **SQLite 后端 usage.db** | ⏸️ 未做（大工程长期项） |
+| 10 | **SQLite 后端 usage.db** | ✅ 已完成（v2.0.0） |
 | 11 | **多语言 README** | ✅ README.en.md（482 行完整英文版 + 双语互链） |
 
 执行记录：5 个并行 subagent 按文件隔离分工（dashboard.py / tray.py+monitor.py / browser_history.py / classifier.py / README），
@@ -54,8 +63,8 @@
 
 | # | 事项 | 说明 |
 |---|---|---|
-| 3 | **AI 会话深度统计**（doc §6.4.3） | **优先级已放低**（用户 2026-08-15 指示）：读 opencode/ChatGPT 本地会话文件，统计轮数/生成行数；涉及第三方数据格式，默认不做 |
-| 10 | **SQLite 后端 usage.db**（评审建议 3 长期项） | **待定**（大工程，需专项设计）：行级主键+按日索引，多年数据聚合不再全量扫 JSONL；JSONL 仍为原始日志 |
+| 3 | **AI 会话深度统计**（doc §6.4.3） | ✅ v2.0.0 已完成：`ai_sessions.py` + 仪表盘/CLI；默认关闭，读取本地会话文件统计轮数/生成行数 |
+| 10 | **SQLite 后端 usage.db**（评审建议 3 长期项） | ✅ v2.0.0 已完成：`sqlite_store.py`（schema/索引/回填/重建/查询），monitor 同步镜像；JSONL 仍为原始日志 |
 
 ## P2 ✅ 已完成：工程 / 质量（2026-08-15 完成并提交，6/7 项）
 
@@ -67,7 +76,7 @@
 | 4 | **version.py ↔ git tag 同步校验** | ✅ build.yml 新增 Assert step（tag 触发与 tag 比对；dispatch 与 version.py 比对） |
 | 5 | **测试覆盖率** | ✅ coverage 接入 test job（--source 全模块，report + xml 上传 artifact，暂不强制阈值） |
 | 6 | **exe 代码签名** | ✅ 无证书；README 中英文补「杀软误报处理」指引（白名单/源码运行/VirusTotal/开源审计） |
-| 7 | **GitHub Pages 文档站**（可选） | ⏸️ 未做（可选低优先） |
+| 7 | **GitHub Pages 文档站**（可选） | ✅ 已完成（v2.0.0）：`docs/index.md` + `.github/workflows/pages.yml` |
 
 执行记录：4 个并行 subagent（CHANGELOG / CONTRIBUTING+模板 / README 徽章+签名 / CI workflow）；
 主代理集成：CHANGELOG 仓库 URL 修正、README 补「贡献指南」链接与测试数修正（152）、中英文同步。

@@ -8,6 +8,31 @@ Release flow: `git tag vX.Y.Z` → CI builds and publishes the Release automatic
 
 > 简体中文版: [CHANGELOG.md](CHANGELOG.md)
 
+## [2.0.0] - 2026-08-17
+
+### Added
+- **AI session deep stats** (§6.4.3, off by default):
+  - New `ai_sessions.py`: reads local session files (JSON / JSONL) from opencode / ChatGPT / Claude, etc.,
+    and counts AI interaction turns, user/assistant messages, generated lines/chars for a day
+  - New "AI Session Depth" panel on the dashboard Insights view; CLI via `python ai_sessions.py --day ...` or
+    `python insights.py --ai-sessions`
+  - `config.default.json` adds the `ai_sessions` section (`enabled` defaults to false; `paths` is customizable,
+    otherwise common directories are auto-detected)
+- **SQLite backend usage.db** (§6.5, optional high-performance queries):
+  - New `sqlite_store.py`: maintains `usage.db` under `data_root` as an extra mirror/index beside the JSONL raw logs
+  - The monitor best-effort writes to SQLite after appending JSONL;
+    `python sqlite_store.py --backfill / --rebuild / --query / --status` can backfill and query
+  - `config.default.json` adds `sqlite.enabled` (default true; failures degrade silently and never affect JSONL)
+- **GitHub Pages docs site** (P2 #7):
+  - New `docs/index.md` and `.github/workflows/pages.yml`; pushes to master automatically publish the docs site
+- **Review fixes**:
+  - Removed the unused `datetime` import in `updater.py` (ruff: 0 violations)
+  - Fixed the README Firefox support statement (Firefox places.sqlite has been supported since v1.1.0)
+
+### Changed
+- `UsageMonitor.spec` hiddenimports now include `sqlite_store` and `ai_sessions`
+- Version bumped to 2.0.0
+
 ## [1.6.0] - 2026-08-17
 
 ### Added
@@ -177,6 +202,7 @@ Pure standard library with zero third-party dependencies; static CPU < 0.1%, mem
 - Tests: test_all adds 11 dashboard API tests (endpoints / 403 / security headers / error codes / path traversal);
   post-build `UsageMonitor.exe --version` smoke test; all 125 assertions pass the gate.
 
+[2.0.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.0.0
 [1.6.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.6.0
 [1.5.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.5.0
 [1.4.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.4.0

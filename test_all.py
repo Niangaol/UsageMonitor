@@ -35,6 +35,8 @@ import classifier  # noqa: E402
 import report  # noqa: E402
 import inventory  # noqa: E402
 import insights  # noqa: E402
+import sqlite_store  # noqa: E402
+import ai_sessions  # noqa: E402
 
 TMP_ROOT = os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"), "usage_monitor_tests")
 
@@ -1467,6 +1469,101 @@ def test_report_insights_section():
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_ai_sessions():
+    print("[test] AI 会话深度统计（JSONL/JSON 解析、按日过滤、关闭态）")
+    tmp = fresh_tmp("ai_sessions")
+    day = "2026-08-10"
+    opencode_dir = os.path.join(tmp, "opencode")
+    chatgpt_dir = os.path.join(tmp, "chatgpt")
+    os.makedirs(opencode_dir, exist_ok=True)
+    os.makedirs(chatgpt_dir, exist_ok=True)
+    opencode_path = os.path.join(opencode_dir, "sessions.jsonl")
+    with open(opencode_path, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "timestamp": f"{day}T10:00:00", "role": "user", "content": "帮我写代码",
+        }, ensure_ascii=False) + "\n")
+        fh.write(json.dumps({
+            "timestamp": f"{day}T10:01:00", "role": "assistant", "content": "第一行\n第二行",
+        }, ensure_ascii=False) + "\n")
+        fh.write(json.dumps({
+            "timestamp": "2026-08-11T10:00:00", "role": "assistant", "content": "不算今天",
+        }, ensure_ascii=False) + "\n")
+    chatgpt_path = os.path.join(chatgpt_dir, "conversations.json")
+    with open(chatgpt_path, "w", encoding="utf-8") as fh:
+        json.dump({
+            "messages": [
+                {"timestamp": f"{day}T11:00:00", "role": "user", "content": "你好"},
+                {"timestamp": f"{day}T11:01:00", "role": "assistant", "content": "你好！"},
+            ]
+        }, fh, ensure_ascii=False)
+
+    cfg = {
+        "ai_sessions": {
+            "enabled": True,
+            "paths": {"opencode": [opencode_dir], "chatgpt": [chatgpt_dir]},
+        }
+    }
+    result = ai_sessions.collect(day, cfg)
+    check(result["enabled"] is True, "开启状态")
+    check(result["found"] is True, "发现会话文件")
+    check(result["total"]["turns"] == 4, "当天共 4 条消息", str(result["total"]))
+    check(result["total"]["user_messages"] == 2, "用户消息 2 条", str(result["total"]))
+    check(result["total"]["assistant_messages"] == 2, "助手消息 2 条", str(result["total"]))
+    check(result["total"]["generated_lines"] == 3, "助手生成 3 行", str(result["total"]))
+    check("opencode" in result["tools"] and "chatgpt" in result["tools"], "按工具分组")
+
+    cfg_off = {"ai_sessions": {"enabled": False}}
+    off = ai_sessions.collect(day, cfg_off)
+    check(off["enabled"] is False and off["found"] is False, "默认关闭态")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_sqlite_store():
+    print("[test] SQLite 后端（写入/回填/幂等/重建/查询）")
+    tmp = fresh_tmp("sqlite_store")
+    day = "2026-08-10"
+    day_dir = os.path.join(tmp, day)
+    os.makedirs(day_dir, exist_ok=True)
+    recs = [
+        {"start": f"{day}T10:00:00", "end": f"{day}T10:05:00", "duration_ms": 300000,
+         "exe": "code.exe", "app": "VS Code", "title": "a", "category": "开发工具", "active": True},
+        {"start": f"{day}T11:00:00", "end": f"{day}T11:10:00", "duration_ms": 600000,
+         "exe": "opencode.exe", "app": "OpenCode", "title": "b", "category": "AI编程",
+         "ai_tool": "opencode", "active": True},
+    ]
+    with open(os.path.join(day_dir, "usage.jsonl"), "w", encoding="utf-8") as fh:
+        for r in recs:
+            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+    st0 = sqlite_store.status(tmp)
+    check(not st0["exists"], "初始无 usage.db", str(st0))
+    result = sqlite_store.backfill(tmp)
+    check(result["inserted"] == 2 and result["days"] == 1, "回填 2 条", str(result))
+    st1 = sqlite_store.status(tmp)
+    check(st1["exists"] and st1["rows"] == 2, "回填后 rows=2", str(st1))
+    rows = sqlite_store.read_day(tmp, day)
+    check(len(rows) == 2 and rows[0]["exe"] == "code.exe", "read_day 返回数据", str(rows))
+    result2 = sqlite_store.backfill(tmp)
+    check(result2["inserted"] == 0 and result2["skipped"] == 2, "重复回填幂等", str(result2))
+
+    day2 = "2026-08-11"
+    monitor.append_session_record(day2, {
+        "start": f"{day2}T09:00:00", "end": f"{day2}T09:01:00", "duration_ms": 60000,
+        "exe": "chatgpt.exe", "app": "ChatGPT", "title": "c", "category": "AI编程",
+        "ai_tool": "chatgpt", "active": True,
+    }, tmp, sqlite_enabled=True)
+    rows2 = sqlite_store.read_day(tmp, day2)
+    check(len(rows2) == 1 and rows2[0]["ai_tool"] == "chatgpt", "monitor 同步写 SQLite", str(rows2))
+
+    month_agg = report.aggregate_month("2026-08", tmp)
+    check(month_agg["session_count"] == 3 and month_agg["total_active_ms"] == 960000,
+          "SQLite 月聚合（不再逐日扫 JSONL）", str(month_agg))
+
+    result3 = sqlite_store.rebuild(tmp)
+    check(result3["inserted"] == 3 and result3["skipped"] == 0, "重建全量回填", str(result3))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     print("=" * 60)
     print("电脑使用情况监控 · 完整集成测试")
@@ -1484,6 +1581,8 @@ def main() -> int:
         test_insights_provider_presets, test_insights_cache,
         test_dashboard_insights_api, test_dashboard_ai_settings_api,
         test_report_insights_section,
+        test_ai_sessions,
+        test_sqlite_store,
     ]
     for t in tests:
         t()

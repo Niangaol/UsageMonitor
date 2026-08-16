@@ -33,6 +33,7 @@ import report  # noqa: E402
 import version  # noqa: E402
 import win32core  # noqa: E402
 import paths  # noqa: E402
+import sqlite_store  # noqa: E402
 
 _pause = threading.Event()      # 暂停监控（托盘使用）
 stop_event = threading.Event()  # 停止守护（托盘退出时置位）
@@ -192,11 +193,14 @@ def _log_error(data_root: str, day_str: str, exc: BaseException, context: str = 
         pass
 
 
-def append_session_record(day_str: str, record: dict, data_root: str) -> None:
+def append_session_record(day_str: str, record: dict, data_root: str,
+                          sqlite_enabled: bool = True) -> None:
     """JSON Lines 追加写一条会话记录到 当日文件夹/usage.jsonl。
 
     写入后 flush + fsync，最大限度避免断电/崩溃留下半行 JSON
     （低频写入场景下 fsync 开销可忽略）。
+    若 config 开启 `sqlite.enabled`（默认 true），best-effort 同步写入 usage.db；
+    SQLite 只是额外镜像，失败静默降级，不影响 JSONL 原始日志。
     """
     day_dir = os.path.join(data_root, day_str)
     os.makedirs(day_dir, exist_ok=True)
@@ -207,6 +211,8 @@ def append_session_record(day_str: str, record: dict, data_root: str) -> None:
             os.fsync(fh.fileno())
         except OSError:  # noqa: BLE001 —— 部分文件系统不支持 fsync
             pass
+    if sqlite_enabled:
+        sqlite_store.append_record(data_root, day_str, record)
 
 
 def _round_sec(dt: datetime.datetime) -> datetime.datetime:
@@ -266,7 +272,11 @@ def _close_session(session: dict, end_dt: datetime.datetime, data_root: str,
     rec = make_record(session, end_dt)
     if rec is None:
         return None
-    append_session_record(day_str, rec, data_root)
+    sqlite_enabled = True
+    if config is not None:
+        sqlite_cfg = config.get("sqlite") if isinstance(config.get("sqlite"), dict) else {}
+        sqlite_enabled = bool(sqlite_cfg.get("enabled", True))
+    append_session_record(day_str, rec, data_root, sqlite_enabled=sqlite_enabled)
     return rec
 
 
