@@ -123,6 +123,95 @@ def _load_config_for_root(root: str, config_path: str | None = None) -> dict:
     return classifier.load_config()
 
 
+def _config_file_for_root(root: str, config_path: str | None = None) -> str:
+    """设置页保存 AI 配置时实际写入的 config.json 路径。"""
+    if config_path:
+        return config_path
+    return os.path.join(root, "config.json")
+
+
+def _ai_settings_view(config: dict) -> dict:
+    """把完整配置里的 AI 段转成前端可安全展示的结构（API Key 只给“是否已设置”）。"""
+    ins = config.get("insights") if isinstance(config.get("insights"), dict) else {}
+    ai = ins.get("ai") if isinstance(ins.get("ai"), dict) else {}
+    return {
+        "enabled": bool(ai.get("enabled")),
+        "provider": str(ai.get("provider") or ""),
+        "base_url": str(ai.get("base_url") or ""),
+        "model": str(ai.get("model") or ""),
+        "timeout_s": int(ai.get("timeout_s") or 60),
+        "send_raw_titles": bool(ai.get("send_raw_titles")),
+        "language": str(ai.get("language") or "zh"),
+        "api_key_set": bool(ai.get("api_key")),
+    }
+
+
+def _save_ai_settings(root: str, config_path: str | None, payload: dict) -> dict:
+    """把 AI 设置保存到 config.json（原子写），返回保存后的前端视图。
+
+    api_key 为空字符串时保留原值（前端只显示“已设置/未设置”，不回显密钥）。
+    """
+    import classifier  # noqa: PLC0415
+    path = _config_file_for_root(root, config_path)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        if not isinstance(cfg, dict):
+            cfg = {}
+    except FileNotFoundError:
+        cfg = {}
+    except json.JSONDecodeError:
+        cfg = {}
+    cfg.setdefault("insights", {})
+    ins = cfg["insights"]
+    if not isinstance(ins, dict):
+        ins = {}
+        cfg["insights"] = ins
+    ins.setdefault("ai", {})
+    ai = ins["ai"]
+    if not isinstance(ai, dict):
+        ai = {}
+        ins["ai"] = ai
+    old_api_key = str(ai.get("api_key") or "")
+
+    ai["enabled"] = bool(payload.get("enabled"))
+    ai["provider"] = str(payload.get("provider") or "").strip()
+    ai["base_url"] = str(payload.get("base_url") or "").strip()
+    ai["model"] = str(payload.get("model") or "").strip()
+    try:
+        ai["timeout_s"] = max(1, min(600, int(payload.get("timeout_s") or 60)))
+    except (TypeError, ValueError):
+        ai["timeout_s"] = 60
+    ai["send_raw_titles"] = bool(payload.get("send_raw_titles"))
+    ai["language"] = str(payload.get("language") or "zh").strip() or "zh"
+    # 选择内置预设且用户未手填时，把预设的 base_url/model 落盘，方便界面回显
+    try:
+        import insights  # noqa: PLC0415
+        preset_map = {p["id"]: p for p in insights.list_provider_presets()}
+        preset = preset_map.get(ai["provider"].lower(), {})
+        if not ai["base_url"]:
+            ai["base_url"] = preset.get("base_url", "")
+        if not ai["model"]:
+            ai["model"] = preset.get("model", "")
+    except Exception:  # noqa: BLE001
+        pass
+    new_key = str(payload.get("api_key") or "").strip()
+    if new_key:
+        ai["api_key"] = new_key
+    elif old_api_key:
+        ai["api_key"] = old_api_key
+    else:
+        ai["api_key"] = ""
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+    classifier.invalidate_config_cache(path)
+    return _ai_settings_view(cfg)
+
+
 def _month_days_for(data_root: str, month_str: str) -> list[str]:
     """返回某月内实际存在 usage.jsonl 的日期（升序），用于导出/统计。"""
     out = []
@@ -670,12 +759,40 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     <!-- 设置（备份/恢复/口令/主题） -->
     <section class="view" id="view-settings">
       <div class="set-group">
-        <h3>✨ AI 洞察状态</h3>
-        <div class="desc">AI 洞察默认关闭（隐私优先）。开启方式：数据根目录 <span class="url-cell">config.json</span>
-          的 <b>insights.ai.enabled=true</b>，并配置 <b>base_url / api_key / model</b>
-          （或本机已有 <span class="url-cell">%USERPROFILE%\.config\opencode\opencode.json</span> 时自动发现）。
-          开启后，聚合统计会发送到你配置的 API 端点；规则洞察始终离线。</div>
-        <div class="set-note" id="aiCfgNote"></div>
+        <h3>✨ AI 洞察（可选功能）</h3>
+        <div class="desc">AI 洞察默认关闭（隐私优先）。开启后，聚合统计会发送到你选择的 API 端点；
+          规则洞察始终离线。可选用内置 provider 预设，或选「自定义」填写任意 OpenAI 兼容端点。</div>
+        <div class="controls" style="margin:10px 0 14px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="aiEnabled" style="width:auto">
+            <b>启用 AI 洞察</b>
+          </label>
+        </div>
+        <div class="ai-fields">
+          <label style="display:block;margin:8px 0">Provider 预设
+            <select id="aiProvider" style="width:min(420px,100%);margin-top:4px"></select>
+          </label>
+          <label style="display:block;margin:8px 0">Base URL
+            <input type="text" id="aiBaseUrl" placeholder="https://api.example.com/v1" style="width:min(420px,100%);margin-top:4px">
+          </label>
+          <label style="display:block;margin:8px 0">API Key
+            <input type="password" id="aiApiKey" placeholder="留空保持不变" autocomplete="off" style="width:min(420px,100%);margin-top:4px">
+          </label>
+          <label style="display:block;margin:8px 0">Model
+            <input type="text" id="aiModel" placeholder="model-name" style="width:min(420px,100%);margin-top:4px">
+          </label>
+          <label style="display:block;margin:8px 0">超时（秒）
+            <input type="number" id="aiTimeout" min="1" max="600" value="60" style="width:min(180px,100%);margin-top:4px">
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:8px 0">
+            <input type="checkbox" id="aiSendRaw" style="width:auto"> 发送标题 / URL 样本（默认不发送，联系人名永不上送）
+          </label>
+        </div>
+        <div class="controls" style="margin-top:12px">
+          <button class="btn primary" id="aiSave">保存 AI 设置</button>
+          <span class="set-note" id="aiSaveNote"></span>
+        </div>
+        <div class="set-note" id="aiCfgNote" style="margin-top:8px"></div>
       </div>
       <div class="set-group">
         <h3>🗄️ 数据备份</h3>
@@ -1169,28 +1286,96 @@ async function bkRestore(){
     note.style.color = "var(--danger)";
   }
 }
+function fillAiProviderOptions(presets, selected){
+  const sel = $("#aiProvider");
+  if(!sel) return;
+  const opts = (presets || []).map(p =>
+    '<option value="'+esc(p.id)+'" data-base="'+esc(p.base_url || "")+'" data-model="'+esc(p.model || "")+'"' +
+    (p.id === selected ? " selected" : "") + '>'+esc(p.name)+'</option>'
+  ).join("");
+  sel.innerHTML = opts;
+  if(selected && !(presets || []).some(p => p.id === selected)){
+    const opt = document.createElement("option");
+    opt.value = selected; opt.textContent = "当前：" + selected;
+    sel.appendChild(opt);
+  }
+}
+function applyAiSettingsView(d){
+  const ai = d.ai || {};
+  const en = $("#aiEnabled");
+  if(en) en.checked = !!ai.enabled;
+  fillAiProviderOptions(d.presets || [], ai.provider);
+  if($("#aiBaseUrl")) $("#aiBaseUrl").value = ai.base_url || "";
+  if($("#aiModel")) $("#aiModel").value = ai.model || "";
+  if($("#aiTimeout")) $("#aiTimeout").value = ai.timeout_s || 60;
+  if($("#aiSendRaw")) $("#aiSendRaw").checked = !!ai.send_raw_titles;
+  if($("#aiApiKey")){
+    $("#aiApiKey").value = "";
+    $("#aiApiKey").placeholder = ai.api_key_set ? "已设置，留空保持不变" : "未设置（本地端点可留空）";
+  }
+  const note = $("#aiCfgNote");
+  if(!note) return;
+  note.textContent = ai.enabled
+    ? "AI 洞察已开启。" + (ai.api_key_set ? " API Key 已配置。" : " 尚未配置 API Key（部分本地端点可留空）。")
+    : "AI 洞察当前关闭（可选功能，默认关闭）。规则洞察始终离线。";
+  note.style.color = ai.enabled ? "var(--ok)" : "var(--dim)";
+}
 async function loadSettings(){
   $("#authNote").textContent = AUTH_REQUIRED ?
     "已开启：当前页面需要访问口令。" :
     "当前关闭：config.json 缺失 dashboard_token（或为空）。如需开启，在 config.json 增加 \"dashboard_token\":\"你的口令\" 后重启仪表盘。";
   try{
-    const d = await api("/api/insights?date=" + state.day);
-    const note = $("#aiCfgNote");
-    if(d.ai_enabled){
-      const ai = d.ai || {};
-      note.textContent = "已开启" + (ai.provider ? " · provider: " + ai.provider : "") +
-        (ai.model ? " · 模型: " + ai.model : "") +
-        (ai.generated_at ? " · 上次生成: " + String(ai.generated_at).replace("T"," ") : " · 尚未生成") +
-        (ai.error ? " · 最近错误: " + ai.error : "");
-      note.style.color = ai.error ? "var(--danger)" : "var(--ok)";
-    }else{
-      note.textContent = "当前关闭（隐私优先默认）。规则洞察不受影响。";
-      note.style.color = "var(--dim)";
-    }
+    const d = await api("/api/insights/settings");
+    applyAiSettingsView(d);
+    const note = $("#aiSaveNote");
+    if(note){ note.textContent = ""; }
   }catch(e){
-    $("#aiCfgNote").textContent = "读取配置状态失败：" + e.message;
-    $("#aiCfgNote").style.color = "var(--danger)";
+    const note = $("#aiCfgNote");
+    if(note){
+      note.textContent = "读取 AI 设置失败：" + e.message;
+      note.style.color = "var(--danger)";
+    }
   }
+}
+async function saveAiSettings(){
+  const note = $("#aiSaveNote");
+  if(!note) return;
+  note.textContent = "保存中…";
+  note.style.color = "var(--dim)";
+  const payload = {
+    enabled: $("#aiEnabled").checked,
+    provider: $("#aiProvider").value,
+    base_url: $("#aiBaseUrl").value.trim(),
+    api_key: $("#aiApiKey").value.trim(),
+    model: $("#aiModel").value.trim(),
+    timeout_s: parseInt($("#aiTimeout").value || "60", 10),
+    send_raw_titles: $("#aiSendRaw").checked,
+    language: "zh"
+  };
+  try{
+    const d = await postJson("/api/insights/settings", payload);
+    applyAiSettingsView(d);
+    note.textContent = "已保存。";
+    note.style.color = "var(--ok)";
+    if(state.loaded.insights){ state.loaded.insights = false; }
+  }catch(e){
+    note.textContent = "保存失败：" + e.message;
+    note.style.color = "var(--danger)";
+  }
+}
+function wireAiSettings(){
+  const sel = $("#aiProvider");
+  if(sel){
+    sel.onchange = () => {
+      const opt = sel.selectedOptions[0];
+      if(opt && opt.dataset.base !== undefined){
+        if(opt.dataset.base && $("#aiBaseUrl")) $("#aiBaseUrl").value = opt.dataset.base;
+        if(opt.dataset.model && $("#aiModel")) $("#aiModel").value = opt.dataset.model;
+      }
+    };
+  }
+  const btn = $("#aiSave");
+  if(btn) btn.onclick = saveAiSettings;
 }
 
 /* ---------- 会话 ---------- */
@@ -1431,6 +1616,7 @@ function startApp(){
   backgroundWatchTheme();
   wireExportButtons();
   wireInsights();
+  wireAiSettings();
   monthInit();
   $("#bkDownload").onclick = bkDownload;
   $("#bkRestore").onclick = bkRestore;
@@ -1735,6 +1921,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"insights unavailable: {exc}"}, 500)
             return
 
+        if path == "/api/insights/settings":
+            # AI 设置（可选功能开关 + provider 预设 + 自定义端点）
+            config = _load_config_for_root(root, self.server.config_path)
+            try:
+                import insights  # noqa: PLC0415
+                self._send_json({
+                    "ai": _ai_settings_view(config),
+                    "presets": insights.list_provider_presets(),
+                })
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": f"insights settings unavailable: {exc}"}, 500)
+            return
+
         if path == "/api/insights/ai":
             # AI 洞察：refresh=1 强制重生成；未开启时返回可展示的错误态
             date = self._valid_date(query)
@@ -1981,6 +2180,29 @@ class Handler(BaseHTTPRequestHandler):
             import classifier as _clf  # noqa: PLC0415
         except Exception:  # noqa: BLE001
             self._send_json({"error": "unavailable"}, 500)
+            return
+
+        if path == "/api/insights/settings":
+            # AI 可选功能设置：开关 + provider 预设 + 自定义端点（API Key 空=保留原值）
+            enabled = bool(body.get("enabled"))
+            provider = str(body.get("provider") or "").strip()
+            base_url = str(body.get("base_url") or "").strip()
+            model = str(body.get("model") or "").strip()
+            try:
+                import insights  # noqa: PLC0415
+                preset_map = {p["id"]: p for p in insights.list_provider_presets()}
+                preset = preset_map.get(provider.lower(), {})
+                eff_base = base_url or preset.get("base_url") or ""
+                eff_model = model or preset.get("model") or ""
+                if enabled and (not eff_base or not eff_model):
+                    self._send_json({
+                        "error": "开启 AI 需要可用的 Base URL 和 Model（请选择预设或填写自定义端点）",
+                    }, 400)
+                    return
+                ai = _save_ai_settings(root, self.server.config_path, body)
+                self._send_json({"ok": True, "ai": ai, "presets": insights.list_provider_presets()})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": f"save failed: {exc}"}, 400)
             return
 
         if path == "/api/groups/set":

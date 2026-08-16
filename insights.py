@@ -59,6 +59,51 @@ _DEFAULT_AI = {
     "language": "zh",
 }
 
+# 内置 OpenAI 兼容 provider 预设。用户可在仪表盘设置中选择，也可用 base_url/
+# api_key/model 完全自定义；显式填写始终优先于预设。
+PROVIDER_PRESETS: dict[str, dict] = {
+    "opencodego": {
+        "name": "OpenCode Go",
+        "base_url": "https://opencode.ai/zen/go/v1",
+        "model": "deepseek-v4-flash",
+    },
+    "openai": {
+        "name": "OpenAI",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+    },
+    "deepseek": {
+        "name": "DeepSeek",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+    },
+    "moonshot": {
+        "name": "Moonshot / Kimi",
+        "base_url": "https://api.moonshot.cn/v1",
+        "model": "moonshot-v1-8k",
+    },
+    "openrouter": {
+        "name": "OpenRouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "openai/gpt-4o-mini",
+    },
+    "zhipu": {
+        "name": "智谱 GLM",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "model": "glm-4-flash",
+    },
+    "qwen": {
+        "name": "通义千问",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model": "qwen-plus",
+    },
+    "custom": {
+        "name": "自定义",
+        "base_url": "",
+        "model": "",
+    },
+}
+
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -87,6 +132,20 @@ def _insights_config(config: dict) -> dict:
         "rules": _merge_dict(_DEFAULT_RULES, ins.get("rules") if isinstance(ins.get("rules"), dict) else None),
         "ai": _merge_dict(_DEFAULT_AI, ins.get("ai") if isinstance(ins.get("ai"), dict) else None),
     }
+
+
+def _provider_preset(name: str) -> dict:
+    """按 provider id 返回内置预设（找不到返回空 dict）。"""
+    return dict(PROVIDER_PRESETS.get((name or "").strip().lower(), {}))
+
+
+def list_provider_presets() -> list[dict]:
+    """返回给仪表盘设置页使用的预设列表（不含任何密钥）。"""
+    return [
+        {"id": key, "name": value.get("name", key),
+         "base_url": value.get("base_url", ""), "model": value.get("model", "")}
+        for key, value in PROVIDER_PRESETS.items()
+    ]
 
 
 def _fmt_hours(ms: int | float) -> str:
@@ -560,11 +619,12 @@ _DEFAULT_PROVIDER_URLS = {"opencodego": "https://opencode.ai/zen/go/v1"}
 
 
 def _discover_ai_config(config: dict) -> dict | None:
-    """自动发现 %USERPROFILE%\\.config\\opencode\\opencode.json 的 AI 配置。
+    """解析 AI 调用配置。
 
-    优先 provider "opencodego"（https://opencode.ai/zen/go/v1），回退
-    "sensenova"；模型优先 deepseek-v4-flash，否则取该 provider 模型列表
-    第一个。config.json 显式配置（base_url / api_key / model）优先于自动发现。
+    优先级：config.json 显式配置（base_url / api_key / model）> 内置 provider 预设
+    > %USERPROFILE%\\.config\\opencode\\opencode.json 自动发现。
+    自动发现优先 provider "opencodego"，回退 "sensenova"；模型优先
+    deepseek-v4-flash，否则取该 provider 模型列表第一个。
     """
     auto: dict | None = None
     try:
@@ -600,19 +660,35 @@ def _discover_ai_config(config: dict) -> dict | None:
             }
 
     explicit = _insights_config(config or {})["ai"]
-    base_url = str(explicit.get("base_url") or (auto or {}).get("base_url") or "")
+    provider_name = str(
+        explicit.get("provider") or (auto or {}).get("provider") or "opencodego"
+    ).strip()
+    preset = _provider_preset(provider_name)
+    # 自定义 provider 不应被本机 opencode 自动发现“代填”端点
+    use_auto = provider_name.lower() != "custom"
+    base_url = str(
+        explicit.get("base_url")
+        or preset.get("base_url")
+        or ((auto or {}).get("base_url") if use_auto else "")
+        or ""
+    ).strip()
     if not base_url:
         return None
     api_key = explicit.get("api_key")
     if api_key is None or str(api_key) == "":
-        api_key = (auto or {}).get("api_key") or ""
-    model = str(explicit.get("model") or (auto or {}).get("model") or "")
+        api_key = ((auto or {}).get("api_key") if use_auto else "") or ""
+    model = str(
+        explicit.get("model")
+        or preset.get("model")
+        or ((auto or {}).get("model") if use_auto else "")
+        or ""
+    ).strip()
     try:
         timeout_s = float(explicit.get("timeout_s") or 60)
     except (TypeError, ValueError):
         timeout_s = 60.0
     return {
-        "provider": str(explicit.get("provider") or (auto or {}).get("provider") or "custom"),
+        "provider": provider_name or "custom",
         "base_url": base_url,
         "api_key": str(api_key),
         "model": model,

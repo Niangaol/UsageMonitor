@@ -1020,7 +1020,7 @@
       "game_ratio_warn": 0.4
     },
     "ai": {
-      "enabled": true,
+      "enabled": false,
       "provider": "opencodego",
       "base_url": "",
       "api_key": "",

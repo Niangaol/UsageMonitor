@@ -305,10 +305,16 @@ python insights.py --day 2026-08-10 --json           # JSON output
 }
 ```
 
-To enable AI, set `insights.ai.enabled=true` and fill in `base_url`/`api_key`/`model`. If
+The easiest way to enable AI is: open the dashboard → **Settings** → "AI Insights (optional feature)" → turn on the
+"Enable AI Insights" switch → choose a built-in provider preset (OpenCode Go / OpenAI / DeepSeek / Moonshot / OpenRouter /
+Zhipu GLM / Qwen / Custom) → enter an API key if needed → Save. The settings are written to `config.json` in the data
+root, so no dashboard restart is needed.
+
+You can also edit `config.json` directly: set `insights.ai.enabled=true` and fill in `base_url`/`api_key`/`model`. If
 `%USERPROFILE%\.config\opencode\opencode.json` already exists on this machine, the module auto-discovers
 `opencodego` (`https://opencode.ai/zen/go/v1`, preferring the `deepseek-v4-flash` model) and falls back to
-`sensenova`; explicit config.json values always take precedence over auto-discovery.
+`sensenova`; explicit config.json values always take precedence over presets and auto-discovery. Choosing "Custom"
+lets you point to any OpenAI-compatible endpoint for a fully custom provider.
 
 > **Privacy notice**: once AI insights are enabled, aggregate statistics (duration/session counts/top categories/top apps —
 > **without** window titles, URLs, or contact names) are sent to the API endpoint you configure. Only
@@ -505,7 +511,7 @@ is a list of custom group names. If the file is missing or corrupted it is treat
 
 ```powershell
 python monitor.py --test 30   # test mode (runs for N seconds then exits and prints a summary)
-python test_all.py            # full integration tests (199 assertions)
+python test_all.py            # full integration tests (216 assertions)
 ```
 
 test_all.py monkey-patches the foreground window/idle/process tree to cover: timing on switch, no timing while idle, WeChat contacts,

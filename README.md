@@ -304,10 +304,15 @@ python insights.py --day 2026-08-10 --json           # JSON 输出
 }
 ```
 
-开启 AI 只需：`insights.ai.enabled=true`，并填 `base_url`/`api_key`/`model`；
+开启 AI 最简单的方式：打开仪表盘 → **设置** →「AI 洞察（可选功能）」→ 打开「启用 AI 洞察」开关 →
+选择内置 Provider 预设（OpenCode Go / OpenAI / DeepSeek / Moonshot / OpenRouter / 智谱 GLM / 通义千问 / 自定义）→
+填写 API Key（如需要）→ 保存。设置会写入数据根目录的 `config.json`，无需重启仪表盘。
+
+也可以直接编辑 `config.json`：`insights.ai.enabled=true`，并填 `base_url`/`api_key`/`model`；
 如果本机已有 `%USERPROFILE%\.config\opencode\opencode.json`，会自动发现
 `opencodego`（`https://opencode.ai/zen/go/v1`，模型优先 `deepseek-v4-flash`）并回退
-`sensenova`；config.json 显式配置始终优先于自动发现。
+`sensenova`；config.json 显式配置始终优先于预设和自动发现。选择「自定义」可填写任意
+OpenAI 兼容端点，完全自定义 provider。
 
 > **隐私声明**：AI 洞察开启后，聚合统计（时长/会话数/分类 Top/应用 Top，**不含**窗口标题、
 > URL、联系人名）会发送到你配置的 API 端点。`send_raw_titles=true` 才会附加 Top 标题/URL
@@ -504,7 +509,7 @@ install.ps1 注册两个计划任务：
 
 ```powershell
 python monitor.py --test 30   # 测试模式（跑 N 秒后退出并打印汇总）
-python test_all.py            # 完整集成测试（199 项断言）
+python test_all.py            # 完整集成测试（216 项断言）
 ```
 
 test_all.py 通过猴子补丁模拟前台窗口/空闲/进程树，覆盖：切换计时、空闲不计时、微信联系人、

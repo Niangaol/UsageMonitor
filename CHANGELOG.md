@@ -17,13 +17,18 @@
   隐私过滤、成功写缓存 `<data_root>/YYYY-MM-DD/insights.json` + 线程单飞锁）。
 - 仪表盘「洞察」视图（侧边栏新入口）：`GET /api/insights`（规则即时 + AI 读缓存）与
   `GET /api/insights/ai?date=…&refresh=1`（强制重生成）；规则卡片 severity 配色、
-  AI 面板状态/错误态、设置页 AI 配置状态。
+  AI 面板状态/错误态。
+- 仪表盘「设置」页新增 AI 可选功能面板：**启用/关闭开关**、内置 Provider 预设
+  （OpenCode Go / OpenAI / DeepSeek / Moonshot / OpenRouter / 智谱 GLM / 通义千问 / 自定义）、
+  Base URL / API Key / Model / 超时 / 原始标题样本开关，保存后写入 `config.json`；
+  新增 `GET /api/insights/settings` 与 `POST /api/insights/settings`（API Key 不回显、留空保留）。
 - 日报 `report.md` 追加「📌 今日建议」段（仅离线规则洞察，`insights.enabled &&
   insights.in_report` 时启用，绝不发起网络请求）。
-- `config.default.json` 新增 `insights` 配置段（规则阈值 + AI 端点）；本地 `config.json`
-  按用户要求开启 `insights.ai.enabled`，仓库默认关闭以保护隐私。
+- `config.default.json` 新增 `insights` 配置段（规则阈值 + AI 端点 + 内置 provider 预设）；
+  本地与仓库默认 `ai.enabled=false`（可选功能默认关闭，用户可在设置页一键开启）。
 - CLI：`python insights.py --day YYYY-MM-DD [--ai] [--json] [--data-root …]`。
-- 测试新增 6 组智能洞察测试（规则 / AI 提示词隐私 / AI 调用 / 缓存 / 仪表盘 API / 日报段落）。
+- 测试新增 8 组智能洞察测试（规则 / AI 提示词隐私 / AI 调用 / provider 预设 / 缓存 /
+  仪表盘 API / AI 设置 API / 日报段落）。
 
 ### 变更
 - `UsageMonitor.spec` `hiddenimports` 增加 `insights`。

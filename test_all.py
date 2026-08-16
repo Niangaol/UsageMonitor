@@ -1167,6 +1167,39 @@ def test_insights_ai_call():
         insights.urllib.request.urlopen = orig
 
 
+def test_insights_provider_presets():
+    print("[test] AI provider 预设与自定义（内置预设 / 显式覆盖 / 无端点安全返回 None）")
+    cfg = classifier.load_config()
+    cfg2 = json.loads(json.dumps(cfg))
+    ai = cfg2["insights"]["ai"]
+
+    # 内置 DeepSeek 预设：不填 base_url/model 也能自动补全
+    ai.update({"enabled": True, "provider": "deepseek", "base_url": "",
+               "api_key": "sk-test", "model": ""})
+    d = insights._discover_ai_config(cfg2)
+    check(d is not None and "api.deepseek.com" in d["base_url"], "DeepSeek 预设自动补 base_url",
+          str(d))
+    check(d["model"] == "deepseek-chat", "DeepSeek 预设自动补模型", str(d))
+
+    # 显式 base_url/model 优先于预设
+    ai.update({"provider": "custom", "base_url": "https://custom.test/v1", "model": "my-model"})
+    d = insights._discover_ai_config(cfg2)
+    check(d is not None and d["base_url"] == "https://custom.test/v1" and d["model"] == "my-model",
+          "自定义 provider 显式覆盖", str(d))
+
+    # 自定义但没有 base_url -> 无法使用
+    ai.update({"provider": "custom", "base_url": "", "model": "my-model"})
+    d = insights._discover_ai_config(cfg2)
+    check(d is None, "自定义无 base_url 返回 None", str(d))
+
+    # 预设列表包含常用 provider 与 custom
+    presets = {p["id"]: p for p in insights.list_provider_presets()}
+    check({"opencodego", "openai", "deepseek", "moonshot", "openrouter", "zhipu", "qwen", "custom"}
+          <= set(presets.keys()), "内置预设齐全", str(presets.keys()))
+    check(presets["custom"]["base_url"] == "" and presets["custom"]["model"] == "",
+          "custom 预设为空模板")
+
+
 def test_insights_cache():
     print("[test] AI 洞察缓存（成功写缓存 / 二次调用不重发 / refresh 重发 / 失败不写缓存）")
     tmp = fresh_tmp("insights_cache")
@@ -1289,6 +1322,84 @@ def test_dashboard_insights_api():
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_dashboard_ai_settings_api():
+    print("[test] 仪表盘 AI 设置 API（开关 + 预设 + 保存/保留密钥 + 校验）")
+    import http.client
+    import threading
+    import dashboard
+
+    tmp = fresh_tmp("dash_ai_settings")
+    config_path = os.path.join(tmp, "config.json")
+    with open(config_path, "w", encoding="utf-8") as fh:
+        json.dump({
+            "insights": {
+                "ai": {
+                    "enabled": False, "provider": "opencodego",
+                    "base_url": "", "api_key": "old-secret",
+                    "model": "deepseek-v4-flash", "timeout_s": 60,
+                    "send_raw_titles": False, "language": "zh",
+                }
+            }
+        }, fh, ensure_ascii=False)
+    classifier.invalidate_config_cache()
+    server = dashboard.create_server(tmp, port=0, config_path=config_path)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def req(method, path, body=None):
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        headers = {"Content-Type": "application/json"} if body is not None else {}
+        conn.request(method, path,
+                     body=json.dumps(body, ensure_ascii=False) if body is not None else None,
+                     headers=headers)
+        r = conn.getresponse()
+        data = json.loads(r.read().decode("utf-8", errors="replace"))
+        conn.close()
+        return r.status, data
+
+    try:
+        s, d = req("GET", "/api/insights/settings")
+        check(s == 200 and d["ai"]["enabled"] is False, "GET 设置返回当前关闭状态", str(d))
+        check(d["ai"]["api_key_set"] is True, "已有 API Key 只返回已设置标志", str(d))
+        check("api_key" not in d["ai"], "不回显真实 API Key", str(d))
+        check(any(p["id"] == "deepseek" for p in d["presets"]), "预设列表含 DeepSeek")
+
+        # 开启并选择 DeepSeek 预设，不填 base/model 也会自动落盘预设值；空 key 保留旧值
+        s, d = req("POST", "/api/insights/settings", {
+            "enabled": True, "provider": "deepseek", "base_url": "",
+            "api_key": "", "model": "", "timeout_s": 90,
+            "send_raw_titles": False, "language": "zh",
+        })
+        check(s == 200 and d.get("ok") is True, "保存 AI 设置成功", str(d))
+        check(d["ai"]["enabled"] is True and d["ai"]["provider"] == "deepseek", "开关与 provider 已保存")
+        check("api.deepseek.com" in d["ai"]["base_url"] and d["ai"]["model"] == "deepseek-chat",
+              "预设 base/model 已落盘", str(d))
+        check(d["ai"]["api_key_set"] is True, "空 API Key 保留旧值", str(d))
+
+        # 开启自定义但没有 Base URL -> 400
+        s, d = req("POST", "/api/insights/settings", {
+            "enabled": True, "provider": "custom", "base_url": "",
+            "api_key": "", "model": "m", "timeout_s": 60,
+            "send_raw_titles": False, "language": "zh",
+        })
+        check(s == 400, "开启自定义无 Base URL 被拒", str(d))
+
+        # 关闭开关允许空端点
+        s, d = req("POST", "/api/insights/settings", {
+            "enabled": False, "provider": "custom", "base_url": "",
+            "api_key": "", "model": "", "timeout_s": 60,
+            "send_raw_titles": False, "language": "zh",
+        })
+        check(s == 200 and d["ai"]["enabled"] is False, "关闭开关可保存", str(d))
+        # 再次读取确认密钥仍在
+        s, d = req("GET", "/api/insights/settings")
+        check(d["ai"]["api_key_set"] is True, "关闭后密钥仍保留", str(d))
+    finally:
+        server.shutdown()
+        server.server_close()
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_report_insights_section():
     print("[test] 日报「今日建议」段（in_report=true 出现；false 不出现）")
     tmp = fresh_tmp("report_insights")
@@ -1342,7 +1453,9 @@ def main() -> int:
         test_reclassify, test_dimension_refinements, test_dashboard_api,
         test_electron_shell_detection, test_app_groups, test_report_balloon_once_per_day,
         test_insights_rules, test_insights_ai_prompt, test_insights_ai_call,
-        test_insights_cache, test_dashboard_insights_api, test_report_insights_section,
+        test_insights_provider_presets, test_insights_cache,
+        test_dashboard_insights_api, test_dashboard_ai_settings_api,
+        test_report_insights_section,
     ]
     for t in tests:
         t()
