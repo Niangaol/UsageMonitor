@@ -8,6 +8,20 @@ Release flow: `git tag vX.Y.Z` → CI builds and publishes the Release automatic
 
 > 简体中文版: [CHANGELOG.md](CHANGELOG.md)
 
+## [2.2.0] - 2026-08-17
+
+### Added
+- **UWP/Store app recognition**: detects WindowsApps packages from process path and maps display names (`config.uwp_app_names`; Calculator/Store/Photos/Terminal, etc.)
+- **Admin privilege mode**: `python monitor.py --admin` requests a UAC elevation restart when not running as admin
+- **Firefox dwell-time estimation**: estimates dwell time from the interval to the next visit (`config.firefox_dwell_max_s`, default 600s)
+- **Update supply-chain security**: update asset download URLs are allowlist-validated (GitHub official domains / `update.api_base` domain); arbitrary third-party URLs are rejected
+- **More app adaptations**:
+  - Common app display names/classification (Obsidian/Notion/Slack/Teams/WeCom/Feishu/WhatsApp/LINE/Skype/Steam/Epic/Spotify/VLC/PowerToys/uTools, etc.)
+  - Social app recognition additions (WeCom/Feishu/Slack/Teams/WhatsApp/LINE/Skype)
+  - Browser adaptations (Vivaldi/Yandex/Chromium/Opera GX/Arc/Cent/2345/Sogou/Maxthon/Slimjet)
+  - AI tool recognition additions (Codex/Goose/Amazon Q/DSH/pi/Claude Code/Gemini CLI/Continue/Bamboo/Augment/Warp)
+  - Terminal TUI tool additions (tmux/screen/btop/k9s/lazydocker/kubectl/ssh/curl/fzf/rg/ncdu/tig, etc.)
+
 ## [2.1.1] - 2026-08-17
 
 ### Added
@@ -223,6 +237,7 @@ Pure standard library with zero third-party dependencies; static CPU < 0.1%, mem
 - Tests: test_all adds 11 dashboard API tests (endpoints / 403 / security headers / error codes / path traversal);
   post-build `UsageMonitor.exe --version` smoke test; all 125 assertions pass the gate.
 
+[2.2.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.2.0
 [2.1.1]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.1
 [2.1.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.0
 [2.0.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.0.0

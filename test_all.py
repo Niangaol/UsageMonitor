@@ -1547,7 +1547,7 @@ def test_updater():
         "html_url": "https://example.com/release", "body": "notes",
         "assets": [{
             "name": "UsageMonitor.exe", "size": 123,
-            "browser_download_url": "https://example.com/exe",
+            "browser_download_url": "https://github.com/Niangaol/UsageMonitor/releases/download/v9.9.9/UsageMonitor.exe",
         }],
     }).encode("utf-8")
     orig = updater.urllib.request.urlopen
@@ -1620,6 +1620,81 @@ def test_updater():
     check(not os.path.isfile(os.path.join(tmp_signal, updater.UPDATE_REQUEST_FILE)),
           "clear_update_request 清除信号")
     shutil.rmtree(tmp_signal, ignore_errors=True)
+
+
+def test_uwp_admin_firefox():
+    print("[test] UWP 识别 / 管理员检测 / Firefox 停留时长估算")
+    # UWP 包前缀提取
+    check(win32core._strip_uwp_package(
+        "Microsoft.WindowsCalculator_10.2103.8.0_x64__8wekyb3d8bbwe"
+    ) == "Microsoft.WindowsCalculator", "UWP 包前缀提取")
+    orig_path = win32core.get_process_path
+    win32core.get_process_path = lambda pid: (
+        r"C:\Program Files\WindowsApps\Microsoft.WindowsCalculator_123_x64__abc\calc.exe"
+    )
+    try:
+        name = win32core.get_uwp_app_name(1, {"Microsoft.WindowsCalculator": "计算器"})
+        check(name == "计算器", "UWP 映射到显示名", str(name))
+    finally:
+        win32core.get_process_path = orig_path
+    check(isinstance(win32core.is_admin(), bool), "is_admin 返回 bool")
+
+    # Firefox 停留时长估算：两条访问间隔 300 秒
+    import datetime
+    import sqlite3
+    import browser_history
+    tmp = fresh_tmp("ff_dwell")
+    db = os.path.join(tmp, "places.sqlite")
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE moz_places(id INTEGER PRIMARY KEY, url TEXT, title TEXT)")
+    conn.execute("CREATE TABLE moz_historyvisits(id INTEGER PRIMARY KEY, place_id INTEGER, visit_date INTEGER)")
+    t0 = int(datetime.datetime(2026, 8, 10, 10, 0, 0).timestamp())
+    t1 = t0 + 300
+    conn.execute("INSERT INTO moz_places(id,url,title) VALUES(1,?,?)", ("https://a.example", "A"))
+    conn.execute("INSERT INTO moz_places(id,url,title) VALUES(2,?,?)", ("https://b.example", "B"))
+    conn.execute("INSERT INTO moz_historyvisits(id,place_id,visit_date) VALUES(1,1,?)", (int(t0 * 1e6),))
+    conn.execute("INSERT INTO moz_historyvisits(id,place_id,visit_date) VALUES(2,2,?)", (int(t1 * 1e6),))
+    conn.commit()
+    conn.close()
+    vs = browser_history._extract_firefox_visits(db, "2026-08-10", {})
+    check(len(vs) == 2, "Firefox 两条访问", str(len(vs)))
+    check(abs(vs[0]["duration_s"] - 300) < 1.0, "Firefox 间隔估算 300s", str(vs[0]))
+    check(vs[1]["duration_s"] == 0.0, "Firefox 最后一条 0s", str(vs[1]))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_updater_security():
+    print("[test] 更新供应链安全（下载地址白名单）")
+    check(updater._is_allowed_asset_url(
+        "https://github.com/a/b/releases/download/x/UsageMonitor.exe") is True,
+        "github 资产地址允许")
+    check(updater._is_allowed_asset_url("http://evil.com/x.exe") is False, "非白名单拒绝")
+    check(updater._is_allowed_asset_url(
+        "https://mirror.example/x.exe", api_base="https://mirror.example") is True,
+        "自定义 api_base 域名允许")
+
+    class FakeBadResp:
+        def read(self):
+            return json.dumps({
+                "tag_name": "v9.9.9", "assets": [{
+                    "name": "UsageMonitor.exe", "size": 1,
+                    "browser_download_url": "http://evil.com/UsageMonitor.exe",
+                }],
+            }).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+    orig = updater.urllib.request.urlopen
+    updater.urllib.request.urlopen = lambda req, timeout=None: FakeBadResp()
+    try:
+        info = updater.latest_release()
+        check(info.get("asset") is None, "恶意资产地址被拒", str(info.get("asset")))
+    finally:
+        updater.urllib.request.urlopen = orig
 
 
 def test_ai_sessions():
@@ -1792,6 +1867,8 @@ def main() -> int:
         test_dashboard_insights_api, test_dashboard_ai_settings_api,
         test_report_insights_section,
         test_updater,
+        test_uwp_admin_firefox,
+        test_updater_security,
         test_ai_sessions,
         test_ai_sessions_more_tools,
         test_sqlite_store,

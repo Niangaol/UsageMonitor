@@ -28,6 +28,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 
 import version  # noqa: E402
 
@@ -68,6 +69,36 @@ def version_gt(a: str, b: str) -> bool:
 # ---------------------------------------------------------------------------
 # 检测
 # ---------------------------------------------------------------------------
+def _is_allowed_asset_url(url: str, api_base: str | None = None) -> bool:
+    """校验更新资产下载地址是否允许。
+
+    默认只接受 GitHub 官方下载域名；配置 `update.api_base` 时也允许该域名
+    （测试/镜像用），并限制为 http/https。
+    """
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    if parsed.hostname in (
+        "github.com",
+        "objects.githubusercontent.com",
+        "release-assets.githubusercontent.com",
+    ):
+        return True
+    if api_base:
+        try:
+            base_host = urlparse(str(api_base).strip()).hostname
+        except ValueError:
+            base_host = None
+        if base_host and parsed.hostname == base_host:
+            return True
+    return False
+
+
 def latest_release(api_base: str | None = None, timeout: float = 8.0) -> dict:
     """GET 最新 Release 元数据（含匹配 ASSET_NAME 的资产信息）。
 
@@ -98,12 +129,14 @@ def latest_release(api_base: str | None = None, timeout: float = 8.0) -> dict:
     asset = None
     for item in (payload.get("assets") or []):
         if isinstance(item, dict) and str(item.get("name") or "") == ASSET_NAME:
-            asset = {
+            candidate = {
                 "name": ASSET_NAME,
                 "size": int(item.get("size") or 0),
                 "digest": str(item.get("digest") or "").strip(),
                 "url": str(item.get("browser_download_url") or "").strip(),
             }
+            if _is_allowed_asset_url(candidate["url"], api_base):
+                asset = candidate
             break
     return {
         "tag": str(payload.get("tag_name") or ""),

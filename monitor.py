@@ -336,7 +336,12 @@ def _open_session(fg, config: dict, processes: dict, now: datetime.datetime) -> 
     hidden = classifier.is_blacklisted_title(title, config)
     if hidden:
         title = "[已隐藏]"
-    app = classifier.resolve_app_name(fg.exe, config)
+    uwp_name = None
+    try:
+        uwp_name = win32core.get_uwp_app_name(fg.pid, config.get("uwp_app_names") or {})
+    except Exception:  # noqa: BLE001 —— UWP 识别失败不影响主流程
+        uwp_name = None
+    app = uwp_name or classifier.resolve_app_name(fg.exe, config)
     category = classifier.classify_category(fg.exe, title, config)
 
     browser_category = None
@@ -688,6 +693,24 @@ def _dispatch(argv: list[str] | None) -> str | None:
     return None
 
 
+def relaunch_as_admin() -> bool:
+    """通过 ShellExecuteW(runas) 以管理员权限重启当前进程。"""
+    try:
+        import ctypes
+        if getattr(sys, "frozen", False):
+            exe = sys.executable
+            params = " ".join(sys.argv[1:])
+        else:
+            exe = sys.executable
+            params = f'"{os.path.abspath(__file__)}" ' + " ".join(sys.argv[1:])
+        res = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", exe, params, None, 1
+        )
+        return int(res) > 32
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     sub = _dispatch(argv)
     if sub == "report":
@@ -707,9 +730,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--test", type=int, metavar="N", help="测试模式：运行 N 秒后退出并打印汇总")
     parser.add_argument("--tray", action="store_true", help="启用托盘图标（不可用时降级为静默守护）")
     parser.add_argument("--foreground", action="store_true", help="前台模式：把写入记录打印到控制台")
+    parser.add_argument("--admin", action="store_true",
+                        help="以管理员权限运行（非管理员时请求 UAC 提权重启）")
     parser.add_argument("--config", default=None, help="config.json 路径")
     parser.add_argument("--data-root", default=None, help="数据根目录（默认取 config.json）")
     args = parser.parse_args(argv)
+
+    if args.admin and not win32core.is_admin():
+        print("需要管理员权限，正在请求 UAC 提权重启...", file=sys.stderr)
+        if relaunch_as_admin():
+            return 0
+        print("提权启动失败，请手动以管理员身份运行", file=sys.stderr)
+        return 1
 
     config = load_config(args.config)
     if args.data_root:

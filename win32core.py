@@ -194,6 +194,9 @@ _exe_cache: dict[int, tuple[float, str]] = {}  # pid -> (时间戳, exe)
 # 前台窗口不变时轮询完全走缓存，静态 CPU ≈ 0%
 _EXE_CACHE_TTL = 60.0
 
+_path_cache: dict[int, tuple[float, str]] = {}  # pid -> (时间戳, 完整路径)
+_PATH_CACHE_TTL = 60.0
+
 
 def enum_processes() -> dict[int, ProcessInfo]:
     """一次性快照全部进程，返回 {pid: ProcessInfo}；失败返回 {}。
@@ -269,6 +272,88 @@ def get_exe_name(pid: int) -> str:
     except Exception:
         pass
     return ""
+
+
+def get_process_path(pid: int) -> str:
+    """返回进程完整路径；失败返回 ""（带 60s TTL 缓存）。"""
+    if pid <= 0:
+        return ""
+    now = time.monotonic()
+    cached = _path_cache.get(pid)
+    if cached is not None and now - cached[0] <= _PATH_CACHE_TTL:
+        return cached[1]
+    try:
+        handle = kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, wt.DWORD(pid)
+        )
+        if not handle:
+            return ""
+        try:
+            buf = ctypes.create_unicode_buffer(MAX_PATH)
+            size = wt.DWORD(MAX_PATH)
+            if kernel32.QueryFullProcessImageNameW(
+                handle, PROCESS_NAME_WIN32, buf, ctypes.byref(size)
+            ):
+                path = buf.value
+                _path_cache[pid] = (now, path)
+                return path
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        pass
+    return ""
+
+
+def _strip_uwp_package(segment: str) -> str:
+    """把 WindowsApps 目录段转为包前缀。
+
+    示例：Microsoft.WindowsCalculator_10.2103.8.0_x64__8wekyb3d8bbwe
+          -> Microsoft.WindowsCalculator
+    """
+    seg = str(segment or "").strip()
+    if not seg:
+        return ""
+    # 去掉版本/架构/哈希后缀：从第一个 "_数字." 或末尾 "_" 段截断
+    for sep in ("_10.", "_8.", "_1.", "_2."):
+        idx = seg.find(sep)
+        if idx > 0:
+            return seg[:idx]
+    # 通用：去掉最后一个 _ 后的内容（package 名通常不含下划线）
+    if "_" in seg:
+        return seg.rsplit("_", 1)[0]
+    return seg
+
+
+def get_uwp_app_name(pid: int, mapping: dict | None = None) -> str | None:
+    """识别 UWP/商店应用显示名。
+
+    通过进程完整路径判断是否位于 WindowsApps 目录，并提取包前缀；
+    优先使用 config 的 `uwp_app_names` 映射，未映射时返回包前缀本身。
+    """
+    path = get_process_path(pid)
+    if not path:
+        return None
+    marker = "\\WindowsApps\\"
+    if marker not in path:
+        return None
+    tail = path.split(marker, 1)[1]
+    segment = tail.split("\\", 1)[0]
+    package = _strip_uwp_package(segment)
+    if not package:
+        return None
+    if isinstance(mapping, dict):
+        for prefix, name in mapping.items():
+            if package == prefix or package.startswith(str(prefix)):
+                return str(name)
+    return package
+
+
+def is_admin() -> bool:
+    """当前进程是否以管理员权限运行。"""
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
 
 
 def is_process_running(pid: int) -> bool:

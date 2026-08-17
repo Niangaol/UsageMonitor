@@ -84,6 +84,7 @@ powershell -ExecutionPolicy Bypass -File uninstaller.ps1
 |---|---|
 | `python monitor.py --tray` | 托盘守护进程 |
 | `python monitor.py --test N` | 运行 N 秒后退出 |
+| `python monitor.py --admin` | 以管理员权限运行（自动请求 UAC 提权） |
 | `python report.py --today` | 今日日报 |
 | `python report.py --day YYYY-MM-DD --write` | 重新生成指定日报 |
 | `python report.py --day YYYY-MM-DD --reclassify` | 按当前规则重分类历史 |
@@ -116,7 +117,9 @@ python -m PyInstaller UsageMonitor.spec --noconfirm
 | `idle_threshold_s` | 空闲判定阈值，默认 180 秒 |
 | `retention_days` | 数据保留天数，默认 90 |
 | `categories` | 大类分类规则 |
+| `apps` / `uwp_app_names` | 应用显示名与 UWP 包显示名映射 |
 | `browser_history_enabled` / `browser_history` | 浏览器历史开关与路径 |
+| `firefox_dwell_max_s` | Firefox 停留时长估算上限（默认 600 秒） |
 | `insights` | 智能洞察配置；AI 默认关闭 |
 | `update` | 更新检查配置；`check_on_startup` 默认 true |
 | `sqlite` | SQLite 后端开关；默认 true |
@@ -150,7 +153,7 @@ python -m PyInstaller UsageMonitor.spec --noconfirm
 ## 测试与 CI
 
 ```powershell
-python test_all.py   # 258 项断言
+python test_all.py   # 268 项断言
 ruff check .         # 0 违规
 ```
 

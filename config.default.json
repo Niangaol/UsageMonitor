@@ -62,7 +62,50 @@
     "everything.exe": "Everything",
     "bandizip.exe": "Bandizip",
     "unigetui.exe": "UniGetUI",
-    "usagemonitor.exe": "电脑使用监控"
+    "usagemonitor.exe": "电脑使用监控",
+    "obsidian.exe": "Obsidian",
+    "notion.exe": "Notion",
+    "slack.exe": "Slack",
+    "teams.exe": "Microsoft Teams",
+    "ms-teams.exe": "Microsoft Teams",
+    "wecom.exe": "企业微信",
+    "wework.exe": "企业微信",
+    "feishu.exe": "飞书",
+    "lark.exe": "飞书",
+    "whatsapp.exe": "WhatsApp",
+    "line.exe": "LINE",
+    "skype.exe": "Skype",
+    "steam.exe": "Steam",
+    "epicgameslauncher.exe": "Epic Games",
+    "spotify.exe": "Spotify",
+    "vlc.exe": "VLC",
+    "kmplayer.exe": "KMPlayer",
+    "wmplayer.exe": "Windows Media Player",
+    "foobar2000.exe": "foobar2000",
+    "dopus.exe": "Directory Opus",
+    "xyplorer.exe": "XYplorer",
+    "winrar.exe": "WinRAR",
+    "7zfm.exe": "7-Zip",
+    "utools.exe": "uTools",
+    "listary.exe": "Listary",
+    "powertoys.exe": "PowerToys",
+    "autohotkey.exe": "AutoHotkey"
+  },
+  "uwp_app_names": {
+    "Microsoft.WindowsCalculator": "计算器",
+    "Microsoft.WindowsStore": "Microsoft Store",
+    "Microsoft.Photos": "照片",
+    "Microsoft.WindowsCamera": "相机",
+    "Microsoft.ZuneMusic": "Groove 音乐",
+    "Microsoft.ZuneVideo": "电影和电视",
+    "Microsoft.MSPaint": "画图",
+    "Microsoft.Todos": "Microsoft To Do",
+    "Microsoft.Office.OneNote": "OneNote",
+    "Microsoft.WindowsTerminal": "Windows 终端",
+    "Microsoft.XboxGamingOverlay": "Xbox Game Bar",
+    "Microsoft.YourPhone": "手机连接",
+    "Microsoft.WindowsNotepad": "记事本",
+    "Microsoft.ScreenSketch": "截图工具"
   },
   "categories": [
     {
@@ -527,7 +570,17 @@
     "tim.exe": "TIM",
     "dingtalk.exe": "钉钉",
     "telegram.exe": "Telegram",
-    "discord.exe": "Discord"
+    "discord.exe": "Discord",
+    "wecom.exe": "企业微信",
+    "wework.exe": "企业微信",
+    "feishu.exe": "飞书",
+    "lark.exe": "飞书",
+    "slack.exe": "Slack",
+    "teams.exe": "Microsoft Teams",
+    "ms-teams.exe": "Microsoft Teams",
+    "whatsapp.exe": "WhatsApp",
+    "line.exe": "LINE",
+    "skype.exe": "Skype"
   },
   "social_main_titles": [
     "微信",
@@ -537,7 +590,17 @@
     "dingtalk",
     "tim",
     "telegram",
-    "discord"
+    "discord",
+    "企业微信",
+    "wecom",
+    "飞书",
+    "feishu",
+    "lark",
+    "slack",
+    "teams",
+    "whatsapp",
+    "line",
+    "skype"
   ],
   "browser_exes": [
     "chrome.exe",
@@ -547,7 +610,17 @@
     "opera.exe",
     "360se.exe",
     "qqbrowser.exe",
-    "tabbit browser.exe"
+    "tabbit browser.exe",
+    "vivaldi.exe",
+    "yandex.exe",
+    "chromium.exe",
+    "opera gx.exe",
+    "arc.exe",
+    "centbrowser.exe",
+    "2345explorer.exe",
+    "sogouexplorer.exe",
+    "maxthon.exe",
+    "slimjet.exe"
   ],
   "terminal_exes": [
     "windowsterminal.exe",
@@ -584,7 +657,19 @@
     "gemini",
     "aider",
     "copilot",
-    "cline"
+    "cline",
+    "codex",
+    "goose",
+    "amazon-q",
+    "q",
+    "dsh",
+    "pi",
+    "claude-code",
+    "gemini-cli",
+    "continue",
+    "bamboo",
+    "augment",
+    "warp"
   ],
   "ai_title_keywords": [
     "π"
@@ -603,7 +688,19 @@
     "gemini": "gemini",
     "aider": "aider",
     "copilot": "copilot",
-    "cline": "cline"
+    "cline": "cline",
+    "codex": "codex",
+    "goose": "goose",
+    "amazon-q": "amazon q",
+    "q": "amazon q",
+    "dsh": "dsh",
+    "pi": "pi agent",
+    "claude-code": "claude code",
+    "gemini-cli": "gemini cli",
+    "continue": "continue",
+    "bamboo": "bamboo",
+    "augment": "augment",
+    "warp": "warp"
   },
   "browser_categories": {
     "视频": [
@@ -812,6 +909,84 @@
       "title": [
         "docker"
       ]
+    },
+    {
+      "name": "tmux",
+      "title": [
+        "tmux"
+      ]
+    },
+    {
+      "name": "screen",
+      "title": [
+        "screen"
+      ]
+    },
+    {
+      "name": "btop",
+      "title": [
+        "btop",
+        "top",
+        "htop"
+      ]
+    },
+    {
+      "name": "k9s",
+      "title": [
+        "k9s"
+      ]
+    },
+    {
+      "name": "lazydocker",
+      "title": [
+        "lazydocker"
+      ]
+    },
+    {
+      "name": "kubectl",
+      "title": [
+        "kubectl"
+      ]
+    },
+    {
+      "name": "ssh",
+      "title": [
+        "ssh"
+      ]
+    },
+    {
+      "name": "curl",
+      "title": [
+        "curl",
+        "wget"
+      ]
+    },
+    {
+      "name": "fzf",
+      "title": [
+        "fzf"
+      ]
+    },
+    {
+      "name": "rg",
+      "title": [
+        "rg",
+        "ripgrep"
+      ]
+    },
+    {
+      "name": "ncdu",
+      "title": [
+        "ncdu",
+        "duf"
+      ]
+    },
+    {
+      "name": "git tui",
+      "title": [
+        "tig",
+        "lazygit"
+      ]
     }
   ],
   "subcategories": [
@@ -990,6 +1165,7 @@
     }
   ],
   "browser_history_enabled": true,
+  "firefox_dwell_max_s": 600,
   "browser_history": {
     "chrome": {
       "user_data": null
@@ -998,6 +1174,9 @@
       "user_data": null
     },
     "tabbit": {
+      "user_data": null
+    },
+    "firefox": {
       "user_data": null
     }
   },

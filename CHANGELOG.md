@@ -8,6 +8,20 @@
 
 > 🌐 English version: [CHANGELOG.en.md](CHANGELOG.en.md)
 
+## [2.2.0] - 2026-08-17
+
+### 新增
+- **UWP/商店应用识别**：通过进程路径识别 WindowsApps 包并映射显示名（`config.uwp_app_names`，支持计算器/Store/照片/终端等）
+- **管理员权限模式**：`python monitor.py --admin` 非管理员时自动请求 UAC 提权重启
+- **Firefox 停留时长估算**：按相邻访问时间差估测停留时长（`config.firefox_dwell_max_s`，默认 600 秒）
+- **更新供应链安全**：更新资产下载地址加入白名单校验（GitHub 官方域名 / `update.api_base` 域名），拒绝任意第三方地址
+- **更多应用适配**：
+  - 常用软件显示名/分类补充（Obsidian/Notion/Slack/Teams/企业微信/飞书/WhatsApp/LINE/Skype/Steam/Epic/Spotify/VLC/PowerToys/uTools 等）
+  - 社交软件识别补充（企业微信/飞书/Slack/Teams/WhatsApp/LINE/Skype）
+  - 浏览器适配补充（Vivaldi/Yandex/Chromium/Opera GX/Arc/Cent/2345/搜狗/傲游/Slimjet）
+  - AI 工具识别补充（Codex/Goose/Amazon Q/DSH/pi/Claude Code/Gemini CLI/Continue/Bamboo/Augment/Warp）
+  - 终端 TUI 工具补充（tmux/screen/btop/k9s/lazydocker/kubectl/ssh/curl/fzf/rg/ncdu/tig 等）
+
 ## [2.1.1] - 2026-08-17
 
 ### 新增
@@ -225,6 +239,7 @@
 - 测试：test_all 新增 11 项 dashboard API 测试（端点 / 403 / 安全头 / 错误码 / 路径穿越），
   构建后 `UsageMonitor.exe --version` 冒烟，全量 125 项门禁通过。
 
+[2.2.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.2.0
 [2.1.1]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.1
 [2.1.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.0
 [2.0.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.0.0

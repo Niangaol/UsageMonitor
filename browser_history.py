@@ -300,6 +300,7 @@ def _extract_firefox_visits(db_copy_path: str, day_str: str, config: dict) -> li
     lower = start_ft - _FILETIME_EPOCH_OFFSET_US
     upper = end_ft - _FILETIME_EPOCH_OFFSET_US
 
+    visits_raw: list[tuple[float, str, str]] = []
     visits: list[dict] = []
     conn = _open_copy(db_copy_path)
     try:
@@ -314,10 +315,20 @@ def _extract_firefox_visits(db_copy_path: str, day_str: str, config: dict) -> li
             start_epoch = int(visit_date) / 1e6  # PRTime 微秒自 1970 -> 直接得 epoch 秒
             if start_epoch >= day_end_epoch:
                 continue
-            duration_s = 0.0  # firefox 无逐条时长，视为时间点
-            visits.append(_build_visit(url, title, start_epoch, duration_s, config))
+            visits_raw.append((start_epoch, url, title))
     finally:
         conn.close()
+
+    # Firefox 无逐条 visit_duration，用“下一条访问时间差”估算停留时长；
+    # 最后一条记为 0，单条间隔上限由 config.firefox_dwell_max_s 控制（默认 600 秒）。
+    visits_raw.sort(key=lambda x: x[0])
+    max_dwell = float(config.get("firefox_dwell_max_s", 600) or 600)
+    for i, (start_epoch, url, title) in enumerate(visits_raw):
+        if i + 1 < len(visits_raw):
+            duration_s = min(max(0.0, visits_raw[i + 1][0] - start_epoch), max_dwell)
+        else:
+            duration_s = 0.0
+        visits.append(_build_visit(url, title, start_epoch, duration_s, config))
     visits.sort(key=lambda v: v["time"])
     return visits
 

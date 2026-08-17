@@ -84,6 +84,7 @@ powershell -ExecutionPolicy Bypass -File uninstaller.ps1
 |---|---|
 | `python monitor.py --tray` | Tray daemon |
 | `python monitor.py --test N` | Run for N seconds then exit |
+| `python monitor.py --admin` | Run as administrator (auto UAC elevation) |
 | `python report.py --today` | Today's report |
 | `python report.py --day YYYY-MM-DD --write` | Regenerate a day report |
 | `python report.py --day YYYY-MM-DD --reclassify` | Reclassify history with current rules |
@@ -116,7 +117,9 @@ The packaged EXE is a single unsigned file and may be flagged by some antivirus 
 | `idle_threshold_s` | Idle threshold, default 180s |
 | `retention_days` | Data retention, default 90 |
 | `categories` | Category rules |
+| `apps` / `uwp_app_names` | App display names and UWP package display-name mapping |
 | `browser_history_enabled` / `browser_history` | Browser history toggle and paths |
+| `firefox_dwell_max_s` | Firefox dwell-time estimation cap (default 600s) |
 | `insights` | Smart insights; AI off by default |
 | `update` | Update check; `check_on_startup` defaults true |
 | `sqlite` | SQLite backend; defaults true |
@@ -150,7 +153,7 @@ See `config.default.json` for the full defaults.
 ## Testing & CI
 
 ```powershell
-python test_all.py   # 258 assertions
+python test_all.py   # 268 assertions
 ruff check .         # 0 violations
 ```
 
