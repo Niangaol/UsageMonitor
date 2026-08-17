@@ -8,6 +8,19 @@ Release flow: `git tag vX.Y.Z` → CI builds and publishes the Release automatic
 
 > 简体中文版: [CHANGELOG.md](CHANGELOG.md)
 
+## [2.1.1] - 2026-08-17
+
+### Added
+- **SQLite consistency check**: `sqlite_store.py --verify` compares JSONL and usage.db record counts; use `--rebuild` to fix differences
+- **SQLite fast path for weekly aggregation**: `report.aggregate_days()` queries a date range in one pass; weekly report/dashboard week view no longer scans JSONL day by day
+- **Updater tests**: added version compare, check, download verification, script generation, and signal file tests
+- **Dashboard update API tests**: covers `/api/update/status|check|download|apply` error states
+- **Release asset**: CI now generates and uploads `UsageMonitor.exe.sha256`
+- **Coverage scope**: CI coverage now includes `insights/updater/sqlite_store/ai_sessions`
+
+### Fixed
+- Fixed several test assertions that depended on JSON whitespace formatting
+
 ## [2.1.0] - 2026-08-17
 
 ### Added
@@ -210,6 +223,7 @@ Pure standard library with zero third-party dependencies; static CPU < 0.1%, mem
 - Tests: test_all adds 11 dashboard API tests (endpoints / 403 / security headers / error codes / path traversal);
   post-build `UsageMonitor.exe --version` smoke test; all 125 assertions pass the gate.
 
+[2.1.1]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.1
 [2.1.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.0
 [2.0.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.0.0
 [1.6.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.6.0

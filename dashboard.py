@@ -2302,7 +2302,7 @@ class Handler(BaseHTTPRequestHandler):
     def _week_aggregate(self, root: str) -> dict:
         """最近 7 个有数据日聚合；返回 (agg, days)。"""
         days = _available_days(root)[-7:]
-        return report._aggregate_days(days, root), days
+        return report.aggregate_days(days, root), days
 
     def _month_aggregate(self, root: str, month: str) -> dict | None:
         """月度聚合；当月无数据返回 None。"""

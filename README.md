@@ -92,6 +92,7 @@ powershell -ExecutionPolicy Bypass -File uninstaller.ps1
 | `python insights.py --day YYYY-MM-DD --ai` | 智能洞察 |
 | `python ai_sessions.py --day YYYY-MM-DD` | AI 会话深度统计 |
 | `python sqlite_store.py --backfill` | 回填 SQLite |
+| `python sqlite_store.py --verify` | 校验 JSONL 与 SQLite 一致性 |
 | `python updater.py --check` | 检查更新 |
 
 ## 打包 exe
@@ -99,6 +100,7 @@ powershell -ExecutionPolicy Bypass -File uninstaller.ps1
 ```powershell
 python -m PyInstaller UsageMonitor.spec --noconfirm
 # 产物：dist\UsageMonitor.exe
+# CI 发布时同时生成 dist\UsageMonitor.exe.sha256
 ```
 
 打包版为单文件 exe，未做代码签名，可能被部分杀毒软件误报。可使用源码运行规避。
@@ -148,7 +150,7 @@ python -m PyInstaller UsageMonitor.spec --noconfirm
 ## 测试与 CI
 
 ```powershell
-python test_all.py   # 242 项断言
+python test_all.py   # 258 项断言
 ruff check .         # 0 违规
 ```
 

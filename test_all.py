@@ -37,6 +37,7 @@ import inventory  # noqa: E402
 import insights  # noqa: E402
 import sqlite_store  # noqa: E402
 import ai_sessions  # noqa: E402
+import updater  # noqa: E402
 
 TMP_ROOT = os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"), "usage_monitor_tests")
 
@@ -825,6 +826,56 @@ def test_dashboard_api():
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_dashboard_update_api():
+    print("[test] 仪表盘更新 API（status/check/download/apply 错误态）")
+    import http.client
+    import threading
+    import dashboard
+
+    tmp = fresh_tmp("dash_update")
+    server = dashboard.create_server(tmp, port=0)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def req(method, path, headers=None, body=None):
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request(method, path, body=body, headers=headers or {})
+        r = conn.getresponse()
+        data = r.read().decode("utf-8", errors="replace")
+        conn.close()
+        return r.status, data
+
+    try:
+        s, body = req("GET", "/api/update/status")
+        status = json.loads(body)
+        check(s == 200 and status.get("state") == "idle" and status.get("dev") is True,
+              "update/status 正常", body)
+        import updater
+        orig = updater.check_for_update
+        updater.check_for_update = lambda *a, **k: {
+            "current": "2.1.0", "latest": "", "has_update": False,
+            "notes": "", "published_at": "", "url": "", "asset": None, "error": None,
+        }
+        try:
+            s, body = req("GET", "/api/update/check")
+            check(s == 200 and json.loads(body).get("has_update") is False,
+                  "update/check 无更新", body)
+            s, body = req("POST", "/api/update/download",
+                          {"Content-Type": "application/json"}, "{}")
+            check(s == 400 and "无需下载" in json.loads(body).get("error", ""),
+                  "update/download 无更新拒绝", body)
+            s, body = req("POST", "/api/update/apply",
+                          {"Content-Type": "application/json"}, "{}")
+            check(s == 400 and "没有已下载" in json.loads(body).get("error", ""),
+                  "update/apply 未下载拒绝", body)
+        finally:
+            updater.check_for_update = orig
+    finally:
+        server.shutdown()
+        server.server_close()
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_electron_shell_detection():
     print("[test] Electron 桌面壳探测（dev 模式 / 打包模式 / 缺失回退）")
     import monitor
@@ -1469,6 +1520,108 @@ def test_report_insights_section():
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_updater():
+    print("[test] 更新模块（版本比较/检测/下载校验/脚本生成/信号）")
+    check(updater.parse_version("v1.10.2-beta") == (1, 10, 2), "parse_version")
+    check(updater.version_gt("1.6.0", "1.5.0") is True, "version_gt true")
+    check(updater.version_gt("1.5.0", "1.6.0") is False, "version_gt false")
+
+    import hashlib
+
+    class FakeResp:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def read(self):
+            return self._payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+    fake_json = json.dumps({
+        "tag_name": "v9.9.9", "name": "v9.9.9",
+        "published_at": "2026-08-17T00:00:00Z",
+        "html_url": "https://example.com/release", "body": "notes",
+        "assets": [{
+            "name": "UsageMonitor.exe", "size": 123,
+            "browser_download_url": "https://example.com/exe",
+        }],
+    }).encode("utf-8")
+    orig = updater.urllib.request.urlopen
+    updater.urllib.request.urlopen = lambda req, timeout=None: FakeResp(fake_json)
+    try:
+        r = updater.check_for_update(current="1.6.0")
+        check(r["has_update"] and r["latest"] == "9.9.9", "check_for_update 新版本", str(r))
+    finally:
+        updater.urllib.request.urlopen = orig
+
+    tmp = fresh_tmp("updater_download")
+    content = b"hello world\n"
+    sha = hashlib.sha256(content).hexdigest()
+
+    class FakeDLResp:
+        headers = {"Content-Length": str(len(content))}
+
+        def __init__(self):
+            self._done = False
+
+        def read(self, chunk=-1):
+            if self._done:
+                return b""
+            self._done = True
+            return content
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+    updater.urllib.request.urlopen = lambda req, timeout=None: FakeDLResp()
+    try:
+        dest = os.path.join(tmp, "UsageMonitor.exe")
+        updater.download("https://example.com/exe", dest,
+                         expected_size=len(content), expected_digest="sha256:" + sha)
+        check(open(dest, "rb").read() == content, "download 内容正确")
+        try:
+            updater.download("https://example.com/exe", os.path.join(tmp, "bad.exe"),
+                             expected_size=999)
+            fail("错误大小未抛异常", "expected UpdateError")
+        except updater.UpdateError:
+            ok("错误大小抛 UpdateError")
+    finally:
+        updater.urllib.request.urlopen = orig
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    script = updater.build_update_script("C:/src/UsageMonitor.exe", "C:/dst/UsageMonitor.exe")
+    check("Copy-Item" in script and "UsageMonitor" in script, "build_update_script 包含替换逻辑")
+    tmp_apply = fresh_tmp("updater_apply")
+    src = os.path.join(tmp_apply, "UsageMonitor.exe")
+    dst = os.path.join(tmp_apply, "UsageMonitor_new.exe")
+    with open(src, "wb") as fh:
+        fh.write(b"x")
+    with open(dst, "wb") as fh:
+        fh.write(b"y")
+    try:
+        res = updater.apply_update(src, dst, dry_run=True)
+        check(res.get("dry_run") is True and os.path.isfile(res.get("script", "")),
+              "apply_update dry_run")
+    finally:
+        shutil.rmtree(tmp_apply, ignore_errors=True)
+
+    tmp_signal = fresh_tmp("updater_signal")
+    updater.request_update(tmp_signal)
+    check(os.path.isfile(os.path.join(tmp_signal, updater.UPDATE_REQUEST_FILE)),
+          "request_update 写信号")
+    updater.clear_update_request(tmp_signal)
+    check(not os.path.isfile(os.path.join(tmp_signal, updater.UPDATE_REQUEST_FILE)),
+          "clear_update_request 清除信号")
+    shutil.rmtree(tmp_signal, ignore_errors=True)
+
+
 def test_ai_sessions():
     print("[test] AI 会话深度统计（JSONL/JSON 解析、按日过滤、关闭态）")
     tmp = fresh_tmp("ai_sessions")
@@ -1599,8 +1752,24 @@ def test_sqlite_store():
     check(month_agg["session_count"] == 3 and month_agg["total_active_ms"] == 960000,
           "SQLite 月聚合（不再逐日扫 JSONL）", str(month_agg))
 
+    week_agg = report.aggregate_days([day, day2], tmp)
+    check(week_agg["session_count"] == 3 and week_agg["total_active_ms"] == 960000,
+          "SQLite 周聚合（多日范围一次查询）", str(week_agg))
+
+    # 制造一条只写 JSONL 不写 SQLite 的记录，verify 应发现差异
+    extra = {
+        "start": f"{day}T20:00:00", "end": f"{day}T20:01:00", "duration_ms": 60000,
+        "exe": "manual.exe", "app": "Manual", "title": "m", "category": "其他",
+        "active": True,
+    }
+    with open(os.path.join(tmp, day, "usage.jsonl"), "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(extra, ensure_ascii=False) + "\n")
+    v = sqlite_store.verify(tmp)
+    check(len(v["mismatches"]) == 1 and v["mismatches"][0]["day"] == day,
+          "verify 发现 JSONL/SQLite 差异", str(v))
+
     result3 = sqlite_store.rebuild(tmp)
-    check(result3["inserted"] == 3 and result3["skipped"] == 0, "重建全量回填", str(result3))
+    check(result3["inserted"] == 4 and result3["skipped"] == 0, "重建全量回填", str(result3))
     shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -1616,11 +1785,13 @@ def main() -> int:
         test_report_pipeline, test_inventory, test_month_and_json,
         test_contact_aliases, test_browser_history, test_cross_day_isolation,
         test_reclassify, test_dimension_refinements, test_dashboard_api,
+        test_dashboard_update_api,
         test_electron_shell_detection, test_app_groups, test_report_balloon_once_per_day,
         test_insights_rules, test_insights_ai_prompt, test_insights_ai_call,
         test_insights_provider_presets, test_insights_cache,
         test_dashboard_insights_api, test_dashboard_ai_settings_api,
         test_report_insights_section,
+        test_updater,
         test_ai_sessions,
         test_ai_sessions_more_tools,
         test_sqlite_store,

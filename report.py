@@ -541,6 +541,25 @@ def _aggregate_days(date_strs: list[str], data_root: str) -> dict:
     return merged
 
 
+def aggregate_days(date_strs: list[str], data_root: str) -> dict:
+    """合并多天聚合结果（周报/多日导出用）。
+
+    优先使用 SQLite 快速路径：若 usage.db 存在，一次范围查询聚合全部记录；
+    否则回退逐日 JSONL 扫描（_aggregate_days）。
+    """
+    if not date_strs:
+        return _aggregate_days([], data_root)
+    try:
+        import sqlite_store  # noqa: PLC0415 —— 惰性导入
+        if os.path.isfile(sqlite_store.db_path(data_root)):
+            rows = sqlite_store.query_range(data_root, date_strs[0], date_strs[-1])
+            if rows:
+                return _aggregate_records(rows, "~".join(date_strs), data_root)
+    except Exception:  # noqa: BLE001 —— SQLite 失败回退 JSONL
+        pass
+    return _aggregate_days(date_strs, data_root)
+
+
 def _report_from_agg(agg: dict, title: str) -> str:
     """根据聚合结果渲染 Markdown（周报复用）。"""
     total = agg["total_active_ms"]
@@ -871,7 +890,7 @@ def main(argv: list[str] | None = None) -> int:
                     generate_day_report(ds, data_root)
                 except Exception as exc:  # noqa: BLE001
                     print(f"[report] 生成 {ds} 失败: {exc}", file=sys.stderr)
-        agg = _aggregate_days(days, data_root)
+        agg = aggregate_days(days, data_root)
         if args.json:
             print(json.dumps(agg, ensure_ascii=False, indent=2, default=str))
         else:

@@ -92,6 +92,7 @@ powershell -ExecutionPolicy Bypass -File uninstaller.ps1
 | `python insights.py --day YYYY-MM-DD --ai` | Smart insights |
 | `python ai_sessions.py --day YYYY-MM-DD` | AI session deep stats |
 | `python sqlite_store.py --backfill` | Backfill SQLite |
+| `python sqlite_store.py --verify` | Verify JSONL/SQLite consistency |
 | `python updater.py --check` | Check for updates |
 
 ## Build EXE
@@ -99,6 +100,7 @@ powershell -ExecutionPolicy Bypass -File uninstaller.ps1
 ```powershell
 python -m PyInstaller UsageMonitor.spec --noconfirm
 # Output: dist\UsageMonitor.exe
+# CI also generates dist\UsageMonitor.exe.sha256 on release
 ```
 
 The packaged EXE is a single unsigned file and may be flagged by some antivirus products. Running from source avoids this issue.
@@ -148,7 +150,7 @@ See `config.default.json` for the full defaults.
 ## Testing & CI
 
 ```powershell
-python test_all.py   # 242 assertions
+python test_all.py   # 258 assertions
 ruff check .         # 0 violations
 ```
 

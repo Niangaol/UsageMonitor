@@ -8,6 +8,19 @@
 
 > 🌐 English version: [CHANGELOG.en.md](CHANGELOG.en.md)
 
+## [2.1.1] - 2026-08-17
+
+### 新增
+- **SQLite 一致性校验**：`sqlite_store.py --verify` 对比 JSONL 与 usage.db 记录数，发现差异可 `--rebuild` 修复
+- **周报 SQLite 快速路径**：`report.aggregate_days()` 支持多日范围一次查询，周报/仪表盘周视图不再逐日扫 JSONL
+- **更新模块测试**：新增 updater 版本比较、检测、下载校验、脚本生成、信号文件测试
+- **仪表盘更新 API 测试**：覆盖 `/api/update/status|check|download|apply` 错误态
+- **Release 资产补充**：CI 构建后生成并上传 `UsageMonitor.exe.sha256`
+- **覆盖率范围扩展**：CI 覆盖率纳入 `insights/updater/sqlite_store/ai_sessions`
+
+### 修复
+- 修复若干测试断言对 JSON 空白格式的依赖
+
 ## [2.1.0] - 2026-08-17
 
 ### 新增
@@ -212,6 +225,7 @@
 - 测试：test_all 新增 11 项 dashboard API 测试（端点 / 403 / 安全头 / 错误码 / 路径穿越），
   构建后 `UsageMonitor.exe --version` 冒烟，全量 125 项门禁通过。
 
+[2.1.1]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.1
 [2.1.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.0
 [2.0.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.0.0
 [1.6.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.6.0

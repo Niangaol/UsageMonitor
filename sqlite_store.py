@@ -267,9 +267,39 @@ def status(data_root: str) -> dict:
         conn.close()
 
 
+def verify(data_root: str) -> dict:
+    """对比 JSONL 原始日志与 SQLite 的记录数，返回差异列表。"""
+    days = _all_days(data_root)
+    conn = connect(data_root)
+    total_jsonl = 0
+    total_db = 0
+    mismatches: list[dict] = []
+    try:
+        init_db(conn)
+        for day in days:
+            jsonl_count = sum(1 for _ in _iter_jsonl(data_root, day))
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM sessions WHERE day = ?", (day,)
+            ).fetchone()
+            db_count = int(row["n"] or 0)
+            total_jsonl += jsonl_count
+            total_db += db_count
+            if jsonl_count != db_count:
+                mismatches.append({"day": day, "jsonl": jsonl_count, "sqlite": db_count})
+    finally:
+        conn.close()
+    return {
+        "days": len(days),
+        "jsonl_records": total_jsonl,
+        "sqlite_records": total_db,
+        "mismatches": mismatches,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sqlite_store.py", description="可选 SQLite 后端（usage.db）")
     parser.add_argument("--status", action="store_true", help="查看 usage.db 状态")
+    parser.add_argument("--verify", action="store_true", help="对比 JSONL 与 SQLite 记录数")
     parser.add_argument("--backfill", action="store_true", help="把 JSONL 历史数据回填到 SQLite")
     parser.add_argument("--rebuild", action="store_true", help="重建 usage.db 并全量回填")
     parser.add_argument("--query", metavar="YYYY-MM-DD", help="查询某天会话（来自 SQLite）")
@@ -294,6 +324,21 @@ def main(argv: list[str] | None = None) -> int:
             print(f"记录数: {info['rows']}")
             print(f"覆盖日期: {', '.join(info['days']) or '（无）'}")
         return 0
+
+    if args.verify:
+        info = verify(data_root)
+        if args.json:
+            print(json.dumps(info, ensure_ascii=False, indent=2))
+        else:
+            print(f"校验完成：{info['days']} 天，JSONL {info['jsonl_records']} 条，"
+                  f"SQLite {info['sqlite_records']} 条")
+            if info["mismatches"]:
+                print("差异：")
+                for m in info["mismatches"]:
+                    print(f"  - {m['day']}: JSONL {m['jsonl']} / SQLite {m['sqlite']}")
+            else:
+                print("无差异")
+        return 0 if not info["mismatches"] else 1
 
     if args.rebuild:
         result = rebuild(data_root, verbose=args.verbose)
