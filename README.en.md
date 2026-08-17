@@ -1,53 +1,61 @@
 # UsageMonitor · 电脑使用情况监控
 
-> Pure vibe coding artifact
-> Local-first · Python standard library + ctypes · Zero third-party runtime dependencies
+> Pure vibe coding artifact · Local-first · Python standard library + ctypes · Zero third-party runtime dependencies
 
-## About
+[UsageMonitor](https://github.com/Niangaol/UsageMonitor) is a local Windows usage monitoring tool. It runs as a resident daemon, samples the foreground window, records software / social contacts / browser / AI coding usage, and produces daily, weekly, and monthly reports plus a local web dashboard.
 
-UsageMonitor is a local Windows usage monitoring tool. It runs as a background daemon, samples the foreground window at a fixed interval, records application usage time, and generates daily/weekly/monthly reports plus a local web dashboard.
+No build step, no framework, no bundler — pure Python standard library + vanilla JS, with `ctypes` calling Win32 directly. Data stays local by default; no screenshots, no screen recording, no keyboard logging, no chat content reading.
 
-Scope:
+| Web Dashboard | Daily Report | Desktop Shell |
+|---|---|---|
+| <img src="docs/screenshots/dashboard.png" width="480" alt="Dashboard"> | <img src="docs/screenshots/report.png" width="480" alt="Report"> | <img src="docs/screenshots/desktop_app.png" width="300" alt="Desktop shell"> |
 
-- Data stays local by default
-- No screenshots, screen recording, keyboard logging, or chat content reading
-- GUI install/uninstall, update check, and in-app update
+---
 
-## Features
+## Contents
 
-- Foreground app timing: 5s polling by default, writes only on state change
-- No timing while idle/locked: sessions are cut off after 3 minutes without input by default
-- Software inventory scan: registry uninstall entries, Start Menu shortcuts, running processes
-- Social contact recognition: WeChat, QQ, DingTalk window titles, with alias support
-- Browser activity classification: video / coding / studying / other
-- Browser URL history parsing: Chromium (Chrome/Edge, etc.) and Firefox
-- AI coding monitoring: process-tree detection for opencode, pi agent, claude, etc.
-- Daily/weekly/monthly reports: Markdown and CSV
-- Local web dashboard: listens on 127.0.0.1 only
-- Custom app grouping: overlay config, effective immediately
-- Smart insights: offline rule engine, optional AI aggregate suggestions
-- Update check & in-app update: GitHub Releases, SHA256 verification
-- Optional SQLite backend: `usage.db`, an extra mirror/index beside JSONL
-- Optional AI session deep stats: reads local AI tool session files and counts turns/generated output
+- [Why UsageMonitor](#why-usagemonitor) — what it is and how it compares
+- [Quick start](#quick-start) — clone + `python monitor.py`
+- [Features](#features) — monitoring / reports / insights / adaptation / updates / security
+- [Configuration & access](#configuration--access) — config discovery, env vars, access
+- [Architecture](#architecture) — backend module layout
+- [Running tests](#running-tests)
+- [Docs](#docs)
 
-## Modules
+---
 
-| File | Purpose |
-|---|---|
-| `monitor.py` | Daemon, tray, cross-day aggregation |
-| `win32core.py` | Win32 API wrapper |
-| `classifier.py` | Classification, contacts, AI tool recognition, config loading |
-| `report.py` | Daily/weekly/monthly report generation, query, reclassification, verification |
-| `dashboard.py` | Local web dashboard |
-| `browser_history.py` | Browser history parsing |
-| `insights.py` | Smart insight rules and AI client |
-| `ai_sessions.py` | AI session deep stats |
-| `sqlite_store.py` | Optional SQLite backend |
-| `updater.py` | Update check and in-app update |
-| `tray.py` | Tray icon |
-| `paths.py` | Path resolution |
+## Why UsageMonitor
 
-## Quick Start
+Most usage-tracking tools sync data to the cloud, depend on paid services, or miss two dimensions this project targets: AI coding and URL-level browser history.
+
+UsageMonitor is positioned as a fully local, auditable, zero-dependency monitoring tool that tracks both "how long you used something" and "how much you actually produced with AI".
+
+Key differences:
+
+- **Local by default, no upload** — data lives under `data_root`; the dashboard listens on 127.0.0.1 only
+- **Zero third-party runtime deps** — no psutil / pywin32 / browser extensions / cloud services
+- **AI coding monitoring** — process-tree detection of opencode / pi agent / claude in terminals, not just the foreground window
+- **URL-level browser history** — Chromium + Firefox visit details with classification and dwell time
+- **Optional AI session deep stats** — reads local AI tool session files and counts turns / generated output
+- **Open source, free (MIT)**
+
+**vs. the field**:
+
+| | UsageMonitor | RescueTime | ManicTime | WakaTime | ActivityWatch |
+|---|---|---|---|---|---|
+| Local by default, no upload | Yes | Cloud | Partial | Cloud | Yes |
+| Open source, free | Yes (MIT) | No | No | Partial | Yes (MPL) |
+| Zero third-party runtime deps | Yes | No | No | No | Partial |
+| AI coding monitoring (process tree) | Yes | No | Partial | Partial | Partial |
+| URL-level browser history | Yes | Partial | Partial | Editor-focused | Partial |
+| Local web dashboard | Yes | No | No | No | Dashboard |
+| In-app update | Yes | — | — | — | — |
+
+> Note: competitor capability boundaries change with versions; the table reflects general feature scopes.
+
+---
+
+## Quick start
 
 ```powershell
 git clone https://github.com/Niangaol/UsageMonitor.git
@@ -58,119 +66,156 @@ python monitor.py --test 30
 
 # Run in foreground
 python monitor.py --foreground
+
+# Tray daemon
+python monitor.py --tray
 ```
 
-By default, data is written to date directories under the project directory. Change `data_root` in `config.json` to use another location.
-
-## Install & Uninstall
+GUI install / uninstall:
 
 ```powershell
-# GUI installer
 powershell -ExecutionPolicy Bypass -File installer.ps1
-
-# Silent install
-powershell -ExecutionPolicy Bypass -File installer.ps1 -Silent -InstallDir "D:\UsageMonitor" -NoLaunch
-
-# Minimal script install
-powershell -ExecutionPolicy Bypass -File install.ps1
-
-# Uninstall
 powershell -ExecutionPolicy Bypass -File uninstaller.ps1
 ```
 
-## Common Commands
-
-| Command | Purpose |
-|---|---|
-| `python monitor.py --tray` | Tray daemon |
-| `python monitor.py --test N` | Run for N seconds then exit |
-| `python monitor.py --admin` | Run as administrator (auto UAC elevation) |
-| `python report.py --today` | Today's report |
-| `python report.py --day YYYY-MM-DD --write` | Regenerate a day report |
-| `python report.py --day YYYY-MM-DD --reclassify` | Reclassify history with current rules |
-| `python report.py --verify --repair` | Verify and repair data |
-| `python dashboard.py --open` | Open dashboard |
-| `python insights.py --day YYYY-MM-DD --ai` | Smart insights |
-| `python ai_sessions.py --day YYYY-MM-DD` | AI session deep stats |
-| `python sqlite_store.py --backfill` | Backfill SQLite |
-| `python sqlite_store.py --verify` | Verify JSONL/SQLite consistency |
-| `python updater.py --check` | Check for updates |
-
-## Build EXE
+To read window titles of elevated (admin) processes:
 
 ```powershell
-python -m PyInstaller UsageMonitor.spec --noconfirm
-# Output: dist\UsageMonitor.exe
-# CI also generates dist\UsageMonitor.exe.sha256 on release
+python monitor.py --admin   # auto UAC elevation when not running as admin
 ```
 
-The packaged EXE is a single unsigned file and may be flagged by some antivirus products. Running from source avoids this issue.
+> **Stopping the daemon**: tray menu "Exit"; Ctrl-C for `--foreground`; managed by Task Scheduler when launched as a scheduled task.
 
-## Configuration
+---
 
-### config.json
+## Features
 
-| Setting | Description |
+### Monitoring
+
+- Foreground app timing: 5s polling by default, writes only on state change
+- No timing while idle/locked: sessions cut off after 3 minutes without input by default
+- Software inventory scan: registry uninstall entries, Start Menu shortcuts, running processes
+- Social contact recognition: WeChat / QQ / DingTalk / WeCom / Feishu / Slack / Teams, etc.
+- Browser activity classification: title keywords → video / coding / studying / other
+- URL-level browser history: Chromium (Chrome/Edge/Brave/Opera/Vivaldi, etc.) and Firefox
+- AI coding monitoring: process-tree detection of AI CLI tools in terminal/integrated terminal
+
+### Reports & dashboard
+
+- Daily, weekly, monthly reports (Markdown + CSV)
+- Local web dashboard with ten views: Overview / Trends / Report / Week / Month / Sessions / Logs / Groups / Insights / Settings
+- Export (CSV / JSON), backup / restore
+
+### Insights & AI
+
+- Offline rule engine: study / game / health / efficiency / balance / trend advice
+- Optional AI insights: OpenAI-compatible endpoint, privacy-filtered aggregates, off by default
+- AI session deep stats: reads local session files from opencode / ChatGPT / Claude / Cursor / Windsurf / Trae / DeepSeek / Pi Agent / DSH
+
+### Adaptation
+
+- Custom app grouping: overlay config, effective immediately
+- Common app display names / classification: Obsidian / Notion / Slack / Teams / Steam / Spotify / VLC / PowerToys, etc.
+- Browser adaptation: Vivaldi / Yandex / Chromium / Opera GX / Arc / Cent / Sogou / Maxthon / Slimjet, etc.
+- AI tool recognition: Codex / Goose / Amazon Q / DSH / Claude Code / Gemini CLI / Continue / Bamboo / Augment / Warp, etc.
+- Terminal TUI tools: tmux / btop / lazygit / k9s / lazydocker / kubectl / fzf / rg / ncdu / tig, etc.
+
+### Updates & packaging
+
+- Update check: on startup, tray menu, dashboard settings
+- In-app update: SHA256 verified download → graceful exit → replace EXE → auto-restart
+- Update supply-chain security: download URL allowlist — only GitHub official domains or the `update.api_base` host
+- PyInstaller single-file EXE; CI builds a Release with `sha256` on tag push
+
+### Security & privacy
+
+- Dashboard listens on 127.0.0.1 only; all `/api/*` validate Origin / Referer
+- Optional access token (`dashboard_token`, HMAC constant-time comparison)
+- Title privacy blacklist — matches recorded as `[hidden]`
+- AI insights off by default; aggregates only (no titles / URLs / contacts)
+- UWP/Store app recognition (`uwp_app_names`)
+
+### Optional backends
+
+- SQLite backend `usage.db`: mirror/index beside JSONL; backfill / rebuild / consistency check
+- GitHub Pages docs site: https://niangaol.github.io/UsageMonitor/
+
+---
+
+## Configuration & access
+
+### Config discovery
+
+| Item | How it is found |
 |---|---|
-| `data_root` | Data root; empty means the program directory |
-| `poll_interval_s` | Polling interval, default 5s |
-| `idle_threshold_s` | Idle threshold, default 180s |
-| `retention_days` | Data retention, default 90 |
-| `categories` | Category rules |
-| `apps` / `uwp_app_names` | App display names and UWP package display-name mapping |
-| `browser_history_enabled` / `browser_history` | Browser history toggle and paths |
-| `firefox_dwell_max_s` | Firefox dwell-time estimation cap (default 600s) |
-| `insights` | Smart insights; AI off by default |
-| `update` | Update check; `check_on_startup` defaults true |
-| `sqlite` | SQLite backend; defaults true |
-| `ai_sessions` | AI session stats; off by default |
-| `title_blacklist` | Title privacy blacklist |
+| Config file | `config.json` (falls back to `config.default.json`) |
+| Data root | `data_root`; empty means the program directory |
+| Hot reload | monitor re-reads `config.json` each loop (`data_root` keeps the startup value) |
+| Alias table | `<data_root>/aliases.json` (not committed) |
 
-See `config.default.json` for the full defaults.
+### Environment variables
 
-### Other Data Files
+| Variable | Default | Description |
+|---|---|---|
+| `USAGEMON_PROJECT_DIR` | script directory | project root override |
+| `DATA_ROOT` | `config.json` `data_root` | data root override |
+| `PORT` | `8765` | dashboard port |
+| `PYTHON` | auto-detected | Python used by Electron shell / launcher |
+| `USAGEMON_USE_BROWSER` | unset | `=1` forces browser for the dashboard (falls back from Electron shell) |
 
-- `aliases.json`: contact aliases (not committed)
-- `app_groups.json`: app group overlay
-- `ai_custom.json`: custom AI insight module
-- `usage.db`: optional SQLite backend
-
-## Data
-
-- Raw session data: `YYYY-MM-DD/usage.jsonl`, one JSON object per line
-- Fields include start/end, duration_ms, exe/app, title, category, contact, ai_tool, active, etc.
-- Writes use `flush + fsync`
-- Data retention defaults to 90 days; expired folders are cleaned automatically
-
-## Privacy
-
-- No network upload by default
-- Dashboard listens on `127.0.0.1` only; all `/api/*` endpoints validate Origin/Referer
-- AI insights are off by default; when enabled, only aggregate stats are sent, without window titles, URLs, or contact names
-- Update checks only request public GitHub Releases metadata
-- AI session stats are off by default; when enabled, only local session files are read
-
-## Testing & CI
+### Access
 
 ```powershell
-python test_all.py   # 268 assertions
+python dashboard.py --open            # open http://127.0.0.1:8765
+python dashboard.py --port 9000       # custom port
+UsageMonitor.exe --dashboard --open   # via EXE
+```
+
+Tray menu: Today's Overview / Open Dashboard / Check for Updates / Pause · Resume / Exit.
+
+---
+
+## Architecture
+
+No build step, no framework — Python standard-library `http.server` + vanilla JS. Core modules:
+
+```
+monitor.py         daemon (foreground polling, tray, cross-day aggregation, --admin)
+win32core.py       Win32 API (ctypes): foreground window / processes / idle / UWP / admin check
+classifier.py      classification, contacts, AI tools, terminal tools, config loading
+report.py          daily/weekly/monthly aggregation, reclassify, verify/repair (SQLite fast path)
+dashboard.py       local web dashboard + all /api/* routes
+browser_history.py Chromium + Firefox history parsing (incl. Firefox dwell estimate)
+insights.py        smart insights (offline rules + optional AI)
+ai_sessions.py     AI session deep stats
+sqlite_store.py    optional SQLite backend + consistency check
+updater.py         update check, in-app update, download URL allowlist
+tray.py            tray icon
+paths.py / applog.py  path resolution / rolling logs
+```
+
+State lives outside the repo in a runtime directory (date folders + `usage.jsonl`).
+
+---
+
+## Running tests
+
+```powershell
+python test_all.py   # 268 assertions, headless and deterministic
 ruff check .         # 0 violations
 ```
 
-CI: tests → coverage → PyInstaller build → EXE smoke test → Release on tag.
+CI: tests → coverage (incl. insights/updater/sqlite_store/ai_sessions) → PyInstaller build → EXE smoke → Release on tag.
 
-## Known Limitations
+> If Windows temp-directory permissions cause test failures, clean `%TEMP%\usagemon_hist_*` / `dsh-*` first.
 
-- Window titles of elevated applications may not be readable
-- UWP/Store app titles may be empty
-- Background tabs are not timed (foreground attention metric)
-- The packaged EXE is unsigned and may be flagged by antivirus
-- AI session parsing is best-effort; format differences may cause partial stats
+---
 
 ## Docs
 
-- [CHANGELOG.md](CHANGELOG.md) · [CHANGELOG.en.md](CHANGELOG.en.md)
+- [CHANGELOG.md](CHANGELOG.md)（[English](CHANGELOG.en.md)）
 - [简体中文 README](README.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
+- [TODO.md](TODO.md)（handover / todo list）
 - [Requirements](项目需求与开发文档.md)
 - GitHub Pages: https://niangaol.github.io/UsageMonitor/
