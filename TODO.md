@@ -2,125 +2,95 @@
 
 > 交接时间：2026-08-14 · 项目：电脑使用情况监控（UsageMonitor）
 > 远程仓库：https://github.com/Niangaol/UsageMonitor（master 分支）
-> 最后提交：P0 应用分组功能完成并推送（见下文执行记录）；此前提交 `06f1aa7`（Electron 桌面壳）
-
-## 2.0 ✅ 已完成（2026-08-17）
-
-| 项 | 内容 |
-|---|---|
-| AI 会话深度统计（P1 #3） | `ai_sessions.py`：JSON/JSONL 解析、按日统计、CLI、仪表盘洞察页面板；默认关闭 |
-| SQLite 后端 usage.db（P1 #10） | `sqlite_store.py`：schema/索引/回填/重建/查询；monitor 同步写 usage.db；JSONL 仍为原始日志 |
-| GitHub Pages 文档站（P2 #7） | `docs/index.md` + `.github/workflows/pages.yml` |
-| Review 修复 | 移除 `updater.py` 未使用的 `datetime` 导入；修正 README Firefox 支持说明 |
+> 当前版本：v2.2.0（version.py = 2.2.0）
+> 当前提交：53b428f（2026-08-17）
 
 ---
 
-## P0 ✅ 已完成：应用分组自定义（2026-08-15 完成并提交）
+## 版本里程碑
 
-### 完成内容
-
-| 文件 | 内容 | 验证状态 |
+| 版本 | 状态 | 关键内容 |
 |---|---|---|
-| `classifier.py` | `load_app_groups()/save_app_groups()`（TTL 5s 缓存+原子写）、`all_categories()`、`classify_category()` 加「用户覆盖(exe 精确) > 配置关键词 > 其他」 | ✅ 143 项测试全过 |
-| `dashboard.py` | `GET /api/groups`（含 `_collect_known_apps`）、`POST /api/groups/set\|add\|delete`（原子写 `app_groups.json` + Origin 校验）；`PAGE_TEMPLATE` 加「分组」视图（sidebar 第 6 项） | ✅ 143 项测试全过；修复 do_POST 未知路径 405 回归；`/api/groups` 分类使用服务 data_root |
-| `test_all.py` | `test_app_groups`（覆盖层+API 增删改移出+POST 恶意 Origin 403） | ✅ 全部通过（143 项） |
-| `README.md` | 功能特性、仪表盘视图列表、分组数据文件与 API 文档、app_groups.json 配置说明 | ✅ |
-| `docs/screenshots/view_groups.png` | 分组视图截图（demo 数据 + Edge headless + `?view=groups`） | ✅ DOM 验证通过 |
-
-### 执行记录
-
-1. `python test_all.py` 全量回归 → 发现 `test_dashboard_api`「POST 405」回归（do_POST 从 405 改为 404），修复
-2. `test_app_groups` 14 项断言全部通过
-3. 截图验证：demo 数据 + Edge headless + `?view=groups`（`docs/screenshots/view_groups.png`）
-4. README 补充分组功能说明（数据文件/API/用法）
-5. 重建 `dist\UsageMonitor.exe`（PyInstaller）+ 重启计划任务 `UsageMonitor`（日志确认新实例启动）
-6. `git commit` + `git push`（master）
+| v1.0.0 | ✅ 已发布 | 监控核心、日报/仪表盘、CI 构建 |
+| v1.1.0 | ✅ 已发布 | 应用分组（P0）+ 九项增强（P1）+ Electron 壳 |
+| v1.2.0 / 1.2.1 / 1.3.0 | ✅ 已发布 | 智能洞察、分组显示名/导入导出、修复 |
+| v1.3.1 / v1.4.0 | ⚠️ 无 tag/Release | 仅在 CHANGELOG 有记录，从未发布 |
+| v1.5.0 | ✅ 已发布 | AI 洞察扩充 + 客制化模块 + 图形安装向导 |
+| v1.6.0 | ⚠️ 无 tag/Release？ | 新版本检测与应用内更新（代码已合入 2.0 演进） |
+| v2.0.0 | ✅ 已发布 | AI 会话深度统计、SQLite 后端、GitHub Pages、Review 修复 |
+| v2.1.0 | ✅ 已发布 | AI 统计支持更多工具（Cursor/Windsurf/Trae/DeepSeek/Pi Agent/DSH） |
+| v2.1.1 | ✅ 已发布 | SQLite 一致性校验、周聚合快速路径、updater/更新 API 测试、SHA256 资产、覆盖率扩展 |
+| v2.2.0 | ✅ 已发布 | UWP 识别、管理员模式、Firefox 停留时长、更新供应链安全、更多应用适配 |
 
 ---
 
-## P1 ✅ 已完成：功能增强（2026-08-15 完成并提交，9/11 项）
+## 已完成（截至 v2.2.0）
 
-| # | 事项 | 状态 |
+### P1
+- ✅ 仪表盘周报/月报视图
+- ✅ 仪表盘数据导出（CSV/JSON）
+- ✅ AI 会话深度统计（`ai_sessions.py`，默认关闭）
+- ✅ 数据备份/恢复
+- ✅ 配置热重载
+- ✅ 托盘通知
+- ✅ 主题切换
+- ✅ 仪表盘访问口令
+- ✅ Firefox 历史支持
+- ✅ SQLite 后端 `usage.db`（`sqlite_store.py`，JSONL 仍为原始事实源）
+- ✅ 多语言 README
+
+### P2
+- ✅ CHANGELOG.md + CHANGELOG.en.md
+- ✅ CONTRIBUTING.md + Issue/PR 模板
+- ✅ README CI/Release 徽章
+- ✅ version.py ↔ tag 同步校验
+- ✅ 测试覆盖率（含 insights/updater/sqlite_store/ai_sessions）
+- ✅ GitHub Pages 文档站
+- ⏸️ exe 代码签名（无证书，未做）
+
+### 长期目标
+- ✅ UWP/商店应用识别（`win32core.get_uwp_app_name` + `config.uwp_app_names`）
+- ✅ 管理员权限模式（`monitor.py --admin` 自动 UAC 提权）
+- ✅ Firefox 停留时长估算（`config.firefox_dwell_max_s`，默认 600s）
+- ✅ 更新供应链安全（资产下载地址白名单）
+
+### 更多应用适配
+- ✅ 常用软件显示名/分类补充（Obsidian/Notion/Slack/Teams/企业微信/飞书/WhatsApp/LINE/Skype/Steam/Epic/Spotify/VLC/PowerToys/uTools 等）
+- ✅ 社交软件识别补充（企业微信/飞书/Slack/Teams/WhatsApp/LINE/Skype）
+- ✅ 浏览器适配补充（Vivaldi/Yandex/Chromium/Opera GX/Arc/Cent/2345/搜狗/傲游/Slimjet）
+- ✅ AI 工具识别补充（Codex/Goose/Amazon Q/DSH/pi/Claude Code/Gemini CLI/Continue/Bamboo/Augment/Warp）
+- ✅ 终端 TUI 工具补充（tmux/screen/btop/k9s/lazydocker/kubectl/ssh/curl/fzf/rg/ncdu/tig）
+
+---
+
+## 未做 / 待定
+
+| # | 项 | 说明 |
 |---|---|---|
-| 1 | **仪表盘周报/月报视图** | ✅ `/api/week`、`/api/month`（复用 report 聚合）+ sidebar「周报/月报」视图 |
-| 2 | **仪表盘数据导出** | ✅ `/api/export?type=csv\|json&scope=day\|week\|month`，日报/周报/月报视图导出按钮（CSV 防注入清洗） |
-| 3 | **AI 会话深度统计**（需用户确认） | ✅ 已完成（v2.0.0） |
-| 4 | **数据备份/恢复** | ✅ `/api/backup`（zip 下载）+ `/api/backup/restore`（白名单+路径穿越防护，合并覆盖） |
-| 5 | **配置热重载** | ✅ classifier.load_config 缓存（mtime+TTL 3s+浅拷贝）；monitor 循环内每轮重读（data_root 保持启动值） |
-| 6 | **托盘通知** | ✅ 日报生成后气泡提示（19:30 后首次发现弹一次，防重启误弹，点击打开日报视图） |
-| 7 | **仪表盘主题切换** | ✅ 自动/浅色/深色（CSS 变量 + localStorage + 跟随系统 + canvas 重绘） |
-| 8 | **仪表盘访问口令** | ✅ `dashboard_token`（默认关闭；开启后所有 /api 需 X-Dashboard-Token，hmac 常量时间比较） |
-| 9 | **Firefox 历史支持** | ✅ places.sqlite（moz_places/moz_historyvisits，PRTime 换算），最近修改 profile 自动发现 |
-| 10 | **SQLite 后端 usage.db** | ✅ 已完成（v2.0.0） |
-| 11 | **多语言 README** | ✅ README.en.md（482 行完整英文版 + 双语互链） |
+| 1 | exe 代码签名 | 需要有效的代码签名证书，当前无证书 |
+| 2 | AI 会话解析精度 | 第三方工具格式差异较大，目前 best-effort，可能统计缺失 |
+| 3 | GitHub Pages 只做简单 landing | 如需完整文档站可继续扩展（当前够用） |
+| 4 | 周报/月报多语言 / UI 多语言 | 可选，当前 UI 中文 |
 
-执行记录：5 个并行 subagent 按文件隔离分工（dashboard.py / tray.py+monitor.py / browser_history.py / classifier.py / README），
-主代理集成：修复 monitor 热重载与测试 config 隔离、token 读取 data_root 语义、无效去重逻辑清理；
-全量测试 **152 项通过**（新增托盘调度 9 项）；API 冒烟（周/月/导出/备份/恢复/口令 401 校验）全部通过；
-修复 HEAD 遗留 bug：report.py 缺失 `import re`（verify 路径 NameError）。
+---
 
-## P1 剩余 ⏸️
+## 已知限制
 
-| # | 事项 | 说明 |
-|---|---|---|
-| 3 | **AI 会话深度统计**（doc §6.4.3） | ✅ v2.0.0 已完成：`ai_sessions.py` + 仪表盘/CLI；默认关闭，读取本地会话文件统计轮数/生成行数 |
-| 10 | **SQLite 后端 usage.db**（评审建议 3 长期项） | ✅ v2.0.0 已完成：`sqlite_store.py`（schema/索引/回填/重建/查询），monitor 同步镜像；JSONL 仍为原始日志 |
-
-## P2 ✅ 已完成：工程 / 质量（2026-08-15 完成并提交，6/7 项）
-
-| # | 事项 | 状态 |
-|---|---|---|
-| 1 | **CHANGELOG.md** | ✅ keep-a-changelog 格式，[未发布]（P0+P1+Electron）+ [1.0.0]（2026-08-13） |
-| 2 | **CONTRIBUTING.md + Issue/PR 模板** | ✅ 贡献指南（环境/风格/测试/提交/PR/发布/隐私）+ bug_report/feature_request/PR 模板 |
-| 3 | **README CI/Release 徽章** | ✅ workflow badge + release badge（中英文 README） |
-| 4 | **version.py ↔ git tag 同步校验** | ✅ build.yml 新增 Assert step（tag 触发与 tag 比对；dispatch 与 version.py 比对） |
-| 5 | **测试覆盖率** | ✅ coverage 接入 test job（--source 全模块，report + xml 上传 artifact，暂不强制阈值） |
-| 6 | **exe 代码签名** | ✅ 无证书；README 中英文补「杀软误报处理」指引（白名单/源码运行/VirusTotal/开源审计） |
-| 7 | **GitHub Pages 文档站**（可选） | ✅ 已完成（v2.0.0）：`docs/index.md` + `.github/workflows/pages.yml` |
-
-执行记录：4 个并行 subagent（CHANGELOG / CONTRIBUTING+模板 / README 徽章+签名 / CI workflow）；
-主代理集成：CHANGELOG 仓库 URL 修正、README 补「贡献指南」链接与测试数修正（152）、中英文同步。
-
-## 智能洞察 ✅ 已完成（2026-08-15，v1.2.0 候选，不发布 tag）
-
-| 文件 | 内容 | 验证状态 |
-|---|---|---|
-| `insights.py` | 规则引擎（study/game/health/efficiency/balance/trend）+ AI 客户端（urllib/InsightsError）+ 缓存/单飞锁 + CLI + 内置 provider 预设/自定义 provider | ✅ 新增 8 组测试全过 |
-| `config.default.json` | 新增 `insights` 段（enabled/in_report/rules/ai），深合并自动生效 | ✅ |
-| `config.json` | 本地与仓库默认 `ai.enabled=false`（可选功能默认关闭，用户可在设置页开启） | ✅ |
-| `report.py` | 日报末尾追加「📌 今日建议」段（仅离线规则洞察） | ✅ |
-| `dashboard.py` | `/api/insights`、`/api/insights/ai`、`/api/insights/settings` + 「洞察」视图 + 设置页 AI 开关/预设/自定义保存 | ✅ |
-| `UsageMonitor.spec` | `hiddenimports` 增加 `'insights'` | ✅ |
-| `test_all.py` | 新增 8 组（规则、AI 提示词隐私、AI 调用、provider 预设、缓存、仪表盘 API、AI 设置 API、日报段落），全量 **223 项通过** | ✅ |
-| `ruff.toml` | 锁定基础规则集（E4/E7/E9/F），并清理存量 E/F 违规；`ruff check .` 零违规 | ✅ |
-| `README.md` / `README.en.md` / `CHANGELOG.md` | 功能特性、智能洞察章节、Provider 预设/设置开关说明、配置说明、隐私声明同步 | ✅ |
-
-执行记录：
-1. `python test_all.py` 全量回归 → **223 项通过**（原 152 + 新增 71 项断言）
-2. `python insights.py --day 2026-08-10 --data-root demo_data` 命中学习/游戏/趋势 3 条规则
-3. `python insights.py --day 2026-08-10 --json` 真实数据命中 5 条规则
-4. AI 真实调用受外部网络限制返回 HTTP 403，错误态正常；`_chat_completion` 已用 monkeypatch 测试覆盖 URL/请求体/HTTP 错误/超时
-5. `python -m ruff check .` → All checks passed
-6. 设置页 AI 开关/provider 预设/自定义保存 API 已通过测试；API Key 不回显、留空保留
-7. exe 重建随下次发布由 CI 完成（UsageMonitor.spec 已加入 hiddenimports）
-
-## P3 ⚪ 已知限制（记录，不修）
-
-- 管理员权限窗口标题读不到（需管理员模式运行监控，未实现该选项）
-- UWP/商店应用标题可能为空（按 exe 记录）
-- 后台标签页不计时（前台注意力口径，文档已说明）
-- pi agent 进程名未确认（现有 `π` 标题关键词兜底覆盖）
-- 浏览器"停留时长"含挂机（标签页前台口径，与 monitor 活跃口径并列展示）
+- 管理员权限窗口标题：普通权限读取不到，可用 `monitor.py --admin` 以管理员运行
+- UWP/商店应用：已能识别包显示名，但部分应用仍可能按 exe 记录
+- 后台标签页不计时（前台注意力口径）
+- 打包 exe 未代码签名，可能有杀软误报
+- Firefox 停留时长是估算值（相邻访问间隔，上限可配）
 
 ---
 
 ## 交接备忘（环境/命令）
 
-- **代理**：`127.0.0.1:7897`。git 已配本地代理；gh 已登录（Niangaol）；npm 用 `& "C:\Program Files\nodejs\npm.cmd"`；gh 需 `$env:Path` 加 `C:\Program Files\GitHub CLI`
-- **Python**：默认 `python`=3.11（有 PyInstaller）；`py -3`=3.14（无 PyInstaller）
+- **代理**：`127.0.0.1:7897`；git 已配代理；gh 已登录（Niangaol）
+- **Python**：默认 `python`=3.14；带 PyInstaller 的 3.11 在
+  `C:\Users\niangao\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\python.exe`
 - **构建**：`python -m PyInstaller UsageMonitor.spec --noconfirm`（先停守护任务，exe 会被占用）
+- **测试**：`python test_all.py`（268 项全过）；`ruff check .`（0 违规）
+  - 若 Windows 临时目录权限导致测试失败，可先清理 `%TEMP%\usagemon_hist_*` / `dsh-*`
 - **发布**：`git tag vX.Y.Z && git push origin vX.Y.Z` → CI 自动测试→构建→冒烟→Release
-- **测试**：`python test_all.py`（223 项全过）；`python -m ruff check .`（零违规）
-- **视觉验收**：Edge headless 截图 + qwen3.7-plus（key 自动读 `~/.config/opencode/opencode.json`）
 - **守护**：计划任务 `UsageMonitor`（exe）/`UsageMonitorReport`（每日 19:30 日报）
-- **测试管线文件**（temp 目录，未入库）：`shot_views.py`（5 视图截图）、`qwen_ui_qa.py`（视觉验收）
