@@ -30,6 +30,10 @@ Most usage-tracking tools sync data to the cloud, depend on paid services, or mi
 
 UsageMonitor is positioned as a fully local, auditable, zero-dependency monitoring tool that tracks both "how long you used something" and "how much you actually produced with AI".
 
+> **Unique positioning: a computer-usage time tracker built around "AI coding".**
+>
+> In most comparable open-source projects, "AI coding" is either a small editor/plugin dimension or is only measured by token consumption / session counts. UsageMonitor treats **AI coding time as a first-class dimension** — tracked alongside software, social contacts, and browsers — and integrates it into the full computer-usage analysis: from foreground-window / process-tree AI tool timing to optional local AI session deep stats.
+
 Key differences:
 
 - **Local by default, no upload** — data lives under `data_root`; the dashboard listens on 127.0.0.1 only
