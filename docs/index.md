@@ -18,6 +18,7 @@ Windows 本地使用情况监控工具：纯本地、零第三方依赖、静默
 - 完整中文说明：[README.md](../README.md)
 - English README: [README.en.md](../README.en.md)
 - 更新日志：[CHANGELOG.md](../CHANGELOG.md) · [CHANGELOG.en.md](../CHANGELOG.en.md)
+- AI 编程深度追踪规划：[ROADMAP.md](ROADMAP.md)
 
 ## 快速开始
 

@@ -1,4 +1,4 @@
-﻿# UsageMonitor · 电脑使用情况监控
+# UsageMonitor · 电脑使用情况监控
 
 > Pure vibe coding artifact · Local-first · Python standard library + ctypes · Zero third-party runtime dependencies
 
@@ -19,6 +19,7 @@ No build step, no framework, no bundler — pure Python standard library + vanil
 - [Features](#features) — monitoring / reports / insights / adaptation / updates / security
 - [Configuration & access](#configuration--access) — config discovery, env vars, access
 - [Architecture](#architecture) — backend module layout
+- [Roadmap](#roadmap) — AI coding deep-tracking plan
 - [Running tests](#running-tests)
 - [Docs](#docs)
 
@@ -198,6 +199,19 @@ State lives outside the repo in a runtime directory (date folders + `usage.jsonl
 
 ---
 
+## Roadmap
+
+AI coding deep-tracking plan:
+
+- **Phase 1 (high priority)**: session-level fine tracking — conversation turns, token estimation, per-model / per-project breakdown
+- **Phase 2 (medium-high)**: quality & efficiency — acceptance / retention rate (requires IDE plugins)
+- **Phase 3 (medium)**: cost & ROI — model pricing, per-project cost allocation, automated expense reports
+- **Phase 4 (medium-low)**: behavior insights — death-loop detection, focus score, Vibe Coding persona analysis
+
+Each phase can be delivered independently. Full plan: [docs/ROADMAP.md](docs/ROADMAP.md) (Chinese).
+
+---
+
 ## Running tests
 
 ```powershell
@@ -217,5 +231,6 @@ CI: tests → coverage (incl. insights/updater/sqlite_store/ai_sessions) → PyI
 - [简体中文 README](README.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [TODO.md](TODO.md)（handover / todo list）
+- [ROADMAP.md](docs/ROADMAP.md)（AI coding deep-tracking plan, Chinese）
 - [Requirements](项目需求与开发文档.md)
 - GitHub Pages: https://niangaol.github.io/UsageMonitor/

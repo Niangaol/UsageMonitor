@@ -15,6 +15,9 @@ __pycache__/
 
 # ===== 本地私有配置（含真实联系人别名，勿提交）=====
 aliases.json
+# 运行期生成的数据文件（应用分组 / AI 洞察模块配置，不入库）
+app_groups.json
+ai_custom.json
 
 # ===== 杂项 =====
 *.bak

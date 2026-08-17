@@ -71,6 +71,7 @@
 | 2 | AI 会话解析精度 | 第三方工具格式差异较大，目前 best-effort，可能统计缺失 |
 | 3 | GitHub Pages 只做简单 landing | 如需完整文档站可继续扩展（当前够用） |
 | 4 | 周报/月报多语言 / UI 多语言 | 可选，当前 UI 中文 |
+| 5 | AI 编程深度追踪（长期规划） | 见 [docs/ROADMAP.md](docs/ROADMAP.md)：会话级追踪 / 质量分析 / 成本 ROI / 行为洞察 |
 
 ---
 

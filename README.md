@@ -1,4 +1,4 @@
-﻿# UsageMonitor · 电脑使用情况监控
+# UsageMonitor · 电脑使用情况监控
 
 > 纯 vibe coding 产物 · 本地优先 · Python 标准库 + ctypes · 零第三方运行时依赖
 
@@ -19,6 +19,7 @@ No build step，无框架，无打包器 —— 纯 Python 标准库 + vanilla J
 - [Features](#features) — 监控 / 报表 / 洞察 / 适配 / 更新 / 安全
 - [Configuration & access](#configuration--access) — 配置发现、环境变量、访问方式
 - [Architecture](#architecture) — 后端模块布局
+- [Roadmap](#roadmap) — AI 编程深度追踪规划
 - [Running tests](#running-tests)
 - [Docs](#docs)
 
@@ -198,6 +199,19 @@ paths.py / applog.py  路径解析 / 滚动日志
 
 ---
 
+## Roadmap
+
+AI 编程深度追踪规划：
+
+- **Phase 1（高优先）**：会话级精细追踪 —— 对话轮次、Token 估算、按模型/项目拆分
+- **Phase 2（中高）**：质量与效率 —— 采纳率 / 留存率（需 IDE 插件）
+- **Phase 3（中）**：成本与 ROI —— 模型定价、按项目分摊、自动化支出报表
+- **Phase 4（中低）**：行为洞察 —— 死循环检测、专注度评分、Vibe Coding 人格分析
+
+各阶段均可独立交付，完整规划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+
+---
+
 ## Running tests
 
 ```powershell
@@ -217,5 +231,6 @@ CI：测试 → coverage（含 insights/updater/sqlite_store/ai_sessions）→ P
 - [README.en.md](README.en.md)（English）
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [TODO.md](TODO.md)（交接/待办清单）
+- [ROADMAP.md](docs/ROADMAP.md)（AI 编程深度追踪规划）
 - [项目需求与开发文档.md](项目需求与开发文档.md)
 - GitHub Pages：https://niangaol.github.io/UsageMonitor/
