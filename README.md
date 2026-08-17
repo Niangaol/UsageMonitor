@@ -103,8 +103,8 @@
   覆盖层（`app_groups.json`）优先级最高、实时生效（TTL 5s 缓存，无需重启）
 - **智能洞察**：离线规则引擎生成学习/游戏/健康/效率/平衡/趋势建议并写入日报「今日建议」；
   可选 AI 洞察（OpenAI 兼容 API，默认关闭，聚合统计隐私过滤，零第三方依赖）
-- **AI 会话深度统计**（可选，默认关闭）：读取 opencode / ChatGPT / Claude 本地会话文件，
-  统计某天 AI 交互轮数、生成行数/字符数；仪表盘洞察页与 CLI 可查看
+- **AI 会话深度统计**（可选，默认关闭）：读取 opencode / ChatGPT / Claude / Cursor / Windsurf / Trae /
+  DeepSeek / Pi Agent / DSH 等本地会话文件，统计某天 AI 交互轮数、生成行数/字符数；仪表盘洞察页与 CLI 可查看
 - **SQLite 后端（可选）**：monitor 同步维护 `usage.db` 索引，`sqlite_store.py` 支持回填/重建/查询；
   JSONL 始终为原始日志唯一事实源
 - **托盘图标（可选）**：今日概览 / 打开今日日报 / 检查更新 / 暂停·继续 / 退出
@@ -371,8 +371,9 @@ OpenAI 兼容端点，完全自定义 provider。
 
 #### AI 会话深度统计（可选，默认关闭）
 
-读取 opencode / ChatGPT / Claude 等本地会话文件（JSON / JSONL），统计某天 AI 交互轮数、
-用户/助手消息数、生成行数/字符数。**默认关闭**，开启后也只读取本地文件，不上传任何数据。
+读取 opencode / ChatGPT / Claude / Cursor / Windsurf / Trae / DeepSeek / Pi Agent / DSH 等
+本地会话文件（JSON / JSONL），统计某天 AI 交互轮数、用户/助手消息数、生成行数/字符数。
+**默认关闭**，开启后也只读取本地文件，不上传任何数据。
 
 ```powershell
 python ai_sessions.py --day 2026-08-10            # 指定日期
@@ -679,7 +680,7 @@ install.ps1 注册两个计划任务：
 
 ```powershell
 python monitor.py --test 30   # 测试模式（跑 N 秒后退出并打印汇总）
-python test_all.py            # 完整集成测试（239 项断言）
+python test_all.py            # 完整集成测试（242 项断言）
 ```
 
 test_all.py 通过猴子补丁模拟前台窗口/空闲/进程树，覆盖：切换计时、空闲不计时、微信联系人、

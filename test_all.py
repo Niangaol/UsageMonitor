@@ -1518,6 +1518,46 @@ def test_ai_sessions():
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_ai_sessions_more_tools():
+    print("[test] AI 会话深度统计（Cursor 嵌套 / DSH 可配置路径）")
+    tmp = fresh_tmp("ai_sessions_more")
+    day = "2026-08-10"
+    cursor_dir = os.path.join(tmp, "cursor")
+    dsh_dir = os.path.join(tmp, "dsh")
+    os.makedirs(cursor_dir, exist_ok=True)
+    os.makedirs(dsh_dir, exist_ok=True)
+    with open(os.path.join(cursor_dir, "conversations.json"), "w", encoding="utf-8") as fh:
+        json.dump({
+            "conversations": {
+                "c1": {
+                    "messages": [
+                        {"timestamp": f"{day}T12:00:00", "role": "user", "content": "hi"},
+                        {"timestamp": f"{day}T12:01:00", "role": "assistant", "content": "a\nb"},
+                    ]
+                }
+            }
+        }, fh, ensure_ascii=False)
+    with open(os.path.join(dsh_dir, "sessions.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"timestamp": f"{day}T13:00:00", "role": "user", "content": "dsh q"},
+                            ensure_ascii=False) + "\n")
+        fh.write(json.dumps({"timestamp": f"{day}T13:01:00", "role": "assistant", "content": "dsh a"},
+                            ensure_ascii=False) + "\n")
+
+    cfg = {
+        "ai_sessions": {
+            "enabled": True,
+            "paths": {"cursor": [cursor_dir], "dsh": [dsh_dir]},
+        }
+    }
+    result = ai_sessions.collect(day, cfg)
+    check("cursor" in result["tools"] and "dsh" in result["tools"],
+          "识别 Cursor 与 DSH", str(list(result["tools"].keys())))
+    check(result["total"]["turns"] == 4, "共 4 条消息", str(result["total"]))
+    check(result["tools"]["cursor"]["generated_lines"] == 2, "Cursor 生成 2 行",
+          str(result["tools"]["cursor"]))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_sqlite_store():
     print("[test] SQLite 后端（写入/回填/幂等/重建/查询）")
     tmp = fresh_tmp("sqlite_store")
@@ -1582,6 +1622,7 @@ def main() -> int:
         test_dashboard_insights_api, test_dashboard_ai_settings_api,
         test_report_insights_section,
         test_ai_sessions,
+        test_ai_sessions_more_tools,
         test_sqlite_store,
     ]
     for t in tests:

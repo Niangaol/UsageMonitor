@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """ai_sessions.py — AI 会话深度统计（可选增强，§6.4.3）。
 
-读取 opencode / ChatGPT / Claude 等工具的本地会话文件（JSON / JSONL），
-统计某天“AI 交互轮数、生成行数/字符数”等指标。默认关闭，需在 config.json
+读取 opencode / ChatGPT / Claude / Cursor / Windsurf / Trae / DeepSeek /
+Pi Agent / DSH 等工具的本地会话文件（JSON / JSONL），统计某天
+“AI 交互轮数、生成行数/字符数”等指标。默认关闭，需在 config.json
 显式开启 `ai_sessions.enabled=true`；路径可用 `ai_sessions.paths` 自定义，
 未配置时自动探测常见目录。
 
@@ -43,6 +44,40 @@ _DEFAULT_PATHS: dict[str, list[str]] = {
         "%APPDATA%/Claude",
         "%LOCALAPPDATA%/Claude",
         "~/.claude",
+    ],
+    "cursor": [
+        "%APPDATA%/Cursor",
+        "%LOCALAPPDATA%/Cursor",
+        "~/.cursor",
+    ],
+    "windsurf": [
+        "%APPDATA%/Windsurf",
+        "%LOCALAPPDATA%/Windsurf",
+        "~/.codeium/windsurf",
+        "~/.windsurf",
+    ],
+    "trae": [
+        "%APPDATA%/Trae",
+        "%LOCALAPPDATA%/Trae",
+        "~/.trae",
+    ],
+    "deepseek": [
+        "%APPDATA%/DeepSeek",
+        "%LOCALAPPDATA%/DeepSeek",
+        "~/.deepseek",
+    ],
+    "pi_agent": [
+        "~/.pi-agent",
+        "~/.local/share/pi-agent",
+        "%APPDATA%/pi-agent",
+        "%LOCALAPPDATA%/pi-agent",
+        "~/.config/pi-agent",
+    ],
+    "dsh": [
+        "%DSH_DATA%",
+        "%DSH_HOME%",
+        "~/.dsh",
+        "%LOCALAPPDATA%/dsh",
     ],
 }
 
@@ -140,19 +175,52 @@ def _extract_timestamp(obj: dict) -> str | None:
     return None
 
 
-def _extract_messages(obj) -> list[dict]:
-    """从 JSON/JSONL 行对象中尽力提取消息列表。"""
+_CONTAINER_KEYS = ("messages", "conversation", "history", "thread", "items", "turns",
+                   "chat_messages", "entries", "conversations")
+_DICT_CONTAINER_KEYS = ("conversations", "sessions", "threads")
+
+
+def _extract_messages(obj, _depth: int = 0) -> list[dict]:
+    """从 JSON/JSONL 对象中递归尽力提取消息列表（兼容多工具嵌套结构）。"""
+    if _depth > 6:
+        return []
     if isinstance(obj, dict):
-        # 常见字段：messages / conversation / history / thread / items
-        for key in ("messages", "conversation", "history", "thread", "items", "turns"):
-            val = obj.get(key)
-            if isinstance(val, list):
-                return [m for m in val if isinstance(m, dict)]
         # 单条消息对象
         if any(k in obj for k in _ROLE_KEYS) and any(k in obj for k in _CONTENT_KEYS):
             return [obj]
+        # 常见嵌套 message / data
+        for key in ("message", "data"):
+            inner = obj.get(key)
+            if isinstance(inner, dict):
+                sub = _extract_messages(inner, _depth + 1)
+                if sub:
+                    return sub
+        # 列表容器
+        for key in _CONTAINER_KEYS:
+            val = obj.get(key)
+            if isinstance(val, list):
+                out: list[dict] = []
+                for item in val:
+                    if isinstance(item, dict):
+                        out.extend(_extract_messages(item, _depth + 1))
+                if out:
+                    return out
+        # 字典容器（conversations/sessions/threads）
+        for key in _DICT_CONTAINER_KEYS:
+            val = obj.get(key)
+            if isinstance(val, dict):
+                out = []
+                for item in val.values():
+                    if isinstance(item, dict):
+                        out.extend(_extract_messages(item, _depth + 1))
+                if out:
+                    return out
     elif isinstance(obj, list):
-        return [m for m in obj if isinstance(m, dict)]
+        out = []
+        for item in obj:
+            if isinstance(item, dict):
+                out.extend(_extract_messages(item, _depth + 1))
+        return out
     return []
 
 

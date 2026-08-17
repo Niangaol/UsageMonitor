@@ -105,8 +105,9 @@ Implemented against the requirements document *《项目需求与开发文档.md
 - **Smart insights**: an offline rule engine generates study/game/health/efficiency/balance/trend advice and appends a
   "Today's suggestions" section to the daily report; optional AI insights (OpenAI-compatible API, off by default,
   privacy-filtered aggregate statistics, zero third-party dependencies)
-- **AI session deep stats** (optional, off by default): reads local session files from opencode / ChatGPT / Claude,
-  counts AI interaction turns and generated lines/chars per day; available on the dashboard Insights view and CLI
+- **AI session deep stats** (optional, off by default): reads local session files from opencode / ChatGPT / Claude /
+  Cursor / Windsurf / Trae / DeepSeek / Pi Agent / DSH, counts AI interaction turns and generated lines/chars per day;
+  available on the dashboard Insights view and CLI
 - **SQLite backend (optional)**: the monitor mirrors records into `usage.db`; `sqlite_store.py` supports backfill/rebuild/query;
   JSONL remains the single source of truth
 - **Tray icon (optional)**: today's overview / open today's report / check for updates / pause · resume / exit
@@ -375,9 +376,9 @@ lets you point to any OpenAI-compatible endpoint for a fully custom provider.
 
 #### AI Session Deep Stats (optional, off by default)
 
-Reads local session files (JSON / JSONL) from opencode / ChatGPT / Claude, etc., and counts AI interaction
-turns, user/assistant messages, and generated lines/chars for a day. **Off by default**; when enabled it only
-reads local files and never uploads anything.
+Reads local session files (JSON / JSONL) from opencode / ChatGPT / Claude / Cursor / Windsurf / Trae /
+DeepSeek / Pi Agent / DSH, and counts AI interaction turns, user/assistant messages, and generated lines/chars
+for a day. **Off by default**; when enabled it only reads local files and never uploads anything.
 
 ```powershell
 python ai_sessions.py --day 2026-08-10            # specific date
@@ -680,7 +681,7 @@ is a list of custom group names. If the file is missing or corrupted it is treat
 
 ```powershell
 python monitor.py --test 30   # test mode (runs for N seconds then exits and prints a summary)
-python test_all.py            # full integration tests (239 assertions)
+python test_all.py            # full integration tests (242 assertions)
 ```
 
 test_all.py monkey-patches the foreground window/idle/process tree to cover: timing on switch, no timing while idle, WeChat contacts,

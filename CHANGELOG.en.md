@@ -8,6 +8,14 @@ Release flow: `git tag vX.Y.Z` → CI builds and publishes the Release automatic
 
 > 简体中文版: [CHANGELOG.md](CHANGELOG.md)
 
+## [2.1.0] - 2026-08-17
+
+### Added
+- **AI session deep stats now supports more tools**:
+  - Added default local session directory detection for Cursor / Windsurf / Trae / DeepSeek / Pi Agent (π) / DSH
+  - Parser enhanced to handle nested `conversations` / `sessions` / `threads` / `entries` and other common formats
+  - Paths such as DSH can still be customized via `ai_sessions.paths`; common directories are auto-detected when not configured
+
 ## [2.0.0] - 2026-08-17
 
 ### Added
@@ -202,6 +210,7 @@ Pure standard library with zero third-party dependencies; static CPU < 0.1%, mem
 - Tests: test_all adds 11 dashboard API tests (endpoints / 403 / security headers / error codes / path traversal);
   post-build `UsageMonitor.exe --version` smoke test; all 125 assertions pass the gate.
 
+[2.1.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.0
 [2.0.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.0.0
 [1.6.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.6.0
 [1.5.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.5.0

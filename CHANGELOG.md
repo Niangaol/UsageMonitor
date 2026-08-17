@@ -8,6 +8,14 @@
 
 > 🌐 English version: [CHANGELOG.en.md](CHANGELOG.en.md)
 
+## [2.1.0] - 2026-08-17
+
+### 新增
+- **AI 会话深度统计支持更多工具**：
+  - 新增 Cursor / Windsurf / Trae / DeepSeek / Pi Agent（π）/ DSH 的默认本地会话目录探测
+  - 解析器增强：支持嵌套 `conversations` / `sessions` / `threads` / `entries` 等常见格式，兼容性更好
+  - DSH 等路径仍可通过 `ai_sessions.paths` 自定义；未配置时自动探测常见目录
+
 ## [2.0.0] - 2026-08-17
 
 ### 新增
@@ -204,6 +212,7 @@
 - 测试：test_all 新增 11 项 dashboard API 测试（端点 / 403 / 安全头 / 错误码 / 路径穿越），
   构建后 `UsageMonitor.exe --version` 冒烟，全量 125 项门禁通过。
 
+[2.1.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.0
 [2.0.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.0.0
 [1.6.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.6.0
 [1.5.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v1.5.0
