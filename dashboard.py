@@ -1362,9 +1362,9 @@ async function doExport(scope, type){
   try{
     let url = "/api/export?type=" + type + "&scope=" + scope;
     let name = "report";
-    if(scope === "day"){ url += "&date=" + state.day; name = "report_" + state.day; }
+    if(scope === "day"){ const d = state.day || todayStr(); url += "&date=" + d; name = "report_" + d; }
     else if(scope === "week"){ name = "week_" + (state.dates.length ? state.dates[state.dates.length-1] : todayStr()); }
-    else if(scope === "month"){ url += "&month=" + state.month; name = "month_" + state.month; }
+    else if(scope === "month"){ const m = state.month || todayStr().slice(0,7); url += "&month=" + m; name = "month_" + m; }
     name += (type === "csv" ? ".csv" : ".json");
     await downloadToFile(url, name);
   }catch(e){

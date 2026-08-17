@@ -541,17 +541,50 @@ def _aggregate_days(date_strs: list[str], data_root: str) -> dict:
     return merged
 
 
+def _ensure_sqlite_range(data_root: str, date_strs: list[str]) -> bool:
+    """确保 usage.db 与 JSONL 在指定日期区间一致，否则回填缺失日期。
+
+    返回 True 表示 SQLite 可直接用于该区间聚合；False 表示不可用（回退 JSONL）。
+    """
+    try:
+        import sqlite_store  # noqa: PLC0415 —— 惰性导入
+        if not os.path.isfile(sqlite_store.db_path(data_root)):
+            return False
+        conn = sqlite_store.connect(data_root)
+        try:
+            sqlite_store.init_db(conn)
+            need: list[str] = []
+            for d in date_strs:
+                j = 0
+                path = os.path.join(data_root, d, "usage.jsonl")
+                if os.path.isfile(path):
+                    with open(path, "r", encoding="utf-8-sig") as fh:
+                        j = sum(1 for line in fh if line.strip())
+                row = conn.execute(
+                    "SELECT COUNT(*) AS n FROM sessions WHERE day = ?", (d,)
+                ).fetchone()
+                if j != int(row["n"] or 0):
+                    need.append(d)
+        finally:
+            conn.close()
+        if need:
+            sqlite_store.backfill(data_root, sorted(need))
+        return True
+    except Exception:  # noqa: BLE001 —— 校验/回填失败则回退 JSONL
+        return False
+
+
 def aggregate_days(date_strs: list[str], data_root: str) -> dict:
     """合并多天聚合结果（周报/多日导出用）。
 
-    优先使用 SQLite 快速路径：若 usage.db 存在，一次范围查询聚合全部记录；
-    否则回退逐日 JSONL 扫描（_aggregate_days）。
+    优先使用 SQLite 快速路径：若 usage.db 存在且与 JSONL 一致，一次范围查询聚合；
+    否则先回填缺失日期，仍不可用时回退逐日 JSONL 扫描（_aggregate_days）。
     """
     if not date_strs:
         return _aggregate_days([], data_root)
     try:
         import sqlite_store  # noqa: PLC0415 —— 惰性导入
-        if os.path.isfile(sqlite_store.db_path(data_root)):
+        if _ensure_sqlite_range(data_root, date_strs):
             rows = sqlite_store.query_range(data_root, date_strs[0], date_strs[-1])
             if rows:
                 return _aggregate_records(rows, "~".join(date_strs), data_root)
@@ -600,10 +633,10 @@ def aggregate_month(month_str: str, data_root: str) -> dict:
     避免逐日全量扫描 JSONL；SQLite 不可用/数据缺失时回退 JSONL。
     """
     days = _month_days(month_str)
-    # SQLite 快速路径
+    # SQLite 快速路径（先确保当月数据已回填/与 JSONL 一致）
     try:
         import sqlite_store  # noqa: PLC0415 —— 惰性导入
-        if os.path.isfile(sqlite_store.db_path(data_root)):
+        if _ensure_sqlite_range(data_root, days):
             rows = sqlite_store.query_range(data_root, days[0], days[-1])
             if rows:
                 by_day: dict[str, list[dict]] = {}
