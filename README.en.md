@@ -1,4 +1,4 @@
-# UsageMonitor · 电脑使用情况监控
+﻿# UsageMonitor · 电脑使用情况监控
 
 > Pure vibe coding artifact · Local-first · Python standard library + ctypes · Zero third-party runtime dependencies
 
@@ -28,11 +28,7 @@ No build step, no framework, no bundler — pure Python standard library + vanil
 
 Most usage-tracking tools sync data to the cloud, depend on paid services, or miss two dimensions this project targets: AI coding and URL-level browser history.
 
-UsageMonitor is positioned as a fully local, auditable, zero-dependency monitoring tool that tracks both "how long you used something" and "how much you actually produced with AI".
-
-> **Unique positioning: a computer-usage time tracker built around "AI coding".**
->
-> In most comparable open-source projects, "AI coding" is either a small editor/plugin dimension or is only measured by token consumption / session counts. UsageMonitor treats **AI coding time as a first-class dimension** — tracked alongside software, social contacts, and browsers — and integrates it into the full computer-usage analysis: from foreground-window / process-tree AI tool timing to optional local AI session deep stats.
+In most comparable open-source projects, tracking AI coding is either limited to token/session counts in a standalone tool, or handled as a small editor/plugin dimension that is not part of overall computer-usage analysis. UsageMonitor treats AI coding time as a dimension alongside software, social contacts, and browsers — tracked within the same monitoring and reporting system, covering both foreground-window / process-tree AI tool timing and optional local AI session deep stats.
 
 Key differences:
 
