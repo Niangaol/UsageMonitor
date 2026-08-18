@@ -21,12 +21,15 @@
 - **Git 代码变更分析**（Phase 2 · 只读本地提交）：配置 `insights.git.projects` 后，用 `git log --numstat` 统计指定日期的提交 / 新增 / 删除行 / 改动文件；以「修改率」（删除行 / 变更行）作返工近似指标
 - **集成**：洞察页新增「代码产出（Git）」面板 + 日报「今日建议」的产出提示；`/api/insights` 返回 `git`；`python git_insights.py --day` CLI
 - 只读、带超时、无 git / 未配置 / 非仓库路径均优雅降级；阈值可配 `insights.git`（`enabled` / `projects` / `timeout_s` / `top_files`）
+- **AI 成本账本（周/月汇总支出报表）**（Phase 3）：遍历期间每日 AI 会话深度，聚合消息/轮次/Token/成本，并按 模型 / 项目 / 工具 汇总；月报与周报自动追加「AI 成本账本」章节
+- 只读本地、绝不联网，ai_sessions.enabled 且至少有一天数据时输出，否则自动省略
 
 ### 测试
 
 - 新增 `test_insights_behavior`：专注日高评分 / 高频往返命中死循环 / 空数据与关闭安全
 - 新增 `test_insights_persona`：AI 编程日 / 死循环日 / 夜间学习日 / 空数据与开关安全
 - 新增 `test_git_insights`：临时 git 仓库两次提交 / 汇总 found / 未配置与关闭 / 非仓库跳过
+- 新增 `test_ai_cost_ledger`：临时 AI 会话账本生成 / 含模型拆分 / 空数据 None 降级
 
 ## [2.3.0] - 2026-08-18
 

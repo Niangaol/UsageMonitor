@@ -447,6 +447,94 @@ def _ai_sessions_daily(date_str: str, data_root: str, max_rows: int | None = Non
         return None
 
 
+def _ai_cost_ledger_md(days: list[str], data_root: str, label: str = "周度") -> str | None:
+    """AI 成本与投入账本（ROADMAP Phase 3 · 周/月汇总支出报表）。
+
+    遍历 days，逐日 collect AI 会话深度（本地+可选 Web），聚合出
+    消息/轮次/Token/成本，并按 模型 / 项目 / 工具 汇总成本与轮次，
+    生成一段 Markdown「AI 成本账本」。仅当 ai_sessions.enabled 且至少
+    一天有数据时返回；只读本地、绝不联网。任何异常返回 None。
+    """
+    try:
+        import classifier  # noqa: PLC0415
+        import ai_sessions  # noqa: PLC0415
+        config_path = os.path.join(data_root, "config.json")
+        config = classifier.load_config(config_path) if os.path.isfile(config_path) else classifier.load_config()
+        ai_cfg = config.get("ai_sessions") or {}
+        if not isinstance(ai_cfg, dict) or not ai_cfg.get("enabled"):
+            return None
+
+        acc = {
+            "days": [],
+            "turns": 0, "rounds": 0, "tokens_in": 0, "tokens_out": 0, "cost": 0.0,
+            "by_model": {}, "by_project": {}, "by_tool": {},
+        }
+        for day in days:
+            web = []
+            try:
+                import browser_history  # noqa: PLC0415
+                web = browser_history.collect(day, data_root, config).get("visits") or []
+            except Exception:  # noqa: BLE001 —— Web 解析失败不影响本地 AI 统计
+                web = []
+            data = ai_sessions.collect(day, config, web_visits=web or None)
+            total = data.get("total") or {}
+            if not data.get("found"):
+                acc["days"].append({"date": day, "found": False})
+                continue
+            acc["days"].append({
+                "date": day, "found": True,
+                "turns": int(total.get("turns") or 0),
+                "rounds": int(total.get("rounds") or 0),
+                "cost": float(total.get("cost_total") or 0.0),
+            })
+            acc["turns"] += int(total.get("turns") or 0)
+            acc["rounds"] += int(total.get("rounds") or 0)
+            acc["tokens_in"] += int(total.get("tokens_in") or 0)
+            acc["tokens_out"] += int(total.get("tokens_out") or 0)
+            acc["cost"] += float(total.get("cost_total") or 0.0)
+            for key, bucket in (("by_model", acc["by_model"]),
+                                ("by_project", acc["by_project"])):
+                for name, meta in (total.get(key) or {}).items():
+                    e = bucket.setdefault(name, {"turns": 0, "rounds": 0, "cost": 0.0})
+                    e["turns"] += int(meta.get("turns") or 0)
+                    e["rounds"] += int(meta.get("rounds") or 0)
+                    e["cost"] += float(meta.get("cost_total") or 0.0)
+            for name, meta in (data.get("tools") or {}).items():
+                e = acc["by_tool"].setdefault(name, {"turns": 0, "rounds": 0, "cost": 0.0})
+                e["turns"] += int(meta.get("turns") or 0)
+                e["rounds"] += int(meta.get("rounds") or 0)
+                e["cost"] += float(meta.get("cost_total") or 0.0)
+
+        if not any(d.get("found") for d in acc["days"]):
+            return None
+
+        out: list[str] = [f"## AI 成本账本（{label}）", ""]
+        out.append(f"- 会话消息 {acc['turns']} 条 / 对话轮次 {acc['rounds']} 轮，"
+                   f"Token 估算 进 {acc['tokens_in']} / 出 {acc['tokens_out']}，"
+                   f"成本估算 {ai_sessions._fmt_cost(acc['cost'])}")
+        grouped = [("按模型", acc["by_model"]), ("按项目", acc["by_project"]), ("按工具", acc["by_tool"])]
+        for title, bucket in grouped:
+            if not bucket:
+                continue
+            rows = sorted(bucket.items(), key=lambda kv: -kv[1]["cost"])[:8]
+            sub = "；".join(
+                f"{name} {v['rounds']} 轮 · {ai_sessions._fmt_cost(v['cost'])}" for name, v in rows)
+            out.append(f"- {title}：{sub}")
+        cost_days = [d for d in acc["days"] if d.get("found")]
+        rows = [[d["date"], str(d["turns"]), ai_sessions._fmt_cost(d["cost"])] for d in cost_days]
+        out.append("")
+        out.append("每日明细：")
+        out.append("")
+        out.append(_md_table(["日期", "消息", "成本"], rows))
+        out.append("")
+        out.append("注：Token 为长度折算估算；成本为按模型定价表（USD）估算，可用 "
+                   "config 的 ai_sessions.costs.model_pricing 或 ai_pricing.json 自定义单价；"
+                   "全部本地计算，不上传。")
+        return "\n".join(out)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _inventory_summary(date_str: str, data_root: str) -> dict | None:
     """读取当日软件清单快照并汇总；无快照返回 None。"""
     path = os.path.join(data_root, date_str, "software_inventory.json")
@@ -839,6 +927,11 @@ def generate_month_report_md(month_str: str, data_root: str) -> str:
         out.append("## 按联系人")
         out.append("")
         out.append(_md_table(["应用", "联系人", "时长"], rows))
+    # ROADMAP Phase 3：月度 AI 成本账本（周/月汇总支出报表）
+    ledger = _ai_cost_ledger_md(_month_days(month_str), data_root, f"月度 · {month_str}")
+    if ledger:
+        out.append("")
+        out.append(ledger)
     if len(out) <= 3:
         out.append("（当月无数据）")
     return "\n".join(out)
@@ -1054,15 +1147,20 @@ def main(argv: list[str] | None = None) -> int:
                 except Exception as exc:  # noqa: BLE001
                     print(f"[report] 生成 {ds} 失败: {exc}", file=sys.stderr)
         agg = aggregate_days(days, data_root)
+        # ROADMAP Phase 3：周度 AI 成本账本
+        week_ledger = _ai_cost_ledger_md(days, data_root, "周度 · 最近7天")
+        week_md = _report_from_agg(agg, "电脑使用情况周报（最近 7 天）")
+        if week_ledger:
+            week_md = week_md + chr(10) + chr(10) + week_ledger
         if args.json:
             print(json.dumps(agg, ensure_ascii=False, indent=2, default=str))
         else:
-            print(_report_from_agg(agg, "电脑使用情况周报（最近 7 天）"))
+            print(week_md)
         if args.write:
             out_dir = os.path.join(data_root, today.isoformat())
             os.makedirs(out_dir, exist_ok=True)
             with open(os.path.join(out_dir, "report_week.md"), "w", encoding="utf-8") as fh:
-                fh.write(_report_from_agg(agg, "电脑使用情况周报（最近 7 天）"))
+                fh.write(week_md)
         return 0
 
     if args.today:

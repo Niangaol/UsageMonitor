@@ -2102,6 +2102,37 @@ def test_ai_sessions_costs():
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_ai_cost_ledger():
+    print("[test] AI 成本账本（Phase 3 · 周/月汇总支出报表）")
+    tmp = fresh_tmp("ai_cost_ledger")
+    day = "2026-08-10"
+    sess_dir = os.path.join(tmp, "sessions", "opencode")
+    os.makedirs(sess_dir, exist_ok=True)
+    lines = [
+        json.dumps({"timestamp": day + "T10:00:00", "role": "user", "content": "hi",
+                    "model": "claude-3-5-sonnet", "cwd": "/r/projA"}, ensure_ascii=False),
+        json.dumps({"timestamp": day + "T10:01:00", "role": "assistant", "content": "abcd",
+                    "model": "claude-3-5-sonnet"}, ensure_ascii=False),
+    ]
+    with open(os.path.join(sess_dir, "sessions.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(chr(10).join(lines) + chr(10))
+    with open(os.path.join(tmp, "config.json"), "w", encoding="utf-8") as fh:
+        json.dump({"ai_sessions": {"enabled": True, "paths": {"opencode": [sess_dir]}}}, fh)
+    md = report._ai_cost_ledger_md([day], tmp, "测试")
+    check(md is not None, "账本生成", "None")
+    check("AI 成本账本" in (md or ""), "含标题", str(md)[:80])
+    check("claude-3-5-sonnet" in (md or ""), "含模型拆分", str(md)[:200])
+
+    tmp2 = fresh_tmp("ai_cost_ledger_empty")
+    with open(os.path.join(tmp2, "config.json"), "w", encoding="utf-8") as fh:
+        json.dump({"ai_sessions": {"enabled": True,
+                                   "paths": {"opencode": [os.path.join(tmp2, "nope")]}}}, fh)
+    empty_md = report._ai_cost_ledger_md([day], tmp2, "测试")
+    check(empty_md is None or "AI 成本账本" not in empty_md, "空数据 None 或降级", str(empty_md))
+    shutil.rmtree(tmp, ignore_errors=True)
+    shutil.rmtree(tmp2, ignore_errors=True)
+
+
 def test_sqlite_store():
     print("[test] SQLite 后端（写入/回填/幂等/重建/查询）")
     tmp = fresh_tmp("sqlite_store")
@@ -2189,7 +2220,7 @@ def main() -> int:
         test_ai_sessions,
         test_ai_sessions_more_tools,
         test_ai_sessions_phase1,
-        test_ai_sessions_costs,
+        test_ai_sessions_costs, test_ai_cost_ledger,
         test_sqlite_store,
     ]
     for t in tests:
