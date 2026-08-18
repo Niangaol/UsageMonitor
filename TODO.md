@@ -2,7 +2,7 @@
 
 > 交接时间：2026-08-14 · 项目：电脑使用情况监控（UsageMonitor）
 > 远程仓库：https://github.com/Niangaol/UsageMonitor（master 分支）
-> 当前版本：v2.2.0（version.py = 2.2.0）
+> 当前版本：v2.3.0（version.py = 2.3.0）
 > 当前提交：53b428f（2026-08-17）
 
 ---
@@ -21,6 +21,7 @@
 | v2.1.0 | ✅ 已发布 | AI 统计支持更多工具（Cursor/Windsurf/Trae/DeepSeek/Pi Agent/DSH） |
 | v2.1.1 | ✅ 已发布 | SQLite 一致性校验、周聚合快速路径、updater/更新 API 测试、SHA256 资产、覆盖率扩展 |
 | v2.2.0 | ✅ 已发布 | UWP 识别、管理员模式、Firefox 停留时长、更新供应链安全、更多应用适配 |
+| v2.3.0 | ✅ 已提交（发布中） | AI 会话深度（Phase 1）+ 成本与 ROI（Phase 3）+ 概览整合 / AI 洞察独立 |
 
 ---
 
@@ -54,6 +55,14 @@
 - ✅ Firefox 停留时长估算（`config.firefox_dwell_max_s`，默认 600s）
 - ✅ 更新供应链安全（资产下载地址白名单）
 
+### AI 编程深度追踪（docs/ROADMAP.md · Phase 1 · v2.3.0 开发中）
+- ✅ 对话轮次追踪（本地会话 user→assistant 配对 + 浏览器历史 Web AI 会话分组/轮次推断）
+- ✅ Token 用量估算（`ai_sessions.token_estimation`：CJK 1 Token/字，其余 4 字符/Token）
+- ✅ 按模型拆分（`by_model`，模型字段/内容正则识别）
+- ✅ 按项目拆分（`by_project`，cwd/project/repo 字段，会话级归口）
+- ✅ 仪表盘「AI 会话详情」面板 + 日报「AI 会话深度」章节 + `ai_sessions --web` CLI
+- ✅ Phase 3 成本与 ROI（按模型计价 / 按项目分摊 / 成本面板与日报成本章节）
+- ⏸️ Phase 2 采纳率/留存率（需 IDE 插件 + Git 分析）· Phase 4 行为洞察（死循环/专注度/人格）
 ### 更多应用适配
 - ✅ 常用软件显示名/分类补充（Obsidian/Notion/Slack/Teams/企业微信/飞书/WhatsApp/LINE/Skype/Steam/Epic/Spotify/VLC/PowerToys/uTools 等）
 - ✅ 社交软件识别补充（企业微信/飞书/Slack/Teams/WhatsApp/LINE/Skype）
@@ -71,7 +80,7 @@
 | 2 | AI 会话解析精度 | 第三方工具格式差异较大，目前 best-effort，可能统计缺失 |
 | 3 | GitHub Pages 只做简单 landing | 如需完整文档站可继续扩展（当前够用） |
 | 4 | 周报/月报多语言 / UI 多语言 | 可选，当前 UI 中文 |
-| 5 | AI 编程深度追踪（长期规划） | 见 [docs/ROADMAP.md](docs/ROADMAP.md)：会话级追踪 / 质量分析 / 成本 ROI / 行为洞察 |
+| 5 | ROADMAP Phase 1 已落地（v2.3.0 规划） | 对话轮次/Token估算/按模型·项目拆分/会话详情面板/报告章节 ☆ 见 [docs/ROADMAP.md](docs/ROADMAP.md)；Phase 3 成本与 ROI 已落地；Phase 2 质量分析、Phase 4 行为洞察仍未做 |
 
 ---
 

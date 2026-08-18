@@ -8,6 +8,40 @@
 
 > 🌐 English version: [CHANGELOG.en.md](CHANGELOG.en.md)
 
+## [2.3.0] - 2026-08-18
+
+### 新增（ROADMAP Phase 1 · AI 编程深度追踪 v1.5）
+
+- **对话轮次追踪**（`ai_sessions.rounds`）：本地会话文件内按 user→assistant 配对计 Q/A 轮次；并通过 `browser_history` 访问明细深度解析 Web AI 会话（ChatGPT/Claude/Gemini 等聊天页面的会话分组，同一会话页的返回/刷新次数 ≈ 轮次，尽力而为）
+- **Token 用量估算**（`ai_sessions.token_estimation`，默认开）：CJK 按 1 Token/字、其余按 4 字符/Token 折算输入/输出 Token，逐工具/逐会话统计
+- **按模型拆分**（`by_model`）：从消息 `model` 字段或内容中的模型名（Claude/GPT/DeepSeek/Qwen 等）提取，聚合到工具/合计/会话详情
+- **按项目拆分**（`by_project`）：从 cwd/project/repo 等字段提取，按「会话级」归口，避免工具目录名污染，聚合到工具/合计/会话详情
+- **AI 会话深度默认开启**：`ai_sessions.enabled` 默认置 `true`（不再需要单独开启；可在配置显式关闭）
+- **仪表盘「AI 会话详情」面板**：固定于**概览**页底部（新增 `/api/ai-sessions` 接口，始终展示），汇总卡（消息/轮次/Token 进/出）+ 模型/项目分布 + 本地会话详情表 + Web AI 会话表
+- **前端结构调整**：移除会话深度的单独面板/单独页；「AI 洞察」独立为自身功能，未开启（`insights.ai.enabled=false`）时侧边栏**不显示**「AI 洞察」项，规则洞察保留在该页内
+- **日报「AI 会话深度」章节**：汇总 + 模型/项目分布 + 本地/Web 会话详表（默认开启，有数据时即出现）
+- 新增 `ai_sessions --web` CLI：附带解析浏览器侧 Web AI 会话
+- 配置：`ai_sessions.enabled` 默认 `true`；新增 `ai_sessions.token_estimation`（默认 `true`）、`ai_sessions.web_ai.enabled`（默认 `true`）
+
+### 新增（ROADMAP Phase 3 · 成本与 ROI）
+
+- **按模型费用估算**：内置主流模型定价表（USD/百万 Token）已更新到最新一代（GPT-5.x/4.1/o3/o4-mini、Claude Fable 5/Opus 5/Sonnet 5/Haiku 4.5、DeepSeek V4、Gemini 3.x/2.5、Qwen3/GLM-5/Kimi/Doubao/Grok-4 等）；按「模型 × Token」折算输入/输出费用
+- **按项目成本分摊**：成本随 `by_project` 会话级归口到项目，查看每个项目花了多少钱
+- **成本数据贯通**：`tools` / `total` / `by_model` / `by_project` / 会话详情均带 `cost_in` / `cost_out` / `cost_total`
+- **仪表盘概览面板**：新增「成本估算」卡，模型/项目分布与会话详情表加成本列
+- **日报「AI 会话深度」章节**：新增成本汇总与按模型/项目成本表现
+- **CLI 展示费用**：`ai_sessions --json` 及文本输出含费用
+- 配置新增：`ai_sessions.costs.enabled`（默认 `true`）、`ai_sessions.costs.model_pricing`（默认空）
+- **自定义单价两途径**：① config `ai_sessions.costs.model_pricing`（`{"gpt-5": [1.25, 10]}` 或 `{"...": {"input":..,"output":..}}`）；② 数据目录下放 `ai_pricing.json`（同格式，优先级最高，便于不改 config 维护）——定价随厂商波动，建议用户自维护
+
+### 测试
+
+- 新增 `test_ai_sessions_costs`：按模型计价 / 按项目分摊 / 自定义单价 / `costs.enabled=false` 关闭路径
+
+### 测试
+
+- `test_ai_sessions` 扩展：轮次 / Token / by_model / by_project 断言
+- 新增 `test_ai_sessions_phase1`：多轮会话、模型·项目拆分、会话详情、Web AI 会话（含开关关闭路径）
 ## [2.2.0] - 2026-08-17
 
 ### 新增

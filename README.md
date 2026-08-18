@@ -212,7 +212,16 @@ AI 编程深度追踪规划：
 
 ---
 
+**AI 会话成本估算**：`ai_sessions` 按内置主流模型定价表（USD/百万 Token，已更新至最新一代）做费用估算。定价随厂商波动，可用以下任一路径自定义/覆盖单个模型单价：
+
+- `config.json` → `ai_sessions.costs.model_pricing`：
+  `{"gpt-5": [1.25, 10]}` 或 `{"claude-sonnet-5": {"input": 2, "output": 10}}`
+- 数据目录下放置 `ai_pricing.json`（同格式，`{"model": [输入价, 输出价]}` 或 `{"model": {"input":..,"output":..}}`；**优先级最高**）
+
+---
+
 ## Running tests
+
 
 ```powershell
 python test_all.py   # 268 项断言，无头确定性

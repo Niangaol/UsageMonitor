@@ -1740,6 +1740,17 @@ def test_ai_sessions():
     check(result["total"]["generated_lines"] == 3, "助手生成 3 行", str(result["total"]))
     check("opencode" in result["tools"] and "chatgpt" in result["tools"], "按工具分组")
 
+    check(result["total"]["rounds"] == 2, "对话轮次 2 轮（两文件各 1 问→1 答）", str(result["total"]["rounds"]))
+    check(result["total"]["tokens_in"] > 0 and result["total"]["tokens_out"] > 0,
+          "Token 估算进/出非零", str(result["total"]))
+    check(ai_sessions.estimate_tokens("hello world this is a test") >= 3, "拉丁 Token 估算>0",
+          str(ai_sessions.estimate_tokens("hello world this is a test")))
+    check(ai_sessions.estimate_tokens("") == 0, "空文本 Token=0")
+    check(isinstance(result["total"]["by_model"], dict) and "未识别" in result["total"]["by_model"],
+          "by_model 汇总存在", str(result["total"]["by_model"]))
+    check(result["total"]["by_project"].get("未识别") is not None,
+          "无 cwd 字段按未识别项目归口", str(result["total"]["by_project"]))
+
     cfg_off = {"ai_sessions": {"enabled": False}}
     off = ai_sessions.collect(day, cfg_off)
     check(off["enabled"] is False and off["found"] is False, "默认关闭态")
@@ -1783,6 +1794,121 @@ def test_ai_sessions_more_tools():
     check(result["total"]["turns"] == 4, "共 4 条消息", str(result["total"]))
     check(result["tools"]["cursor"]["generated_lines"] == 2, "Cursor 生成 2 行",
           str(result["tools"]["cursor"]))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_ai_sessions_phase1():
+    print("[test] AI 会话 Phase1（对话轮次/Token 估算/模型·项目拆分/会话详情/Web AI 会话）")
+    tmp = fresh_tmp("ai_sessions_phase1")
+    day = "2026-08-10"
+    oc = os.path.join(tmp, "opencode")
+    os.makedirs(oc, exist_ok=True)
+    with open(os.path.join(oc, "sessions.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"timestamp": f"{day}T10:00:00", "role": "user", "content": "你好",
+                             "model": "claude-3-5-sonnet", "cwd": "/repo/alpha"}, ensure_ascii=False) + "\n")
+        fh.write(json.dumps({"timestamp": f"{day}T10:01:00", "role": "assistant",
+                             "content": "收到，开始改。"}, ensure_ascii=False) + "\n")
+        fh.write(json.dumps({"timestamp": f"{day}T10:02:00", "role": "user", "content": "继续",
+                             "model": "deepseek-chat", "cwd": "/repo/alpha"}, ensure_ascii=False) + "\n")
+        fh.write(json.dumps({"timestamp": f"{day}T10:03:00", "role": "assistant", "content": "完成。"},
+                            ensure_ascii=False) + "\n")
+    cfg = {"ai_sessions": {"enabled": True, "paths": {"opencode": [oc]}}}
+    r = ai_sessions.collect(day, cfg)
+    to = r["total"]
+    check(to["turns"] == 4 and to["rounds"] == 2, "多轮会话：4 条消息 / 2 轮", str(to))
+    check(to["tokens_in"] > 0 and to["tokens_out"] > 0, "Token 进/出估算非零", str(to))
+    check(to["by_model"].get("claude-3-5-sonnet", {}).get("turns") == 1
+          and to["by_model"].get("deepseek-chat", {}).get("turns") == 1,
+          "按模型拆分", str(to["by_model"]))
+    check(to["by_project"].get("alpha", {}).get("turns") == 4,
+          "项目按会话归口（cwd→alpha，全会话 4 条）", str(to["by_project"]))
+    conv = to["conversations"][0]
+    check(conv["rounds"] == 2 and conv["turns"] == 4 and conv["project"] == "alpha"
+          and conv["tokens_out"] > 0, "会话详情含轮次/项目/Token", str(conv))
+
+    # Web AI 会话（浏览器历史深度解析：同一会话页多次访问≈轮次）
+    visits = [
+        {"domain": "chatgpt.com", "url": "https://chatgpt.com/c/aaa111", "time": f"{day}T09:00:00", "title": "ChatGPT"},
+        {"domain": "chatgpt.com", "url": "https://chatgpt.com/c/aaa111", "time": f"{day}T09:06:00", "title": "ChatGPT"},
+        {"domain": "claude.ai", "url": "https://claude.ai/chat/bb-22222222", "time": f"{day}T11:00:00", "title": "Claude"},
+        {"domain": "github.com", "url": "https://github.com/x", "time": f"{day}T08:00:00", "title": "GitHub"},
+        {"domain": "chatgpt.com", "url": "https://chatgpt.com/", "time": f"{day}T09:02:00", "title": "ChatGPT"},
+    ]
+    w = ai_sessions.web_ai_sessions(visits)
+    check(w["conversations"] == 2 and w["turns"] == 3, "Web 会话 2 个 / 访问 3 次（≈轮次）", str(w))
+    check(w["by_tool"]["chatgpt"]["turns"] == 2 and w["by_tool"]["claude"]["turns"] == 1,
+          "Web 按工具拆分", str(w["by_tool"]))
+    check(w["browsing_visits"] == 1, "首页等非会话页计入浏览 1 次", str(w["browsing_visits"]))
+    r2 = ai_sessions.collect(day, cfg, web_visits=visits)
+    check(r2["web_ai"]["found"] is True and r2["web_ai"]["turns"] == 3, "collect 附带 Web AI", str(r2["web_ai"]))
+    check(r2["found"] is True, "found 同时反映 Web 会话", str(r2["found"]))
+
+    # 关闭 token_estimation
+    r3 = ai_sessions.collect(day, {"ai_sessions": {"enabled": True, "paths": {"opencode": [oc]},
+                                                   "token_estimation": False}})
+    check(r3["total"]["tokens_in"] == 0 and r3["total"]["tokens_out"] == 0,
+          "token_estimation=false 全 0", str(r3["total"]))
+    # 关闭 web_ai（用不存在目录，避免扫真实默认目录）
+    r4 = ai_sessions.collect(day, {"ai_sessions": {"enabled": True,
+                                                   "paths": {"opencode": [os.path.join(tmp, "nonexistent")]},
+                                                   "web_ai": {"enabled": False}}},
+                             web_visits=visits)
+    check(r4["web_ai"]["found"] is False, "web_ai.enabled=false 不解析 Web", str(r4["web_ai"]))
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_ai_sessions_costs():
+    print("[test] AI 会话成本（按模型计价 / 按项目分摊 / 自定义单价 / 关闭）")
+    tmp = fresh_tmp("ai_sessions_costs")
+    day = "2026-08-10"
+    oc = os.path.join(tmp, "opencode")
+    os.makedirs(oc, exist_ok=True)
+    with open(os.path.join(oc, "sessions.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"timestamp": f"{day}T10:00:00", "role": "user", "content": "hi",
+                             "model": "claude-3-5-sonnet", "cwd": "/r/projA"}, ensure_ascii=False) + "\n")
+        fh.write(json.dumps({"timestamp": f"{day}T10:01:00", "role": "assistant", "content": "abcd",
+                             "model": "claude-3-5-sonnet"}, ensure_ascii=False) + "\n")
+    cfg = {"ai_sessions": {"enabled": True, "paths": {"opencode": [oc]}}}
+    r = ai_sessions.collect(day, cfg)
+    to = r["total"]
+    pin, pout = 3.0, 15.0  # claude-3-5-sonnet USD/MTok
+    exp_in = to["tokens_in"] * pin / 1e6
+    exp_out = to["tokens_out"] * pout / 1e6
+    check(abs(to["cost_in"] - exp_in) < 1e-9, "成本-进 按输入价", str(to["cost_in"]))
+    check(abs(to["cost_out"] - exp_out) < 1e-9, "成本-出 按输出价", str(to["cost_out"]))
+    check(abs(to["cost_total"] - (exp_in + exp_out)) < 1e-9, "成本-合计", str(to["cost_total"]))
+    bm = to["by_model"].get("claude-3-5-sonnet", {})
+    check(abs(bm.get("cost_in", 0) - exp_in) < 1e-9 and abs(bm.get("cost_out", 0) - exp_out) < 1e-9,
+          "按模型成本拆分", str(bm))
+    check(abs(to["by_project"].get("projA", {}).get("cost_total", 0) - (exp_in + exp_out)) < 1e-9,
+          "按项目成本分摊", str(to["by_project"]))
+    check(abs(to["conversations"][0]["cost_total"] - (exp_in + exp_out)) < 1e-9,
+          "会话级成本", str(to["conversations"][0]))
+
+    # 自定义单价覆盖
+    cfg2 = {"ai_sessions": {"enabled": True, "paths": {"opencode": [oc]},
+                            "costs": {"enabled": True, "model_pricing": {"claude-3-5-sonnet": [1.0, 2.0]}}}}
+    t2 = ai_sessions.collect(day, cfg2)["total"]
+    exp2 = to["tokens_in"] * 1.0 / 1e6 + to["tokens_out"] * 2.0 / 1e6
+    check(abs(t2["cost_total"] - exp2) < 1e-9, "自定义 pricing 生效", str(t2["cost_total"]))
+
+    # 关闭成本估算
+    cfg3 = {"ai_sessions": {"enabled": True, "paths": {"opencode": [oc]},
+                            "costs": {"enabled": False}}}
+    t3 = ai_sessions.collect(day, cfg3)["total"]
+    check(t3["cost_in"] == 0 and t3["cost_out"] == 0 and t3["cost_total"] == 0,
+          "costs.enabled=false 成本全 0", str(t3))
+
+    # 外部 ai_pricing.json（data_root 下用户定价文件）优先于 config 覆盖
+    root = os.path.join(tmp, "pricing_root")
+    os.makedirs(root, exist_ok=True)
+    with open(os.path.join(root, "ai_pricing.json"), "w", encoding="utf-8") as fh:
+        json.dump({"claude-3-5-sonnet": {"input": 7.0, "output": 70.0}}, fh)
+    t4 = ai_sessions.collect(day, {"ai_sessions": {"enabled": True, "paths": {"opencode": [oc]},
+                                                   "costs": {"model_pricing": {"claude-3-5-sonnet": [1.0, 2.0]}}},
+                                   "data_root": root})["total"]
+    exp4 = to["tokens_in"] * 7.0 / 1e6 + to["tokens_out"] * 70.0 / 1e6
+    check(abs(t4["cost_total"] - exp4) < 1e-9, "ai_pricing.json 覆盖（优先于 config）", str(t4["cost_total"]))
     shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -1871,6 +1997,8 @@ def main() -> int:
         test_updater_security,
         test_ai_sessions,
         test_ai_sessions_more_tools,
+        test_ai_sessions_phase1,
+        test_ai_sessions_costs,
         test_sqlite_store,
     ]
     for t in tests:

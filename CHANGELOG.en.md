@@ -8,6 +8,40 @@ Release flow: `git tag vX.Y.Z` → CI builds and publishes the Release automatic
 
 > 简体中文版: [CHANGELOG.md](CHANGELOG.md)
 
+## [2.3.0] - 2026-08-18
+
+### Added (ROADMAP Phase 1 · AI coding deep tracking v1.5)
+
+- **Turn tracking** (`ai_sessions.rounds`): counts Q/A pairs (user→assistant) inside local session files; also deep-parses browser visits into Web AI conversations (ChatGPT/Claude/Gemini chat pages grouped by conversation; returns/refreshes ≈ turns, best-effort)
+- **Token estimation** (`ai_sessions.token_estimation`, default on): CJK ≈ 1 token/char, other ≈ 1 token/4 chars, split into input/output tokens per tool and per conversation
+- **Breakdown by model** (`by_model`): extracts model names from message `model` fields or content patterns (Claude/GPT/DeepSeek/Qwen, etc.), aggregated to tool/total/conversation detail
+- **Breakdown by project** (`by_project`): extracts from cwd/project/repo fields, attributed conversation-level to avoid tool-dir noise, aggregated to tool/total/conversation detail
+- **AI session depth on by default**: `ai_sessions.enabled` now defaults to `true` (no opt-in needed; can be disabled in config)
+- **Dashboard "AI session details" panel**: fixed at the bottom of **Overview** (new `/api/ai-sessions` endpoint, always shown): summary cards (messages/turns/tokens in·out) + model/project distribution + local conversation table + Web AI sessions table
+- **Frontend restructure**: removed the separate session-depth panel/page; "AI Insights" is now its own feature and its **sidebar item is hidden when `insights.ai.enabled=false`** (rules stay in that page)
+- **Daily report "AI session depth" section**: summary + model/project distribution + local/Web conversation tables (on by default; shown whenever data exists)
+- **New `ai_sessions --web` CLI** to include browser-side Web AI conversations
+- **Config**: `ai_sessions.enabled` defaults to `true`; new `ai_sessions.token_estimation` (default `true`) and `ai_sessions.web_ai.enabled` (default `true`)
+
+### Added (ROADMAP Phase 3 · Cost & ROI)
+
+- **Per-model cost estimation**: built-in pricing table updated to the latest generations (GPT-5.x/4.1/o3/o4-mini, Claude Fable 5/Opus 5/Sonnet 5/Haiku 4.5, DeepSeek V4, Gemini 3.x/2.5, Qwen3/GLM-5/Kimi/Doubao/Grok-4, etc.); cost = model price × tokens (input/output split)
+- **Per-project cost allocation**: cost rolls up to projects through `by_project` (conversation-level), showing how much each project spent
+- **Cost data everywhere**: `tools` / `total` / `by_model` / `by_project` / conversation details all carry `cost_in` / `cost_out` / `cost_total`
+- **Overview panel**: new "cost estimate" card; cost columns added to model/project distribution and conversation table
+- **Daily report "AI session depth" section**: cost summary and per-model/per-project cost display
+- **CLI shows cost** in `ai_sessions --json` and text output
+- **New config**: `ai_sessions.costs.enabled` (default `true`), `ai_sessions.costs.model_pricing` (empty by default)
+- **Two ways to override a price**: ① config `ai_sessions.costs.model_pricing` (`{"gpt-5": [1.25, 10]}` or `{"...": {"input":..,"output":..}}`); ② drop an `ai_pricing.json` in the data directory (same format, highest priority, easy to maintain without touching config). Since prices drift, users are encouraged to maintain their own.
+
+### Testing
+
+- New `test_ai_sessions_costs`: per-model pricing / per-project allocation / custom price override / `costs.enabled=false` off path
+
+### Testing
+
+- Extended `test_ai_sessions` with rounds/tokens/by_model/by_project assertions
+- Added `test_ai_sessions_phase1`: multi-turn conversation, model/project breakdown, conversation details, Web AI sessions (including disabled-switch paths)
 ## [2.2.0] - 2026-08-17
 
 ### Added

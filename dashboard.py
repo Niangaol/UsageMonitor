@@ -647,9 +647,9 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4.5h12v7H2z"/><path d="M2 7h12"/><path d="M6 4.5V9M10 4.5V9"/></svg>
         分组
       </a>
-      <a class="nav-item" data-view="insights" href="#">
+      <a class="nav-item" data-view="insights" id="navInsights" href="#">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.6c3.2 0 5.4 2.1 5.4 4.9 0 2.1-1.2 3.3-2 4.4-.4.6-.8 1-.8 1.6H5.4c0-.6-.4-1-.8-1.6-.8-1.1-2-2.3-2-4.4 0-2.8 2.2-4.9 5.4-4.9z"/><path d="M6.9 14.5h2.2"/></svg>
-        洞察
+        AI 洞察
       </a>
       <a class="nav-item" data-view="settings" href="#">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3M3.4 3.4l2.1 2.1M10.5 10.5l2.1 2.1M12.6 3.4l-2.1 2.1M5.5 10.5l-2.1 2.1"/><circle cx="8" cy="8" r="2.2"/></svg>
@@ -683,6 +683,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         <div class="panel"><h2>今日应用 Top 10</h2><div id="ovApps"></div></div>
         <div class="panel"><h2>AI 工具 / 联系人</h2><div id="ovMisc"></div></div>
       </div>
+      <div class="panel"><h2>AI 会话深度 <span class="hint">本地会话 + 浏览器 Web AI 会话 · 始终开启</span></h2><div id="ovAiSessions"></div></div>
     </section>
 
     <!-- 趋势 -->
@@ -803,10 +804,6 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         </div>
         <div class="set-note" id="inAiError" style="display:none"></div>
         <div id="inAiCards" style="margin-top:12px"></div>
-      </div>
-      <div class="panel">
-        <h2>AI 会话深度 <span class="hint">可选 · 读取本地会话文件 · 默认关闭</span></h2>
-        <div class="set-note" id="inAiSessions" style="margin-top:6px"></div>
       </div>
       <div class="panel">
         <h2>AI 洞察模块 <span class="hint">客制化 · 持久化于数据目录 ai_custom.json · 可导入导出</span></h2>
@@ -1218,6 +1215,12 @@ async function loadOverview(){
   const ctBlock = '<div><b style="font-size:12px;color:var(--dim);letter-spacing:.4px">联系人</b>' +
     ((a.by_contact && Object.keys(a.by_contact).length) ? statRows(Object.fromEntries(Object.entries(a.by_contact).flatMap(([app,cs])=>Object.entries(cs).map(([c,v])=>[app+"/"+c, v]))), fmtMs) : '<div class="empty">（无联系人记录）</div>') + '</div>';
   $("#ovMisc").innerHTML = aiBlock + ctBlock;
+  // AI 会话深度（始终开启，固定面板）
+  $("#ovAiSessions").innerHTML = '<div class="empty">加载中…</div>';
+  try{
+    const sd = await api("/api/ai-sessions?date=" + state.day);
+    renderAiSessions(sd.ai_sessions);
+  }catch(e){ $("#ovAiSessions").innerHTML = '<div class="empty">加载失败</div>'; }
   const days = await api("/api/days?n=14");
   drawBarChart($("#ovTrend"), days.days.map(x=>x.date), days.days.map(x=>x.total_ms),
     v => v>=3600000 ? (v/3600000).toFixed(1)+"h" : Math.round(v/60000)+"m");
@@ -1760,31 +1763,106 @@ async function loadInsights(){
     ? d.rules.map(insightCardHTML).join("")
     : '<div class="empty">当日暂无规则洞察（数据为空或 insights.enabled=false）</div>';
   renderAiPanel(d);
-  renderAiSessions(d);
   loadAiModule().catch(() => { /* 模块面板加载失败不影响规则/AI 展示 */ });
 }
-function renderAiSessions(d){
-  const el = $("#inAiSessions");
+function aiStatCard(label, val, extra){
+  return '<div style="flex:1;min-width:118px;padding:9px 12px;border:1px solid var(--border);border-radius:10px">'+
+    '<div style="font-size:11px;color:var(--faint)">'+esc(label)+'</div>'+
+    '<div style="font-size:18px;font-weight:600;margin-top:2px">'+esc(String(val))+'</div>'+
+    (extra ? '<div style="font-size:11px;color:var(--dim);margin-top:2px">'+esc(extra)+'</div>' : '')+
+    '</div>';
+}
+function fmtCost(v){
+  v = Number(v || 0);
+  if(!v) return "$0";
+  if(v < 0.01) return "$" + v.toFixed(4);
+  if(v < 1) return "$" + v.toFixed(3);
+  return "$" + v.toFixed(2);
+}
+function renderAiSessions(s){
+  const el = $("#ovAiSessions");
   if(!el) return;
-  if(!d.ai_sessions_enabled){
-    el.innerHTML = '未开启（config.json: ai_sessions.enabled=false）。开启后仅读取本地 AI 会话文件，不上传任何数据。';
+  if(!s || s.enabled === false){
+    el.innerHTML = 'AI 会话深度未开启（config.json: ai_sessions.enabled=false）。';
     return;
   }
-  const s = d.ai_sessions;
   if(!s || !s.found){
-    el.innerHTML = '未发现所选日期的本地 AI 会话记录（可配置 ai_sessions.paths 指向会话目录）。';
+    el.innerHTML = '当日未发现 AI 会话记录（本地会话文件或浏览器 Web AI 会话）。';
     return;
-  }
-  let html = "";
-  for(const [tool, st] of Object.entries(s.tools || {})){
-    html += '<div style="margin:6px 0"><b>'+esc(tool)+'</b> · 文件 '+st.files+' · 消息/轮数 '+st.turns+
-            ' · 用户 '+st.user_messages+' / 助手 '+st.assistant_messages+
-            ' · 生成 '+st.generated_lines+' 行 / '+st.generated_chars+' 字符</div>';
   }
   const t = s.total || {};
-  html += '<div class="hint" style="margin-top:4px">合计：'+t.turns+' 条消息，生成 '+t.generated_lines+' 行</div>';
+  const web = s.web_ai || {};
+  let html = "";
+
+  html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 4px">'+
+    aiStatCard("消息", t.turns)+
+    aiStatCard("对话轮次", t.rounds, "user→assistant 配对")+
+    aiStatCard("Token 进", t.tokens_in, "≈ 输入折算")+
+    aiStatCard("Token 出", t.tokens_out, "≈ 生成折算")+
+    aiStatCard("成本估算", fmtCost(t.cost_total), "USD · 模型定价估算")+
+    '</div>';
+
+  // 按工具
+  const toolNames = Object.keys(s.tools || {});
+  if(toolNames.length){
+    html += '<div class="hint" style="margin-top:8px">按工具：';
+    html += toolNames.map(tn => {
+      const st = s.tools[tn];
+      return '<b>'+esc(tn)+'</b>('+st.turns+' 条 / '+st.rounds+' 轮'+
+             (st.tokens_out ? ' · '+st.tokens_out+' tok 出' : '')+
+             (st.generated_lines ? ' · '+st.generated_lines+' 行' : '')+')';
+    }).join('　');
+    html += '</div>';
+  }
+
+  // 模型 / 项目分布
+  const topK = (obj, k) => Object.entries(obj||{}).sort((a,b)=>b[1].turns-a[1].turns).slice(0,k);
+  const byModel = t.by_model || {}, byProj = t.by_project || {};
+  const mList = topK(byModel, 5).map(e=>esc(e[0])+' '+e[1].turns+' 条 · '+fmtCost(e[1].cost_total));
+  if(mList.length) html += '<div class="hint">模型分布：'+mList.join('，')+'</div>';
+  const pList = topK(byProj, 6).map(e=>esc(e[0])+' '+e[1].turns+' 条 · '+fmtCost(e[1].cost_total));
+  if(pList.length) html += '<div class="hint">项目分布：'+pList.join('，')+'</div>';
+
+  // 本地会话详情表
+  const convs = t.conversations || [];
+  if(convs.length){
+    html += '<div style="margin-top:10px"><b style="font-size:13px">会话详情（本地 · 前 '+convs.length+'）</b>'+
+            '<span class="hint"> 轮次=完成一轮问答；Token 出=生成折算</span></div>';
+    html += '<div class="tbl-wrap"><table class="tbl"><thead><tr>'+
+      '<th>工具</th><th>会话</th><th>模型</th><th>项目</th><th>轮次</th><th>消息</th><th>Token 出</th><th>成本</th><th>时段</th></tr></thead><tbody>';
+    for(const c of convs){
+      html += '<tr><td>'+esc(c.tool)+'</td><td title="'+esc(c.id)+'">'+esc(c.id.length>26 ? c.id.slice(0,26)+'…' : c.id)+'</td>'+
+              '<td>'+esc(c.model)+'</td><td>'+esc(c.project)+'</td><td>'+c.rounds+'</td><td>'+c.turns+'</td><td>'+c.tokens_out+'</td>'+
+              '<td>'+fmtCost(c.cost_total)+'</td>'+
+              '<td>'+esc((c.first||'').slice(11,16)+'~'+(c.last||'').slice(11,16))+'</td></tr>';
+    }
+    html += '</tbody></table></div>';
+  }
+
+  // Web AI 会话（浏览器侧）
+  if(web && web.found){
+    html += '<div style="margin-top:10px"><b style="font-size:13px">Web AI 会话 <span class="hint">浏览器历史深度解析 · 尽力而为</span></b></div>';
+    html += '<div class="hint">'+web.conversations+' 个会话 · '+web.turns+' 次页面访问（同一会话页面的每次返回/刷新 ≈ 1 轮）</div>';
+    const wt = web.by_tool || {};
+    if(Object.keys(wt).length){
+      html += '<div class="hint">按工具：'+Object.entries(wt).map(e=>'<b>'+esc(e[0])+'</b>('+e[1].conversations+' 会话 / '+e[1].turns+' 次)').join('，')+'</div>';
+    }
+    const ws = web.sessions || [];
+    if(ws.length){
+      html += '<div class="tbl-wrap"><table class="tbl"><thead><tr>'+
+        '<th>工具</th><th>会话 ID</th><th>标题</th><th>访问次数</th><th>时段</th></tr></thead><tbody>';
+      for(const w of ws){
+        html += '<tr><td>'+esc(w.tool)+'</td><td>'+esc(w.id)+'</td><td>'+esc(w.title||'-')+'</td><td>'+w.visits+'</td>'+
+                '<td>'+esc((w.first||'').slice(11)+' → '+(w.last||'').slice(11))+'</td></tr>';
+      }
+      html += '</tbody></table></div>';
+    }
+    html += '<div class="hint" style="margin-top:4px">注：聊天 SPA 页面在回复时不新增历史条目的情况较多，访问次数仅作「轮次」的近似估算，非精确值。</div>';
+  }
   el.innerHTML = html;
 }
+
+
 function renderAiPanel(d){
   const btn = $("#inGen"), meta = $("#inAiMeta"), err = $("#inAiError"), cards = $("#inAiCards");
   if(btn) btn.disabled = false;
@@ -2143,7 +2221,7 @@ function startApp(){
   // 加载日期
   $("#pageSub").textContent = "数据目录：" + ROOT_DIR;
   $("#rootPath").textContent = ROOT_DIR;
-  Promise.all([api("/api/dates")]).then(async ([dates]) => {
+  Promise.all([api("/api/dates"), api("/api/insights/settings").catch(()=>({ai_enabled:true}))]).then(async ([dates, set]) => {
     state.dates = dates.dates || [];
     $("#daySel").innerHTML = state.dates.map(d=>'<option value="'+d+'">'+d+'</option>').join("");
     state.day = state.dates.length ? state.dates[state.dates.length-1] : todayStr();
@@ -2157,7 +2235,12 @@ function startApp(){
     // URL 视图
     const qs = new URLSearchParams(location.search);
     const v = qs.get("view");
-    const target = v && TITLES[v] ? v : "overview";
+    let target = v && TITLES[v] ? v : "overview";
+    if(set && set.ai_enabled === false){
+      const ni = document.getElementById("navInsights");
+      if(ni) ni.style.display = "none";
+      if(target === "insights") target = "overview";
+    }
     groupsInit();
     armLogTimer();
     window.addEventListener("resize", ()=>{
@@ -2414,6 +2497,28 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"date": date, "aggregate": report.aggregate(date, root)})
             return
 
+        if path == "/api/ai-sessions":
+            # AI 会话深度（默认开启，数据源为本地 AI 会话文件 + 浏览器 Web AI 会话）
+            date = self._valid_date(query)
+            if not date:
+                self._send_json({"error": "invalid date"}, 400)
+                return
+            config = _load_config_for_root(root, self.server.config_path)
+            try:
+                import ai_sessions  # noqa: PLC0415
+                web_visits = None
+                try:
+                    import browser_history  # noqa: PLC0415
+                    bh = browser_history.collect(date, root, config)
+                    web_visits = bh.get("visits") or []
+                except Exception:  # noqa: BLE001 —— Web 解析失败不影响本地统计
+                    web_visits = None
+                data = ai_sessions.collect(date, config, web_visits=web_visits)
+                self._send_json({"date": date, "ai_sessions": data})
+            except Exception as exc:  # noqa: BLE001 —— 会话深度失败不拖垮概览
+                self._send_json({"error": f"ai-sessions unavailable: {exc}"}, 500)
+            return
+
         if path == "/api/insights":
             # 规则即时计算（离线）；AI 只读缓存/按需生成（成功才写缓存）
             date = self._valid_date(query)
@@ -2435,20 +2540,9 @@ class Handler(BaseHTTPRequestHandler):
                 if ai_enabled:
                     ai = insights.ai_insights(date, root, config, refresh=False)
                     ai["provider"] = str(ai_cfg.get("provider") or "")
-                ai_sessions_cfg = config.get("ai_sessions") if isinstance(config.get("ai_sessions"), dict) else {}
-                ai_sessions_enabled = bool(ai_sessions_cfg.get("enabled", False))
-                ai_sessions_data = None
-                if ai_sessions_enabled:
-                    try:
-                        import ai_sessions  # noqa: PLC0415
-                        ai_sessions_data = ai_sessions.collect(date, config)
-                    except Exception:  # noqa: BLE001
-                        ai_sessions_data = None
                 self._send_json({
                     "date": date, "rules": rules,
                     "ai_enabled": ai_enabled, "ai": ai,
-                    "ai_sessions_enabled": ai_sessions_enabled,
-                    "ai_sessions": ai_sessions_data,
                 })
             except Exception as exc:  # noqa: BLE001 —— 洞察失败不拖垮仪表盘
                 self._send_json({"error": f"insights unavailable: {exc}"}, 500)
@@ -2460,8 +2554,12 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 import insights  # noqa: PLC0415
                 custom = insights.load_ai_custom(root)
+                ins_cfg = config.get("insights") if isinstance(config.get("insights"), dict) else {}
+                ai_cfg = ins_cfg.get("ai") if isinstance(ins_cfg.get("ai"), dict) else {}
+                ai_enabled = bool(ins_cfg.get("enabled", True) and ai_cfg.get("enabled"))
                 self._send_json({
                     "ai": _ai_settings_view(config),
+                    "ai_enabled": ai_enabled,
                     "presets": insights.list_provider_presets(custom.get("providers")),
                 })
             except Exception as exc:  # noqa: BLE001

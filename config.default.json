@@ -1209,8 +1209,16 @@
     "enabled": true
   },
   "ai_sessions": {
-    "enabled": false,
-    "paths": {}
+    "enabled": true,
+    "paths": {},
+    "token_estimation": true,
+    "web_ai": {
+      "enabled": true
+    },
+    "costs": {
+      "enabled": true,
+      "model_pricing": {}
+    }
   },
   "_comment": "分类与阈值规则，可编辑；修改后重启 monitor 生效"
 }

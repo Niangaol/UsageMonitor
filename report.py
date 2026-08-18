@@ -374,6 +374,79 @@ def _browser_daily(date_str: str, data_root: str, max_rows: int | None = None) -
         return None, None
 
 
+def _ai_sessions_daily(date_str: str, data_root: str, max_rows: int | None = None) -> str | None:
+    """生成日报「AI 会话深度」章节（ROADMAP Phase 1 的可选展示）。
+
+    需 config.json 里 ai_sessions.enabled=true；只读本地会话文件与浏览器访问
+    明细，绝不联网。无任何数据时返回 None（日报主体不受影响）。
+    """
+    try:
+        import classifier  # noqa: PLC0415 —— 惰性导入避免循环依赖
+        import ai_sessions  # noqa: PLC0415
+        config_path = os.path.join(data_root, "config.json")
+        config = classifier.load_config(config_path) if os.path.isfile(config_path) else classifier.load_config()
+        ai_cfg = config.get("ai_sessions") or {}
+        if not isinstance(ai_cfg, dict) or not ai_cfg.get("enabled"):
+            return None
+        web_visits = []
+        try:
+            import browser_history  # noqa: PLC0415
+            web_visits = browser_history.collect(date_str, data_root, config).get("visits") or []
+        except Exception:  # noqa: BLE001 —— Web 解析失败不影响本地统计
+            web_visits = []
+        data = ai_sessions.collect(date_str, config, web_visits=web_visits or None)
+        total = data.get("total") or {}
+        web = data.get("web_ai") or {}
+        if not data.get("found"):
+            return None
+
+        out: list[str] = ["## AI 会话深度", ""]
+        out.append(f"- 本地会话：消息 {total.get('turns', 0)} 条 / 对话轮次 {total.get('rounds', 0)} 轮，"
+                   f"Token 估算 进 {total.get('tokens_in', 0)} / 出 {total.get('tokens_out', 0)}，"
+                   f"成本估算 {ai_sessions._fmt_cost(total.get('cost_total', 0))}")
+        if data.get("tools"):
+            sub = "；".join(
+                f"{tool} {st.get('turns', 0)} 条/{st.get('rounds', 0)} 轮"
+                for tool, st in data["tools"].items()
+            )
+            out.append(f"- 按工具：{sub}")
+        models = sorted((total.get("by_model") or {}).items(), key=lambda kv: -kv[1]["turns"])[:6]
+        if models:
+            sub = "；".join(f"{m} {v['turns']} 条 · {ai_sessions._fmt_cost(v['cost_total'])}" for m, v in models)
+            out.append(f"- 模型分布：{sub}")
+        projects = sorted((total.get("by_project") or {}).items(), key=lambda kv: -kv[1]["turns"])[:6]
+        if projects:
+            sub = "；".join(f"{p} {v['turns']} 条 · {ai_sessions._fmt_cost(v['cost_total'])}" for p, v in projects)
+            out.append(f"- 项目分布：{sub}")
+        if web.get("found"):
+            out.append(f"- Web AI 会话（浏览器历史深度解析）：{web['conversations']} 个会话 / "
+                       f"{web['turns']} 次页面访问（≈轮次，尽力而为）")
+        out.append("")
+
+        convs = (total.get("conversations") or [])[: (max_rows or 10)]
+        if convs:
+            rows = [[
+                c.get("tool", ""), str(c.get("id", ""))[:30], c.get("model", "-"),
+                c.get("project", "-"), str(c.get("rounds", 0)), str(c.get("turns", 0)),
+                str(c.get("tokens_out", 0)), ai_sessions._fmt_cost(c.get("cost_total", 0)),
+            ] for c in convs]
+            out.append(_md_table(["工具", "会话", "模型", "项目", "轮次", "消息", "Token 出", "成本"], rows))
+            out.append("")
+        if web.get("found") and web.get("sessions"):
+            rows = [[
+                s.get("tool", ""), str(s.get("id", ""))[:30], str(s.get("title", "") or "-"),
+                str(s.get("visits", 0)),
+            ] for s in web["sessions"][: (max_rows or 10)]]
+            out.append(_md_table(["Web 工具", "会话 ID", "标题", "访问次数"], rows))
+            out.append("")
+        out.append("注：Token 为长度折算的估算值；成本为按模型定价表（USD/百万 Token）的估算，"
+                   "可用 config 的 ai_sessions.costs.model_pricing 自定义单价；对话轮次为消息序列中 "
+                   "user→assistant 陪对数；Web 会话访问次数为浏览器侧轮次的近似。所有解析均在本地完成，不上传任何数据。")
+        return "\n".join(out)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _inventory_summary(date_str: str, data_root: str) -> dict | None:
     """读取当日软件清单快照并汇总；无快照返回 None。"""
     path = os.path.join(data_root, date_str, "software_inventory.json")
@@ -475,6 +548,12 @@ def generate_consolidated_md(date_str: str, data_root: str, full_urls: bool = Fa
     body = _build_session_sections(agg)
     if body.strip():
         out.append(body)
+        out.append("")
+
+    # AI 会话深度（可选：ai_sessions.enabled=true 且有数据）
+    ai_section = _ai_sessions_daily(date_str, data_root)
+    if ai_section:
+        out.append(ai_section)
         out.append("")
 
     # 浏览器访问明细
