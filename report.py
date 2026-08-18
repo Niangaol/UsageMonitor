@@ -490,9 +490,32 @@ def _insights_section(agg: dict, date_str: str, data_root: str) -> str | None:
                     - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
         prev_agg = aggregate(prev_day, data_root)
         rules = insights.rule_insights(agg, config, prev_agg)
-        if not rules:
+        # 行为洞察（Phase 4 · 离线）：专注度评分 + 死循环检测
+        behavior = insights.behavior_insights(agg, config)
+        behavior_lines: list[str] = []
+        if behavior.get("focus_score") or behavior.get("death_loop"):
+            bd = behavior.get("breakdown") or {}
+            grade = behavior.get("grade") or "—"
+            comment = ("节奏好，建议保持" if grade == "高"
+                       else "尚可，可减少高频小切换" if grade == "中"
+                       else "易分心，建议用整块时间做深度任务")
+            focus = int(behavior.get("focus_score") or 0)
+            longest = _fmt_ms(int((bd.get("longest_session_s") or 0) * 1000))
+            sw_ph = bd.get("switch_per_hour") or 0
+            behavior_lines.append(
+                f"- [专注] 今日专注度 {focus}/100（{grade}），最长专注 {longest}，"
+                f"每小时切换 {sw_ph} 次；{comment}")
+            dl = behavior.get("death_loop")
+            if dl:
+                apps = "、".join(dl.get("apps") or [])
+                window = _fmt_ms(int((dl.get("window_s") or 0) * 1000))
+                behavior_lines.append(
+                    f"- [效率] ⚠ 疑似死循环切换：{dl['count']} 次短会话高频切换"
+                    f"（{dl['distinct_apps']} 个应用：{apps}），约 {window} —— 建议合并任务、减少无效往返")
+        rule_lines = [f"- [{r['title']}] {r['detail']}" for r in rules]
+        if not behavior_lines and not rule_lines:
             return None
-        return "\n".join(f"- [{rule['title']}] {rule['detail']}" for rule in rules)
+        return "\n".join(behavior_lines + rule_lines)
     except Exception:  # noqa: BLE001
         return None
 

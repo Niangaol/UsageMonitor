@@ -62,7 +62,8 @@
 - ✅ 按项目拆分（`by_project`，cwd/project/repo 字段，会话级归口）
 - ✅ 仪表盘「AI 会话详情」面板 + 日报「AI 会话深度」章节 + `ai_sessions --web` CLI
 - ✅ Phase 3 成本与 ROI（按模型计价 / 按项目分摊 / 成本面板与日报成本章节）
-- ⏸️ Phase 2 采纳率/留存率（需 IDE 插件 + Git 分析）· Phase 4 行为洞察（死循环/专注度/人格）
+- ✅ Phase 4 行为洞察（死循环检测 + 专注度评分；洞察页面板 + 日报今日建议）
+- ⏸️ Phase 2 采纳率/留存率（需 IDE 插件 + Git 分析）· Phase 4 的 Vibe Coding 人格分析待续
 ### 更多应用适配
 - ✅ 常用软件显示名/分类补充（Obsidian/Notion/Slack/Teams/企业微信/飞书/WhatsApp/LINE/Skype/Steam/Epic/Spotify/VLC/PowerToys/uTools 等）
 - ✅ 社交软件识别补充（企业微信/飞书/Slack/Teams/WhatsApp/LINE/Skype）
@@ -80,7 +81,7 @@
 | 2 | AI 会话解析精度 | 第三方工具格式差异较大，目前 best-effort，可能统计缺失 |
 | 3 | GitHub Pages 只做简单 landing | 如需完整文档站可继续扩展（当前够用） |
 | 4 | 周报/月报多语言 / UI 多语言 | 可选，当前 UI 中文 |
-| 5 | ROADMAP Phase 1 已落地（v2.3.0 规划） | 对话轮次/Token估算/按模型·项目拆分/会话详情面板/报告章节 ☆ 见 [docs/ROADMAP.md](docs/ROADMAP.md)；Phase 3 成本与 ROI 已落地；Phase 2 质量分析、Phase 4 行为洞察仍未做 |
+| 5 | ROADMAP Phase 1 已落地（v2.3.0 规划） | 对话轮次/Token估算/按模型·项目拆分/会话详情面板/报告章节 ☆ 见 [docs/ROADMAP.md](docs/ROADMAP.md)；Phase 3 成本与 ROI、Phase 4 行为洞察（死循环/专注度）已落地；Phase 2 质量分析与人格分析仍未做 |
 
 ---
 

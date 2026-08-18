@@ -1190,6 +1190,16 @@
       "study_goal_hours": 1,
       "game_ratio_warn": 0.4
     },
+    "behavior": {
+      "short_session_s": 60,
+      "switch_gap_s": 45,
+      "death_loop_min_flips": 6,
+      "death_loop_distinct_apps": 3,
+      "death_loop_window_s": 420,
+      "focus_long_min": 45,
+      "focus_switch_per_hour": 40,
+      "focus_coding_categories": ["开发", "代码", "AI编程", "编码", "开发工具", "编写"]
+    },
     "ai": {
       "enabled": false,
       "provider": "opencodego",

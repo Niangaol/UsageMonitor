@@ -797,6 +797,10 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         <div class="grid" id="inRules" style="margin-top:12px"></div>
       </div>
       <div class="panel">
+        <h2>行为洞察 <span class="hint">专注度评分 · 死循环检测 · 离线</span></h2>
+        <div id="inBehavior"></div>
+      </div>
+      <div class="panel">
         <h2>AI 洞察 <span class="hint">可选 · OpenAI 兼容 API · 默认关闭</span></h2>
         <div class="controls" style="margin-bottom:12px">
           <button class="btn primary" id="inGen">生成 AI 洞察</button>
@@ -1763,6 +1767,7 @@ async function loadInsights(){
     ? d.rules.map(insightCardHTML).join("")
     : '<div class="empty">当日暂无规则洞察（数据为空或 insights.enabled=false）</div>';
   renderAiPanel(d);
+  renderBehavior(d.behavior);
   loadAiModule().catch(() => { /* 模块面板加载失败不影响规则/AI 展示 */ });
 }
 function aiStatCard(label, val, extra){
@@ -1863,6 +1868,34 @@ function renderAiSessions(s){
 }
 
 
+function renderBehavior(b){
+  const el = $("#inBehavior");
+  if(!el) return;
+  b = b || {};
+  const bd = b.breakdown || {};
+  if(!b.focus_score && !b.grade && !b.death_loop){
+    el.innerHTML = '<div class="empty">当日暂无行为数据（无会话或 insights.enabled=false）</div>';
+    return;
+  }
+  const secs = v => { v = Number(v||0);
+      if(v >= 3600) return (v/3600).toFixed(1)+" 小时";
+      if(v >= 60) return Math.round(v/60)+" 分钟";
+      return Math.round(v)+" 秒"; };
+  let html = '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 4px">'+
+    aiStatCard("专注度评分", b.focus_score + " / 100", "等级 " + esc(b.grade || "—"))+
+    aiStatCard("会话数", bd.session_count || 0, "平均 " + secs(bd.avg_session_s))+
+    aiStatCard("最长专注", secs(bd.longest_session_s), "编码占比 " + Math.round((bd.coding_ratio||0)*100) + "%")+
+    aiStatCard("切换次数", bd.switch_count || 0, (bd.switch_per_hour||0) + " 次/小时")+
+    '</div>';
+  const dl = b.death_loop;
+  if(dl){
+    html += '<div style="margin-top:8px;padding:9px 11px;border:1px solid var(--danger);border-radius:8px;color:var(--danger)">'+
+      '<b>⚠ 疑似死循环切换</b> — ' + dl.count + ' 次短会话高频切换，涉及 ' + dl.distinct_apps +
+      ' 个应用（' + esc((dl.apps||[]).join('、')) + '），窗口约 ' + secs(dl.window_s) + '</div>';
+  }
+  html += '<div class="hint" style="margin-top:6px">专注度 = 最长专注段(45%) + 编码占比(30%) − 切换负担(25%)，离线计算，不入库不上传。</div>';
+  el.innerHTML = html;
+}
 function renderAiPanel(d){
   const btn = $("#inGen"), meta = $("#inAiMeta"), err = $("#inAiError"), cards = $("#inAiCards");
   if(btn) btn.disabled = false;
@@ -2540,9 +2573,11 @@ class Handler(BaseHTTPRequestHandler):
                 if ai_enabled:
                     ai = insights.ai_insights(date, root, config, refresh=False)
                     ai["provider"] = str(ai_cfg.get("provider") or "")
+                behavior = insights.behavior_insights(agg, config)
                 self._send_json({
                     "date": date, "rules": rules,
                     "ai_enabled": ai_enabled, "ai": ai,
+                    "behavior": behavior,
                 })
             except Exception as exc:  # noqa: BLE001 —— 洞察失败不拖垮仪表盘
                 self._send_json({"error": f"insights unavailable: {exc}"}, 500)

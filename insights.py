@@ -48,6 +48,18 @@ _DEFAULT_RULES = {
     "game_ratio_warn": 0.4,
 }
 
+# 行为洞察（Phase 4）默认阈值：专注度评分 + 死循环检测
+_DEFAULT_BEHAVIOR = {
+    "short_session_s": 60,
+    "switch_gap_s": 45,
+    "death_loop_min_flips": 6,
+    "death_loop_distinct_apps": 3,
+    "death_loop_window_s": 420,
+    "focus_long_min": 45,
+    "focus_switch_per_hour": 40,
+    "focus_coding_categories": ["开发", "代码", "AI编程", "编码", "开发工具", "编写"],
+}
+
 _DEFAULT_AI = {
     "enabled": False,
     "provider": "opencodego",
@@ -135,6 +147,7 @@ def _insights_config(config: dict) -> dict:
         "enabled": bool(ins.get("enabled", True)),
         "in_report": bool(ins.get("in_report", True)),
         "rules": _merge_dict(_DEFAULT_RULES, ins.get("rules") if isinstance(ins.get("rules"), dict) else None),
+        "behavior": _merge_dict(_DEFAULT_BEHAVIOR, ins.get("behavior") if isinstance(ins.get("behavior"), dict) else None),
         "ai": _merge_dict(_DEFAULT_AI, ins.get("ai") if isinstance(ins.get("ai"), dict) else None),
     }
 
@@ -476,6 +489,156 @@ def rule_insights(agg: dict, config: dict, prev_agg: dict | None = None) -> list
             })
 
     return out
+
+
+def _is_coding_category(cat, keywords) -> bool:
+    """类别名是否属于“编码/开发”口径。"""
+    return any(k in str(cat) for k in keywords)
+
+
+def _gap_seconds(prev: dict, cur: dict) -> float | None:
+    """上一条结束到当前开始的时间间隔（秒）；解析失败返回 None。"""
+    try:
+        end = datetime.datetime.fromisoformat(prev.get("end") or prev.get("start") or "")
+        start = datetime.datetime.fromisoformat(cur.get("start") or cur.get("end") or "")
+    except (ValueError, TypeError):
+        return None
+    return max(0.0, (start - end).total_seconds())
+
+
+def _detect_death_loop(flips: list[dict], cfg: dict) -> dict | None:
+    """死循环检测：在滚动时间窗内密集的短会话高频切换（≥min_flips 次、涉及 ≥distinct_apps 个应用）。
+
+    flips 为已按时间升序整理的{start, apps:[A,B]}样本。命中返回描述，否则 None。
+    """
+    min_flips = max(2, int(cfg.get("death_loop_min_flips", 6) or 6))
+    distinct = max(2, int(cfg.get("death_loop_distinct_apps", 3) or 3))
+    window_s = float(cfg.get("death_loop_window_s", 420) or 420)
+    if len(flips) < min_flips:
+        return None
+
+    def _ts(f):
+        try:
+            return datetime.datetime.fromisoformat(f.get("start") or "").timestamp()
+        except (ValueError, TypeError):
+            return float("inf")
+
+    best = None
+    for i in range(len(flips)):
+        j = i
+        apps = set()
+        while j < len(flips) and _ts(flips[j]) - _ts(flips[i]) <= window_s:
+            apps.update(flips[j].get("apps") or [])
+            j += 1
+        cnt = j - i
+        if cnt >= min_flips and len(apps) >= distinct:
+            best = {
+                "count": cnt,
+                "distinct_apps": len(apps),
+                "window_s": round(_ts(flips[j - 1]) - _ts(flips[i]), 1),
+                "window_start": flips[i].get("start"),
+                "window_end": flips[j - 1].get("start"),
+                "apps": sorted(apps),
+            }
+            break
+    return best
+
+
+def behavior_insights(agg: dict, config: dict | None = None) -> dict:
+    """行为洞察（Phase 4 · 离线规则）：专注度评分 + 死循环检测。
+
+    输入 report.aggregate() 结果，输出：
+    {
+      "focus_score": 0-100,
+      "grade": "高"|"中"|"低",
+      "breakdown": {total_min, session_count, avg_session_s, longest_session_s,
+                    switch_count, switch_per_hour, short_session_ratio, coding_ratio},
+      "death_loop": None 或 {count, distinct_apps, window_s, window_start, window_end, apps}
+    }
+    仅当 insights.enabled 且有会话时计算；否则返回 0/低/无。
+    """
+    ins = _insights_config(config or {})
+    empty = {"focus_score": 0, "grade": "低",
+             "breakdown": {"total_min": 0.0, "session_count": 0, "avg_session_s": 0.0,
+                           "longest_session_s": 0.0, "switch_count": 0, "switch_per_hour": 0.0,
+                           "short_session_ratio": 0.0, "coding_ratio": 0.0},
+             "death_loop": None}
+    if not ins["enabled"]:
+        return empty
+    sessions = [s for s in (agg.get("sessions") or []) if isinstance(s, dict) and int(s.get("duration_ms") or 0) > 0]
+    if not sessions:
+        return empty
+    bh = ins["behavior"]
+    short_s = float(bh.get("short_session_s", 60) or 60)
+
+    def _key(s):
+        try:
+            return datetime.datetime.fromisoformat(s.get("start") or "")
+        except (ValueError, TypeError):
+            return datetime.datetime.min
+
+    ordered = sorted(sessions, key=_key)
+    n = len(ordered)
+    durs = [int(s.get("duration_ms") or 0) for s in ordered]
+    total_ms = max(int(agg.get("total_active_ms") or 0), sum(durs))
+    total_min = total_ms / 60000.0 if total_ms else 0.0
+    longest_ms = max(durs)
+    avg_ms = sum(durs) / n
+    short_ratio = sum(1 for d in durs if d < short_s * 1000) / n
+
+    # 切换 + 死循环 flips
+    switch_count = 0
+    flips: list[dict] = []
+    gap_s = float(bh.get("switch_gap_s", 45) or 45)
+    for i, cur in enumerate(ordered):
+        app = cur.get("app") or cur.get("exe") or "未知"
+        if i == 0:
+            continue
+        prev = ordered[i - 1]
+        prev_app = prev.get("app") or prev.get("exe") or "未知"
+        if app != prev_app:
+            switch_count += 1
+            if int(prev.get("duration_ms") or 0) < short_s * 1000 and int(cur.get("duration_ms") or 0) < short_s * 1000:
+                gap = _gap_seconds(prev, cur)
+                if gap is not None and gap <= gap_s:
+                    flips.append({"start": cur.get("start") or "", "apps": [prev_app, app]})
+
+    # 编码类时长占比
+    coding_ms = 0
+    by_category = agg.get("by_category") if isinstance(agg.get("by_category"), dict) else {}
+    keywords = tuple(bh.get("focus_coding_categories") or [])
+    for cat, ms in by_category.items():
+        if _is_coding_category(cat, keywords):
+            coding_ms += int(ms or 0)
+    coding_ratio = coding_ms / total_ms if total_ms else 0.0
+
+    # 专注度评分（0-100）
+    focus_long_min = float(bh.get("focus_long_min", 45) or 45)
+    focus_switch_ph = float(bh.get("focus_switch_per_hour", 40) or 40)
+    longest_min = longest_ms / 60000.0
+    focus = min(1.0, longest_min / focus_long_min) * 45
+    focus += coding_ratio * 30
+    sw_per_hour = switch_count / (total_min / 60.0) if total_min > 0 else 0.0
+    focus += max(0.0, 1.0 - sw_per_hour / focus_switch_ph) * 25
+    focus_score = int(round(min(100.0, max(0.0, focus))))
+    grade = "高" if focus_score >= 80 else ("中" if focus_score >= 55 else "低")
+
+    breakdown = {
+        "total_min": round(total_min, 1),
+        "session_count": n,
+        "avg_session_s": round(avg_ms / 1000.0, 1),
+        "longest_session_s": round(longest_ms / 1000.0, 1),
+        "switch_count": switch_count,
+        "switch_per_hour": round(sw_per_hour, 1),
+        "short_session_ratio": round(short_ratio, 2),
+        "coding_ratio": round(coding_ratio, 2),
+    }
+    return {
+        "focus_score": focus_score,
+        "grade": grade,
+        "breakdown": breakdown,
+        "death_loop": _detect_death_loop(flips, bh),
+    }
 
 
 def _top_items(mapping: dict, limit: int) -> list[tuple[str, int]]:

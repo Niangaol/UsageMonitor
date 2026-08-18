@@ -1146,6 +1146,66 @@ def test_insights_rules():
     check(insights.rule_insights(empty, cfg) == [], "空数据返回空列表")
 
 
+def test_insights_behavior():
+    print("[test] 行为洞察（专注度评分 + 死循环检测，Phase 4）")
+    cfg = classifier.load_config()
+
+    # A：专注编码日 -> 高评分、无死循环
+    aggA = {
+        "date": "2026-08-10", "session_count": 3, "total_active_ms": 3 * 3600000,
+        "by_app": {"VS Code": 3 * 3600000},
+        "by_category": {"开发工具": 3 * 3600000},
+        "by_ai": {}, "by_browser": {}, "by_contact": {}, "by_subcategory": {},
+        "by_term_tool": {}, "hourly_ms": [0] * 24,
+        "sessions": [
+            {"start": "2026-08-10T09:00:00", "end": "2026-08-10T11:00:00",
+             "duration_ms": 2 * 3600000, "app": "VS Code", "category": "开发工具"},
+            {"start": "2026-08-10T11:10:00", "end": "2026-08-10T12:00:00",
+             "duration_ms": 50 * 60000, "app": "VS Code", "category": "开发工具"},
+            {"start": "2026-08-10T14:00:00", "end": "2026-08-10T15:00:00",
+             "duration_ms": 60 * 60000, "app": "Cursor", "category": "AI编程"},
+        ],
+    }
+    bA = insights.behavior_insights(aggA, cfg)
+    check(80 <= bA["focus_score"] <= 100 and bA["grade"] == "高",
+          "专注日评分高", str(bA))
+    check(bA["death_loop"] is None, "专注日无死循环", str(bA))
+    check(bA["breakdown"]["coding_ratio"] >= 0.7, "编码占比高", str(bA["breakdown"]))
+
+    # B：高频短会话往返 -> 命中死循环
+    apps = ["ChatGPT", "Chrome", "VS Code", "微信"]
+    sessions = []
+    start = _dt.datetime(2026, 8, 10, 9, 0, 0)
+    for i in range(10):
+        s0 = start + _dt.timedelta(seconds=30 * i)
+        s1 = s0 + _dt.timedelta(seconds=20)
+        sessions.append({
+            "start": s0.isoformat(), "end": s1.isoformat(), "duration_ms": 20000,
+            "app": apps[i % 4], "category": "其他",
+        })
+    total_b = 10 * 20000
+    aggB = {"date": "2026-08-10", "session_count": 10, "total_active_ms": total_b,
+            "by_app": {}, "by_category": {"其他": total_b},
+            "by_ai": {}, "by_browser": {}, "by_contact": {}, "by_subcategory": {},
+            "by_term_tool": {}, "hourly_ms": [0] * 24, "sessions": sessions}
+    bB = insights.behavior_insights(aggB, cfg)
+    check(bB["death_loop"] is not None, "命中死循环", str(bB))
+    dl = bB["death_loop"]
+    check(dl["count"] >= 6 and dl["distinct_apps"] >= 3, "死循环次数/应用数达标", str(dl))
+    check(bB["breakdown"]["switch_count"] >= 8, "高切换次数", str(bB["breakdown"]))
+
+    # C：空数据 / 关闭
+    empty = {"date": "2026-08-10", "session_count": 0, "total_active_ms": 0,
+             "by_app": {}, "by_category": {}, "by_ai": {}, "by_browser": {},
+             "by_contact": {}, "hourly_ms": [0] * 24, "sessions": []}
+    bE = insights.behavior_insights(empty, cfg)
+    check(bE["focus_score"] == 0 and bE["grade"] == "低" and bE["death_loop"] is None,
+          "空数据默认值", str(bE))
+    cfg_off = json.loads(json.dumps(cfg))
+    cfg_off["insights"]["enabled"] = False
+    check(insights.behavior_insights(aggA, cfg_off)["focus_score"] == 0, "insights 关闭时不计分")
+
+
 def test_insights_ai_prompt():
     print("[test] AI 提示词隐私过滤（默认无标题/URL/联系人名；开启后含标题/URL，联系人仍不上送）")
     agg = _make_fake_agg()
@@ -1988,7 +2048,8 @@ def main() -> int:
         test_reclassify, test_dimension_refinements, test_dashboard_api,
         test_dashboard_update_api,
         test_electron_shell_detection, test_app_groups, test_report_balloon_once_per_day,
-        test_insights_rules, test_insights_ai_prompt, test_insights_ai_call,
+        test_insights_rules,
+        test_insights_behavior, test_insights_ai_prompt, test_insights_ai_call,
         test_insights_provider_presets, test_insights_cache,
         test_dashboard_insights_api, test_dashboard_ai_settings_api,
         test_report_insights_section,
