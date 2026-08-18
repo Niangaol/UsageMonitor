@@ -1140,7 +1140,8 @@ function setupCanvas(cv){
   let w = cv.clientWidth, h = cv.clientHeight;
   if(w < 20){ w = cv.parentElement ? cv.parentElement.clientWidth : 600; }
   if(h < 20){ h = parseInt(cv.getAttribute("height") || "200", 10); }
-  cv.width = w * dpr; cv.height = h * dpr;
+  cv.style.width = w + "px"; cv.style.height = h + "px";  // 保持 CSS 尺寸恒定
+  cv.width = w * dpr; cv.height = h * dpr;   // 缓冲按设备像素比放大
   const ctx = cv.getContext("2d"); ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.clearRect(0,0,w,h);
   return {ctx, w, h};
@@ -1229,9 +1230,17 @@ async function loadOverview(){
     const sd = await api("/api/ai-sessions?date=" + state.day);
     renderAiSessions(sd.ai_sessions);
   }catch(e){ $("#ovAiSessions").innerHTML = '<div class="empty">加载失败</div>'; }
-  const days = await api("/api/days?n=14");
-  drawBarChart($("#ovTrend"), days.days.map(x=>x.date), days.days.map(x=>x.total_ms),
-    v => v>=3600000 ? (v/3600000).toFixed(1)+"h" : Math.round(v/60000)+"m");
+  // 最近 14 天活跃趋势（单日数据失败/接口异常时降级显示，不影响其它面板）
+  try{
+    const days = await api("/api/days?n=14");
+    drawBarChart($("#ovTrend"), days.days.map(x=>x.date), days.days.map(x=>x.total_ms),
+      v => v>=3600000 ? (v/3600000).toFixed(1)+"h" : Math.round(v/60000)+"m");
+  }catch(err){
+    const tcv = $("#ovTrend");
+    if(tcv && tcv.parentElement){
+      tcv.parentElement.insertAdjacentHTML("beforeend", '<div class="empty">趋势加载失败：' + esc(err.message || err) + '</div>');
+    }
+  }
 }
 
 /* ---------- 趋势 ---------- */
@@ -2589,8 +2598,12 @@ class Handler(BaseHTTPRequestHandler):
             days = _available_days(root)[-n:]
             out = []
             for d in days:
-                agg = report.aggregate(d, root)
-                out.append({"date": d, "total_ms": agg["total_active_ms"], "count": agg["session_count"]})
+                # 单日聚合失败不拖垮整个趋势（返回 0，时间轴保持连续）
+                try:
+                    agg = report.aggregate(d, root)
+                    out.append({"date": d, "total_ms": agg["total_active_ms"], "count": agg["session_count"]})
+                except Exception:  # noqa: BLE001
+                    out.append({"date": d, "total_ms": 0, "count": 0})
             self._send_json({"days": out})
             return
 

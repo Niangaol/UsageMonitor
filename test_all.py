@@ -826,6 +826,44 @@ def test_dashboard_api():
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_dashboard_days_resilience():
+    print("[test] 仪表盘 /api/days 单日聚合失败不拖垮趋势")
+    import http.client
+    import threading
+    import dashboard
+
+    tmp = fresh_tmp("dash_days")
+    day_good = "2026-08-08"
+    day_bad = "2026-08-09"
+    os.makedirs(os.path.join(tmp, day_good), exist_ok=True)
+    os.makedirs(os.path.join(tmp, day_bad), exist_ok=True)
+    with open(os.path.join(tmp, day_good, "usage.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "start": f"{day_good}T10:00:00", "end": f"{day_good}T10:02:00",
+            "duration_ms": 120000, "exe": "code.exe", "app": "VS Code", "title": "a",
+            "category": "开发工具", "ai_tool": None, "active": True,
+        }, ensure_ascii=False) + chr(10))
+    # 坏日：usage.jsonl 含非法 UTF-8 字节 -> aggregate 会抛 UnicodeDecodeError
+    with open(os.path.join(tmp, day_bad, "usage.jsonl"), "wb") as fh:
+        fh.write(bytes([0xfe, 0xff, 0x81, 0]) + b" bad" + bytes([10]))
+
+    server = dashboard.create_server(tmp, port=0)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    conn.request("GET", "/api/days?n=14")
+    r = conn.getresponse()
+    body = json.loads(r.read().decode("utf-8", "replace"))
+    conn.close()
+    check(r.status == 200, "api/days 返回 200", str(r.status))
+    by = {d["date"]: d for d in body.get("days", [])}
+    check(by.get(day_bad, {}).get("total_ms") == 0, "坏日以 0 兜底不丢时间轴", str(by.get(day_bad)))
+    check(by.get(day_good, {}).get("total_ms") == 120000, "好日数据正常", str(by.get(day_good)))
+    server.shutdown()
+    server.server_close()
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_dashboard_update_api():
     print("[test] 仪表盘更新 API（status/check/download/apply 错误态）")
     import http.client
@@ -2207,6 +2245,7 @@ def main() -> int:
         test_report_pipeline, test_inventory, test_month_and_json,
         test_contact_aliases, test_browser_history, test_cross_day_isolation,
         test_reclassify, test_dimension_refinements, test_dashboard_api,
+        test_dashboard_days_resilience,
         test_dashboard_update_api,
         test_electron_shell_detection, test_app_groups, test_report_balloon_once_per_day,
         test_insights_rules,
