@@ -18,11 +18,15 @@
 - **Vibe 编程人格分析**（趣味 · 离线）：基于当日活动分布按加权打分挑出人格脸谱（AI 驱动工程师 / 深度专注者 / 多线程快切王 / 节点循环受害者 / 夜行动物 / 终身学习者 / 社交达人 / 游戏玩家 / 全能六边形选手 / 自由探索者）
 - **集成**：行为洞察面板顶部的人格卡 + 日报「今日建议」的人格提示；`/api/insights` 返回 `persona`
 - 阈值可配置：`insights.behavior`（`short_session_s` / `switch_gap_s` / `death_loop_*` / `focus_*` 等）+ `insights.persona`（`enabled` / `min_total_min` / `night_start_hour` / `coding_categories`）
+- **Git 代码变更分析**（Phase 2 · 只读本地提交）：配置 `insights.git.projects` 后，用 `git log --numstat` 统计指定日期的提交 / 新增 / 删除行 / 改动文件；以「修改率」（删除行 / 变更行）作返工近似指标
+- **集成**：洞察页新增「代码产出（Git）」面板 + 日报「今日建议」的产出提示；`/api/insights` 返回 `git`；`python git_insights.py --day` CLI
+- 只读、带超时、无 git / 未配置 / 非仓库路径均优雅降级；阈值可配 `insights.git`（`enabled` / `projects` / `timeout_s` / `top_files`）
 
 ### 测试
 
 - 新增 `test_insights_behavior`：专注日高评分 / 高频往返命中死循环 / 空数据与关闭安全
 - 新增 `test_insights_persona`：AI 编程日 / 死循环日 / 夜间学习日 / 空数据与开关安全
+- 新增 `test_git_insights`：临时 git 仓库两次提交 / 汇总 found / 未配置与关闭 / 非仓库跳过
 
 ## [2.3.0] - 2026-08-18
 

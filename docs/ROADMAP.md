@@ -39,6 +39,7 @@
 - ✅ ROADMAP Phase 1：对话轮次 / Token 估算 / 按模型·项目拆分 / 会话详情面板与日报章节
 - ✅ ROADMAP Phase 3：按模型费用估算 / 按项目成本分摊 / 成本面板与日报成本章节
 - ✅ ROADMAP Phase 4：死循环检测 + 专注度评分 + Vibe 编程人格分析（洞察页面板与日报今日建议）
+- ✅ ROADMAP Phase 2：Git 代码变更分析（`git_insights.py` 只读本地提交，代码产出/修改率）
 
 ## 三、AI 功能深化方向（路线图）
 
@@ -67,6 +68,7 @@
 | **采纳率 (Acceptance Rate)** | 统计 AI 建议被接受的比例 | 结合 IDE 插件 API 或检测编辑器中的“接受建议”快捷键事件 |
 | **代码留存率 (Retention Rate)** | 统计 AI 生成的代码在最终提交中的保留比例 | 分析 Git diff 历史，对比 commit 前后的代码变更；参考 [GitHub Next 的 Copilot 研究](https://githubnext.com/projects/copilot-metrics) |
 | **修改率 (Modification Rate)** | 统计 AI 生成代码被手动修改的比例 | 结合编辑器的撤销/重做记录或 Git 逐行分析 |
+| **Git 代码变更分析** ✅ | 衡量代码产出与改写/返工 | 配置 `insights.git.projects` 后用 `git log --numstat` 统计当日提交/增删行/改动文件，“修改率”=删除/变更（Phase 2 已落地） |
 | **任务完成率** | 统计开启 AI 会话后，任务被标记为“完成”的比例 | 结合 IDE 中的任务管理插件或自定义标记 |
 
 **技术参考**：
@@ -110,7 +112,7 @@
 ### v2.0（预计 2027 Q1）— 质量与成本
 - [ ] 采纳率/留存率分析（需 IDE 插件支持）
 - [x] API 成本追踪与报表（AI 会话费用估算已落地，Phase 3）
-- [ ] Git 集成（代码变更分析）
+- [x] Git 集成（代码变更分析）
 
 ### v2.5（预计 2027 Q2）— 智能洞察
 - [x] 死循环检测与提醒

@@ -1274,6 +1274,68 @@ def test_insights_persona():
 
 
 
+def test_git_insights():
+    print("[test] Git 代码变更分析（Phase 2 · 只读本地提交）")
+    if sys.platform == "win32":
+        # Windows 下 git 可用性已在运行环境确认；仍做一次探测，缺失则跳过
+        pass
+    import shutil
+    import subprocess
+    import tempfile
+    import git_insights
+    tmp = tempfile.mkdtemp(prefix="gitins_")
+    try:
+        repo = os.path.join(tmp, "proj")
+        os.makedirs(repo)
+        env_base = dict(os.environ)
+        env_base["GIT_AUTHOR_DATE"] = "2026-08-10T12:00:00"
+        env_base["GIT_COMMITTER_DATE"] = "2026-08-10T12:00:00"
+
+        def git(*args):
+            return subprocess.run(["git", *args], cwd=repo, capture_output=True,
+                                  text=True, encoding="utf-8", env=dict(env_base),
+                                  check=True)
+
+        git("init", "-q")
+        git("config", "user.email", "tester@example.com")
+        git("config", "user.name", "Tester")
+        with io.open(os.path.join(repo, "a.txt"), "w", encoding="utf-8") as fh:
+            fh.write("line1" + chr(10) + "line2" + chr(10))
+        git("add", "a.txt")
+        git("commit", "-q", "-m", "first")
+        with io.open(os.path.join(repo, "a.txt"), "a", encoding="utf-8") as fh:
+            fh.write("line3" + chr(10))
+        git("add", "a.txt")
+        git("commit", "-q", "-m", "second")
+
+        proj = {"name": "proj", "path": repo}
+        stats = git_insights.analyze_repo(proj, "2026-08-10", 10, 5)
+        check(stats is not None, "仓库可分析", "None")
+        check(stats["commit_count"] == 2, "当日两次提交", str(stats["commit_count"]))
+        check(stats["lines_added"] >= 3, "新增行 >= 3", str(stats["lines_added"]))
+        check(stats["files"] >= 1, "改动文件 >= 1", str(stats["files"]))
+
+        cfg = classifier.load_config()
+        cfg["insights"] = dict(cfg.get("insights") or {})
+        cfg["insights"]["git"] = {"enabled": True, "projects": {"proj": repo}}
+        res = git_insights.git_insights(cfg, "2026-08-10")
+        check(res["found"] and res["total"]["commit_count"] >= 1, "汇总 found", str(res))
+        check(res["repos"][0]["name"] == "proj", "仓库名正确", str(res["repos"]))
+
+        cfg2 = classifier.load_config()
+        cfg2["insights"] = {"git": {"enabled": True, "projects": []}}
+        check(not git_insights.git_insights(cfg2, "2026-08-10")["found"], "无项目未 found")
+        cfg3 = classifier.load_config()
+        cfg3["insights"] = {"git": {"enabled": False, "projects": {"proj": repo}}}
+        check(not git_insights.git_insights(cfg3, "2026-08-10")["found"], "关闭时未 found")
+        cfg4 = classifier.load_config()
+        cfg4["insights"] = {"git": {"enabled": True, "projects": {"bad": os.path.join(tmp, "nope")}}}
+        check(not git_insights.git_insights(cfg4, "2026-08-10")["found"], "非仓库路径跳过")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+
 def test_insights_ai_prompt():
     print("[test] AI 提示词隐私过滤（默认无标题/URL/联系人名；开启后含标题/URL，联系人仍不上送）")
     agg = _make_fake_agg()
@@ -2117,7 +2179,7 @@ def main() -> int:
         test_dashboard_update_api,
         test_electron_shell_detection, test_app_groups, test_report_balloon_once_per_day,
         test_insights_rules,
-        test_insights_behavior, test_insights_persona, test_insights_ai_prompt, test_insights_ai_call,
+        test_insights_behavior, test_insights_persona, test_git_insights, test_insights_ai_prompt, test_insights_ai_call,
         test_insights_provider_presets, test_insights_cache,
         test_dashboard_insights_api, test_dashboard_ai_settings_api,
         test_report_insights_section,

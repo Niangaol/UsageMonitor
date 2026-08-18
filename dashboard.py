@@ -797,8 +797,12 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         <div class="grid" id="inRules" style="margin-top:12px"></div>
       </div>
       <div class="panel">
-        <h2>行为洞察 <span class="hint">专注度评分 · 死循环检测 · 离线</span></h2>
+        <h2>行为洞察 <span class="hint">专注度评分 · 死循环检测 · 人格 · 离线</span></h2>
         <div id="inBehavior"></div>
+      </div>
+      <div class="panel">
+        <h2>代码产出（Git） <span class="hint">只读本地提交 · 离线 · Phase 2</span></h2>
+        <div id="inGit"></div>
       </div>
       <div class="panel">
         <h2>AI 洞察 <span class="hint">可选 · OpenAI 兼容 API · 默认关闭</span></h2>
@@ -1767,7 +1771,8 @@ async function loadInsights(){
     ? d.rules.map(insightCardHTML).join("")
     : '<div class="empty">当日暂无规则洞察（数据为空或 insights.enabled=false）</div>';
   renderAiPanel(d);
-  renderBehavior(d.behavior);
+  renderBehavior(d.behavior, d.persona);
+  renderGit(d.git);
   loadAiModule().catch(() => { /* 模块面板加载失败不影响规则/AI 展示 */ });
 }
 function aiStatCard(label, val, extra){
@@ -1912,6 +1917,54 @@ function renderBehavior(b, persona){
       ' 个应用（' + esc((dl.apps||[]).join('、')) + '），窗口约 ' + secs(dl.window_s) + '</div>';
   }
   html += '<div class="hint" style="margin-top:6px">专注度 = 最长专注段(45%) + 编码占比(30%) − 切换负担(25%)，离线计算，不入库不上传。</div>';
+  el.innerHTML = html;
+}
+
+function renderGit(g){
+  const el = $("#inGit");
+  if(!el) return;
+  g = g || {};
+  if(!g.enabled){
+    el.innerHTML = '<div class="empty">Git 代码产出未开启（config.json: insights.git.enabled=false）</div>';
+    return;
+  }
+  if(!g.found || !(g.total && g.total.commit_count)){
+    el.innerHTML = '<div class="empty">' + esc(g.notice || "当日无 Git 提交或未配置仓库") + '</div>';
+    return;
+  }
+  const t = g.total || {};
+  const secs2 = v => { v = Number(v||0);
+      if(v >= 3600000) return (v/3600000).toFixed(1)+"k";
+      return (v/1000).toFixed(1)+"k"; };
+  const fmtN = v => (Number(v)||0).toLocaleString("en-US");
+  let html = '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 8px">'+
+    aiStatCard("本地提交", fmtN(t.commit_count), "今天的 commit 数")+
+    aiStatCard("新增行", '+' + fmtN(t.lines_added), "代码产出")+
+    aiStatCard("删除行", '-' + fmtN(t.lines_deleted), "改写/返工")+
+    aiStatCard("变更量", fmtN(t.churn), "add + del")+
+    aiStatCard("改动文件", fmtN(t.files), "涉及文件数")+
+    '</div>';
+  if((t.modify_ratio||0) > 0.4){
+    html += '<div style="padding:8px 11px;border:1px solid var(--warn, #e0a53c);border-radius:8px;margin-bottom:8px">'+
+      '<b>⌨ 修改率偏高 ' + Math.round(t.modify_ratio*100) + '%</b> — ' +
+      '删除占变更近半，可能有较多重写/反复改动，建议拆小步、先梳理方案。</div>';
+  }
+  for(const r of (g.repos||[])){
+    html += '<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px">'+
+        '<b>'+esc(r.name)+'</b>'+
+        '<span class="hint">'+r.commit_count+' commits · +'+fmtN(r.lines_added)+' / -'+fmtN(r.lines_deleted)+
+          ' · '+fmtN(r.files)+' 文件'+(r.authors&&r.authors.length? ' · '+esc(r.authors.join('、')) : '')+'</span>'+
+      '</div>';
+    const tf = r.top_files || [];
+    if(tf.length){
+      html += '<div class="hint" style="margin-top:6px">改动最多的文件：';
+      html += tf.map(f=>'<b>'+esc(f.path.split(/[\/]/).pop())+'</b>(+'+fmtN(f.added)+' / -'+fmtN(f.deleted)+')').join('，');
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  html += '<div class="hint" style="margin-top:2px">数据来自你在 config.json 配置的本地 Git 仓库（insights.git.projects），只读、不上传。修改率 = 删除行 / (新增+删除)，作为「返工」近似指标。</div>';
   el.innerHTML = html;
 }
 
@@ -2594,11 +2647,14 @@ class Handler(BaseHTTPRequestHandler):
                     ai["provider"] = str(ai_cfg.get("provider") or "")
                 behavior = insights.behavior_insights(agg, config)
                 persona = insights.persona_insights(agg, config)
+                import git_insights  # noqa: PLC0415 —— 只读本地 Git 分析
+                git = git_insights.git_insights(config, date)
                 self._send_json({
                     "date": date, "rules": rules,
                     "ai_enabled": ai_enabled, "ai": ai,
                     "behavior": behavior,
                     "persona": persona,
+                    "git": git,
                 })
             except Exception as exc:  # noqa: BLE001 —— 洞察失败不拖垮仪表盘
                 self._send_json({"error": f"insights unavailable: {exc}"}, 500)

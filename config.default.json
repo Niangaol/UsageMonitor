@@ -1206,6 +1206,12 @@
       "night_start_hour": 23,
       "coding_categories": ["开发", "代码", "AI编程", "编码", "开发工具", "编写"]
     },
+    "git": {
+      "enabled": true,
+      "projects": [],
+      "timeout_s": 10,
+      "top_files": 5
+    },
     "ai": {
       "enabled": false,
       "provider": "opencodego",

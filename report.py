@@ -523,6 +523,23 @@ def _insights_section(agg: dict, date_str: str, data_root: str) -> str | None:
             behavior_lines.append(
                 f"- [人格] {emoji} 今日 Vibe 人格：{label}{ptraits} —— {tagline}")
 
+        # Git 代码产出（ROADMAP Phase 2 · 只读本地提交分析）
+        try:
+            import git_insights  # noqa: PLC0415 —— 只读、本地、可失败
+            git = git_insights.git_insights(config, date_str)
+            if git.get("found") and git.get("total", {}).get("commit_count"):
+                gt = git["total"]
+                behavior_lines.append(
+                    f"- [产出] 本地 Git 提交 {gt['commit_count']} 次，"
+                    f"新增 +{gt['lines_added']} / 删除 -{gt['lines_deleted']} 行"
+                    f"（变更 {gt['churn']} 行 · {gt['files']} 文件）")
+                for repo in (git.get("repos") or [])[:2]:
+                    behavior_lines.append(
+                        f"  - {repo['name']}: {repo['commit_count']} 次提交，"
+                        f"+{repo['lines_added']} / -{repo['lines_deleted']} 行")
+        except Exception:  # noqa: BLE001 —— Git 分析缺失/失败不拖垮日报
+            pass
+
         rule_lines = [f"- [{r['title']}] {r['detail']}" for r in rules]
         if not behavior_lines and not rule_lines:
             return None
