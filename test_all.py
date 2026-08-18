@@ -1206,6 +1206,74 @@ def test_insights_behavior():
     check(insights.behavior_insights(aggA, cfg_off)["focus_score"] == 0, "insights 关闭时不计分")
 
 
+def test_insights_persona():
+    print("[test] Vibe 编程人格分析（趣味 · 离线规则，Phase 4）")
+    cfg = classifier.load_config()
+
+    def make_agg(total_ms, by_cat, sessions, hourly=None):
+        hourly = hourly or [0] * 24
+        return {"date": "2026-08-10", "session_count": len(sessions), "total_active_ms": total_ms,
+                "by_app": {}, "by_category": by_cat, "by_ai": {}, "by_browser": {},
+                "by_contact": {}, "by_subcategory": {}, "by_term_tool": {},
+                "hourly_ms": hourly, "sessions": sessions}
+
+    # A：重度 AI 编程日 -> 大量零散 AI 短会话，AI 驱动工程师应胜出
+    sA = []
+    for i in range(24):
+        s0 = _dt.datetime(2026, 8, 10, 9, 0, 0) + _dt.timedelta(minutes=10 * i)
+        s1 = s0 + _dt.timedelta(minutes=6)
+        sA.append({"start": s0.isoformat(), "end": s1.isoformat(),
+                   "duration_ms": 6 * 60000, "app": ["Cursor", "ChatGPT"][i % 2], "category": "AI编程"})
+    aggA = make_agg(24 * 6 * 60000, {"AI编程": 24 * 6 * 60000}, sA)
+    pA = insights.persona_insights(aggA, cfg)
+    check(pA["label"] == "AI 驱动工程师" and pA["emoji"] == "🤖", "重度 AI 编程日命中 AI 驱动工程师", str(pA))
+    check(pA["dimensions"]["ai_ratio"] >= 0.99, "AI 占比高", str(pA["dimensions"]))
+
+    # B：死循环往返日 -> 节点循环受害者（含足够基线活动以过 min_total_min）
+    apps = ["ChatGPT", "Chrome", "VS Code", "微信"]
+    sessions = [
+        {"start": "2026-08-10T08:00:00", "end": "2026-08-10T08:40:00",
+         "duration_ms": 40 * 60000, "app": "VS Code", "category": "开发工具"},
+    ]
+    for i in range(10):
+        s0 = _dt.datetime(2026, 8, 10, 9, 0, 0) + _dt.timedelta(seconds=30 * i)
+        s1 = s0 + _dt.timedelta(seconds=20)
+        sessions.append({"start": s0.isoformat(), "end": s1.isoformat(),
+                         "duration_ms": 20000, "app": apps[i % 4], "category": "其他"})
+    sessions.append(
+        {"start": "2026-08-10T10:00:00", "end": "2026-08-10T10:30:00",
+         "duration_ms": 30 * 60000, "app": "VS Code", "category": "开发工具"})
+    total_b = sum(int(x["duration_ms"]) for x in sessions)
+    aggB = make_agg(total_b, {"开发工具": 70 * 60000, "其他": 200000}, sessions)
+    pB = insights.persona_insights(aggB, cfg)
+    check(pB["label"] == "节点循环受害者" and pB["emoji"] == "🔁", "死循环日命中节点循环受害者", str(pB))
+
+    # C：夜间学习日 -> 夜行动物 或 终身学习者（两者其一，看占比）
+    sC = [{"start": "2026-08-10T23:00:00", "end": "2026-08-10T23:40:00",
+           "duration_ms": 40 * 60000, "app": "Chrome", "category": "办公学习"}]
+    hourly = [0] * 24
+    hourly[23] = 2400000  # 40 分钟
+    aggC = make_agg(40 * 60000, {"办公学习": 40 * 60000}, sC, hourly)
+    pC = insights.persona_insights(aggC, cfg)
+    check(pC["label"] in ("夜行动物", "终身学习者"), "夜间学习日人格", str(pC))
+
+    # D：空数据 / 关闭 / 数据太少 -> 自由探索者或空
+    empty = make_agg(0, {}, [])
+    check(insights.persona_insights(empty, cfg)["label"] == "", "空数据无人格", str(empty))
+    tiny = make_agg(10 * 60000, {"其他": 10 * 60000},
+                    [{"start": "2026-08-10T09:00:00", "end": "2026-08-10T09:10:00",
+                      "duration_ms": 10 * 60000, "app": "Chrome", "category": "其他"}])
+    pT = insights.persona_insights(tiny, cfg)
+    check(pT["label"] == "自由探索者", "数据太少给自由探索者", str(pT))
+    cfg_off = json.loads(json.dumps(cfg))
+    cfg_off["insights"]["enabled"] = False
+    check(insights.persona_insights(aggA, cfg_off)["label"] == "", "insights 关闭时不评人格")
+    cfg_persona_off = json.loads(json.dumps(cfg))
+    cfg_persona_off["insights"]["persona"] = {"enabled": False}
+    check(insights.persona_insights(aggA, cfg_persona_off)["label"] == "", "persona 关闭时不评人格")
+
+
+
 def test_insights_ai_prompt():
     print("[test] AI 提示词隐私过滤（默认无标题/URL/联系人名；开启后含标题/URL，联系人仍不上送）")
     agg = _make_fake_agg()
@@ -2049,7 +2117,7 @@ def main() -> int:
         test_dashboard_update_api,
         test_electron_shell_detection, test_app_groups, test_report_balloon_once_per_day,
         test_insights_rules,
-        test_insights_behavior, test_insights_ai_prompt, test_insights_ai_call,
+        test_insights_behavior, test_insights_persona, test_insights_ai_prompt, test_insights_ai_call,
         test_insights_provider_presets, test_insights_cache,
         test_dashboard_insights_api, test_dashboard_ai_settings_api,
         test_report_insights_section,

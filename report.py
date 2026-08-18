@@ -512,6 +512,17 @@ def _insights_section(agg: dict, date_str: str, data_root: str) -> str | None:
                 behavior_lines.append(
                     f"- [效率] ⚠ 疑似死循环切换：{dl['count']} 次短会话高频切换"
                     f"（{dl['distinct_apps']} 个应用：{apps}），约 {window} —— 建议合并任务、减少无效往返")
+        # Vibe 编程人格（Phase 4 · 趣味）：纯离线规则
+        persona = insights.persona_insights(agg, config)
+        if persona.get("label"):
+            ptraits = " · ".join(persona.get("traits") or [])
+            ptraits = f"（{ptraits}）" if ptraits else ""
+            emoji = persona.get("emoji", "🧭")
+            label = persona.get("label")
+            tagline = persona.get("tagline") or ""
+            behavior_lines.append(
+                f"- [人格] {emoji} 今日 Vibe 人格：{label}{ptraits} —— {tagline}")
+
         rule_lines = [f"- [{r['title']}] {r['detail']}" for r in rules]
         if not behavior_lines and not rule_lines:
             return None

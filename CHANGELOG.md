@@ -15,11 +15,14 @@
 - **专注度评分**（离线规则）：基于最长专注段、编码/开发占比、每小时切换频率综合打分 0–100 并按高中低分级
 - **死循环检测**：识别时间窗内密集短会话高频反复切换（如多应用快速往返）并告警
 - **集成**：洞察页新增「行为洞察」面板（专注度卡 + 死循环告警）；日报「今日建议」加入专注度与死循环提示；`/api/insights` 返回 `behavior`
-- 阈值可配置：`insights.behavior`（`short_session_s` / `switch_gap_s` / `death_loop_*` / `focus_*` 等）
+- **Vibe 编程人格分析**（趣味 · 离线）：基于当日活动分布按加权打分挑出人格脸谱（AI 驱动工程师 / 深度专注者 / 多线程快切王 / 节点循环受害者 / 夜行动物 / 终身学习者 / 社交达人 / 游戏玩家 / 全能六边形选手 / 自由探索者）
+- **集成**：行为洞察面板顶部的人格卡 + 日报「今日建议」的人格提示；`/api/insights` 返回 `persona`
+- 阈值可配置：`insights.behavior`（`short_session_s` / `switch_gap_s` / `death_loop_*` / `focus_*` 等）+ `insights.persona`（`enabled` / `min_total_min` / `night_start_hour` / `coding_categories`）
 
 ### 测试
 
 - 新增 `test_insights_behavior`：专注日高评分 / 高频往返命中死循环 / 空数据与关闭安全
+- 新增 `test_insights_persona`：AI 编程日 / 死循环日 / 夜间学习日 / 空数据与开关安全
 
 ## [2.3.0] - 2026-08-18
 

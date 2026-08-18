@@ -60,6 +60,40 @@ _DEFAULT_BEHAVIOR = {
     "focus_coding_categories": ["开发", "代码", "AI编程", "编码", "开发工具", "编写"],
 }
 
+# Vibe 编程人格分析（Phase 4 · 趣味功能）默认配置
+_DEFAULT_PERSONA = {
+    "enabled": True,
+    "min_total_min": 30,          # 活跃少于该分钟数不评人格（数据太少无意义）
+    "night_start_hour": 23,       # 夜间时段起点（含其后 7 小时）
+    "coding_categories": _DEFAULT_BEHAVIOR["focus_coding_categories"],
+}
+
+# Vibe 编程人格（趣味）可选脸谱：label + emoji + 一句话描述
+_PERSONAS: list[dict] = [
+    {"label": "AI 驱动工程师", "emoji": "🤖",
+     "tagline": "重度借助 AI 编程，把灵感快速落成代码。"},
+    {"label": "深度专注者", "emoji": "🧠",
+     "tagline": "长时间沉浸在一个任务里，心流稳定、抗干扰。"},
+    {"label": "多线程快切王", "emoji": "⚡",
+     "tagline": "任务切换很频繁，思维跳跃但覆盖范围广。"},
+    {"label": "节点循环受害者", "emoji": "🔁",
+     "tagline": "今天在多个应用间高频往返，容易原地空转。"},
+    {"label": "夜行动物", "emoji": "🌙",
+     "tagline": "深夜依然是主场，注意用眼与作息。"},
+    {"label": "终身学习者", "emoji": "📚",
+     "tagline": "大量时间投入学习与阅读，成长型心态拉满。"},
+    {"label": "社交达人", "emoji": "💬",
+     "tagline": "沟通与协作占据不少时间，团队氛围担当。"},
+    {"label": "游戏玩家", "emoji": "🎮",
+     "tagline": "娱乐开黑不可少，记得给深度工作留出整块时间。"},
+    {"label": "全能六边形选手", "emoji": "🎯",
+     "tagline": "各维度分布均衡，兼顾广度与稳定。"},
+    {"label": "自由探索者", "emoji": "🧭",
+     "tagline": "今日活动多元、尚未定型，尽情探索。"},
+]
+_PERSONA_BY_LABEL: dict[str, dict] = {p["label"]: p for p in _PERSONAS}
+
+
 _DEFAULT_AI = {
     "enabled": False,
     "provider": "opencodego",
@@ -148,6 +182,7 @@ def _insights_config(config: dict) -> dict:
         "in_report": bool(ins.get("in_report", True)),
         "rules": _merge_dict(_DEFAULT_RULES, ins.get("rules") if isinstance(ins.get("rules"), dict) else None),
         "behavior": _merge_dict(_DEFAULT_BEHAVIOR, ins.get("behavior") if isinstance(ins.get("behavior"), dict) else None),
+        "persona": _merge_dict(_DEFAULT_PERSONA, ins.get("persona") if isinstance(ins.get("persona"), dict) else None),
         "ai": _merge_dict(_DEFAULT_AI, ins.get("ai") if isinstance(ins.get("ai"), dict) else None),
     }
 
@@ -638,6 +673,134 @@ def behavior_insights(agg: dict, config: dict | None = None) -> dict:
         "grade": grade,
         "breakdown": breakdown,
         "death_loop": _detect_death_loop(flips, bh),
+    }
+
+
+def _persona_empty() -> dict:
+    """无数据 / 关闭时的空人格（避免前端因缺字段而报错）。"""
+    return {
+        "label": "", "emoji": "", "tagline": "",
+        "traits": [], "dimensions": {},
+    }
+
+
+def _persona_meta(label: str) -> dict:
+    return dict(_PERSONA_BY_LABEL.get(label, {"label": label, "emoji": "🧭", "tagline": ""}))
+
+
+def persona_insights(agg: dict, config: dict | None = None) -> dict:
+    """Vibe 编程人格分析（Phase 4 · 趣味功能，纯离线规则）。
+
+    基于 report.aggregate() 结果计算一组“人格维度”，按加权得分挑出最贴合
+    的脸谱。纯娱乐向、确定性输出、不入库不上传。结构：
+    {
+      "label": "…", "emoji": "…", "tagline": "…",
+      "traits": ["…"],                  # 用于日报/面板的一句话特写
+      "dimensions": {focus, coding_ratio, ai_ratio, switch_per_hour,
+                     short_session_ratio, study_ratio, social_ratio,
+                     game_ratio, night_ratio, deepest_min, death_loop}
+    }
+    """
+    ins = _insights_config(config or {})
+    empty = _persona_empty()
+    if not ins["enabled"] or not ins["persona"].get("enabled", True):
+        return empty
+    sessions = [s for s in (agg.get("sessions") or []) if isinstance(s, dict) and int(s.get("duration_ms") or 0) > 0]
+    total_ms = max(int(agg.get("total_active_ms") or 0), sum(int(s.get("duration_ms") or 0) for s in sessions))
+    if not sessions or total_ms <= 0:
+        return empty
+    total_min = total_ms / 60000.0
+
+    by_category = agg.get("by_category") if isinstance(agg.get("by_category"), dict) else {}
+    by_ai = agg.get("by_ai") if isinstance(agg.get("by_ai"), dict) else {}
+    by_browser = agg.get("by_browser") if isinstance(agg.get("by_browser"), dict) else {}
+    hourly = agg.get("hourly_ms") if isinstance(agg.get("hourly_ms"), list) else []
+
+    coding_kw = tuple(ins["persona"].get("coding_categories") or _DEFAULT_PERSONA["coding_categories"])
+    coding_ms = sum(int(v or 0) for k, v in by_category.items() if _is_coding_category(k, coding_kw))
+    ai_ms = int(by_category.get("AI编程", 0) or 0) or int(by_ai.get("总计", 0) or 0)
+    study_ms = int(by_category.get("办公学习", 0) or 0) + int(by_browser.get("学习", 0) or 0)
+    social_ms = int(by_category.get("社交聊天", 0) or 0)
+    game_ms = int(by_category.get("游戏", 0) or 0)
+
+    # 夜间占比：23:00（可配）起往后 7 小时
+    night_start = int(ins["persona"].get("night_start_hour", 23) or 23) % 24
+    night_window = [(night_start + i) % 24 for i in range(7)]
+    night_ms = sum(int(hourly[h] or 0) for h in night_window if h < len(hourly))
+
+    durs = [int(s.get("duration_ms") or 0) for s in sessions]
+    deepest_min = max(durs) / 60000.0
+
+    behavior = behavior_insights(agg, config)
+    focus = int(behavior.get("focus_score") or 0)
+    death_loop = bool(behavior.get("death_loop"))
+
+    dims = {
+        "focus": focus,
+        "coding_ratio": round(coding_ms / total_ms, 2) if total_ms else 0.0,
+        "ai_ratio": round(ai_ms / total_ms, 2) if total_ms else 0.0,
+        "switch_per_hour": float(behavior.get("breakdown", {}).get("switch_per_hour") or 0),
+        "short_session_ratio": float(behavior.get("breakdown", {}).get("short_session_ratio") or 0),
+        "study_ratio": round(study_ms / total_ms, 2) if total_ms else 0.0,
+        "social_ratio": round(social_ms / total_ms, 2) if total_ms else 0.0,
+        "game_ratio": round(game_ms / total_ms, 2) if total_ms else 0.0,
+        "night_ratio": round(night_ms / total_ms, 2) if total_ms else 0.0,
+        "deepest_min": round(deepest_min, 1),
+        "death_loop": death_loop,
+    }
+
+    # 各脸谱得分（0-100），取最高者
+    p = ins["persona"]
+    min_total_min = float(p.get("min_total_min", 30) or 30)
+    scores: dict[str, float] = {}
+    scores["AI 驱动工程师"] = dims["ai_ratio"] * 100
+    scores["深度专注者"] = focus * 0.6 + min(100.0, dims["deepest_min"] / 90.0 * 100) * 0.4
+    scores["多线程快切王"] = min(100.0, dims["switch_per_hour"] * 2.2) * 0.6 + dims["short_session_ratio"] * 100 * 0.4
+    scores["节点循环受害者"] = 100.0 if death_loop else 0.0
+    scores["夜行动物"] = dims["night_ratio"] * 100
+    scores["终身学习者"] = dims["study_ratio"] * 100
+    scores["社交达人"] = dims["social_ratio"] * 100
+    scores["游戏玩家"] = dims["game_ratio"] * 100
+
+    # 全能型：各维度都不算极端且整体活跃（广度/均衡）
+    active_dims = [dims["coding_ratio"], dims["study_ratio"], dims["social_ratio"], dims["game_ratio"], dims["ai_ratio"]]
+    even = max(active_dims) - min(active_dims)  # 差值越小越均衡
+    scores["全能六边形选手"] = max(0.0, 55.0 - even * 120.0) if total_min >= 120 else 0.0
+
+    best = max(scores, key=scores.get)
+    best_score = scores[best]
+    # 数据太少（不足 min_total_min 分钟）或所有维度都趋零 -> 不给明显脸谱
+    if total_min < min_total_min or best_score < 12:
+        best = "自由探索者"
+        best_score = min(100.0, max(12.0, total_min / min_total_min * 40))
+
+    meta = _persona_meta(best)
+    traits: list[str] = []
+    if dims["coding_ratio"] >= 0.5:
+        traits.append(f"编码/开发占比 {dims['coding_ratio'] * 100:.0f}%")
+    if dims["ai_ratio"] >= 0.3:
+        traits.append(f"AI 编程 {dims['ai_ratio'] * 100:.0f}%")
+    if focus >= 80:
+        traits.append(f"专注度 {focus}/100")
+    elif focus > 0 and focus <= 40:
+        traits.append(f"专注度偏低 {focus}/100")
+    if dims["switch_per_hour"] >= 30:
+        traits.append(f"每小时切换 {dims['switch_per_hour']:.0f} 次")
+    if dims["death_loop"]:
+        traits.append("曾现高频短会话往返")
+    if dims["night_ratio"] >= 0.3:
+        traits.append("夜间活跃")
+    if dims["study_ratio"] >= 0.25:
+        traits.append(f"学习占比 {dims['study_ratio'] * 100:.0f}%")
+    if not traits:
+        traits.append(f"活跃 {total_min / 60:.1f} 小时")
+
+    return {
+        "label": best,
+        "emoji": meta.get("emoji", "🧭"),
+        "tagline": meta.get("tagline", ""),
+        "traits": traits,
+        "dimensions": dims,
     }
 
 

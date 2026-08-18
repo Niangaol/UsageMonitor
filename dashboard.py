@@ -1868,10 +1868,10 @@ function renderAiSessions(s){
 }
 
 
-function renderBehavior(b){
+function renderBehavior(b, persona){
   const el = $("#inBehavior");
   if(!el) return;
-  b = b || {};
+  b = b || {}; persona = persona || {};
   const bd = b.breakdown || {};
   if(!b.focus_score && !b.grade && !b.death_loop){
     el.innerHTML = '<div class="empty">当日暂无行为数据（无会话或 insights.enabled=false）</div>';
@@ -1881,7 +1881,25 @@ function renderBehavior(b){
       if(v >= 3600) return (v/3600).toFixed(1)+" 小时";
       if(v >= 60) return Math.round(v/60)+" 分钟";
       return Math.round(v)+" 秒"; };
-  let html = '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 4px">'+
+  let html = "";
+  // Vibe 编程人格（趣味）卡
+  if(persona.label){
+    const dims = persona.dimensions || {};
+    html += '<div style="display:flex;gap:12px;align-items:center;padding:12px 14px;'+
+            'border:1px solid var(--border);border-radius:12px;margin-bottom:10px;'+
+            'background:linear-gradient(135deg,rgba(168,85,247,.10),rgba(59,130,246,.08))">'+
+      '<div style="font-size:34px;line-height:1">'+esc(persona.emoji||"🧭")+'</div>'+
+      '<div style="flex:1">'+
+        '<div style="font-size:16px;font-weight:700">今日 Vibe 人格：'+esc(persona.label)+'</div>'+
+        '<div style="font-size:12px;color:var(--dim);margin-top:2px">'+esc(persona.tagline||"")+'</div>'+
+        (persona.traits && persona.traits.length
+          ? '<div style="margin-top:6px">'+persona.traits.map(t=>'<span style="display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(168,85,247,.12);color:var(--accent);margin:2px 4px 2px 0">'+esc(t)+'</span>').join('')+'</div>'
+          : '')+
+        '<div class="hint" style="margin-top:4px">基于今日活跃分布 · 纯离线规则 · 仅供娱乐</div>'+
+      '</div>'+
+    '</div>';
+  }
+  html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 4px">'+
     aiStatCard("专注度评分", b.focus_score + " / 100", "等级 " + esc(b.grade || "—"))+
     aiStatCard("会话数", bd.session_count || 0, "平均 " + secs(bd.avg_session_s))+
     aiStatCard("最长专注", secs(bd.longest_session_s), "编码占比 " + Math.round((bd.coding_ratio||0)*100) + "%")+
@@ -1896,6 +1914,7 @@ function renderBehavior(b){
   html += '<div class="hint" style="margin-top:6px">专注度 = 最长专注段(45%) + 编码占比(30%) − 切换负担(25%)，离线计算，不入库不上传。</div>';
   el.innerHTML = html;
 }
+
 function renderAiPanel(d){
   const btn = $("#inGen"), meta = $("#inAiMeta"), err = $("#inAiError"), cards = $("#inAiCards");
   if(btn) btn.disabled = false;
@@ -2574,10 +2593,12 @@ class Handler(BaseHTTPRequestHandler):
                     ai = insights.ai_insights(date, root, config, refresh=False)
                     ai["provider"] = str(ai_cfg.get("provider") or "")
                 behavior = insights.behavior_insights(agg, config)
+                persona = insights.persona_insights(agg, config)
                 self._send_json({
                     "date": date, "rules": rules,
                     "ai_enabled": ai_enabled, "ai": ai,
                     "behavior": behavior,
+                    "persona": persona,
                 })
             except Exception as exc:  # noqa: BLE001 —— 洞察失败不拖垮仪表盘
                 self._send_json({"error": f"insights unavailable: {exc}"}, 500)

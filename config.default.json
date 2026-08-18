@@ -1200,6 +1200,12 @@
       "focus_switch_per_hour": 40,
       "focus_coding_categories": ["开发", "代码", "AI编程", "编码", "开发工具", "编写"]
     },
+    "persona": {
+      "enabled": true,
+      "min_total_min": 30,
+      "night_start_hour": 23,
+      "coding_categories": ["开发", "代码", "AI编程", "编码", "开发工具", "编写"]
+    },
     "ai": {
       "enabled": false,
       "provider": "opencodego",
