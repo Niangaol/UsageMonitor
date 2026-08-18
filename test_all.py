@@ -859,6 +859,17 @@ def test_dashboard_days_resilience():
     by = {d["date"]: d for d in body.get("days", [])}
     check(by.get(day_bad, {}).get("total_ms") == 0, "坏日以 0 兜底不丢时间轴", str(by.get(day_bad)))
     check(by.get(day_good, {}).get("total_ms") == 120000, "好日数据正常", str(by.get(day_good)))
+
+    # 热力图同样不因单日失败而 500
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    conn.request("GET", "/api/heatmap?days=14")
+    r2 = conn.getresponse()
+    hm = json.loads(r2.read().decode("utf-8", "replace"))
+    conn.close()
+    check(r2.status == 200, "api/heatmap 返回 200", str(r2.status))
+    hm_by = {d["date"]: d for d in hm.get("days", [])}
+    check(hm_by.get(day_bad, {}).get("total_ms") == 0, "热力图坏日以 0 兜底", str(hm_by.get(day_bad)))
+    check(hm_by.get(day_good, {}).get("total_ms") == 120000, "热力图好日数据正常", str(hm_by.get(day_good)))
     server.shutdown()
     server.server_close()
     shutil.rmtree(tmp, ignore_errors=True)
@@ -1060,6 +1071,25 @@ def test_app_groups():
         r = conn.getresponse()
         check(r.status == 403, "POST 恶意 Origin 拒绝", str(r.status))
         conn.close()
+
+        # 11) 孤儿分组（指向不存在类别的 exe_groups）被剔除，不伪装成类别
+        _clf.save_app_groups(
+            {"exe_groups": {"steam.exe": "AI工具", "wechat.exe": "我的分组"},
+             "custom_categories": ["我的分组"]}, tmp)
+        orphan = _clf.sanitize_groups(cfg, _clf.load_app_groups(tmp))
+        check("steam.exe" not in orphan["exe_groups"]
+              and orphan["exe_groups"].get("wechat.exe") == "我的分组",
+              "sanitize_groups 剔除孤儿映射、保留合法映射", str(orphan["exe_groups"]))
+        check(classifier.classify_category("steam.exe", "", cfg) == "游戏",
+              "孤儿映射被忽略，恢复自动分类")
+        s, d = req("GET", "/api/groups")
+        check(any(a["exe"] == "steam.exe" and a["category"] == "游戏" for a in d["apps"]),
+              "API 不把孤儿分组伪装成类别")
+        # 导入含孤儿映射时同样剔除
+        s, d = req("POST", "/api/groups/import",
+                   {"exe_groups": {"steam.exe": "AI工具"}, "custom_categories": []})
+        check(s == 200 and "steam.exe" not in d.get("groups", {}).get("exe_groups", {}),
+              "导入时剔除孤儿分组", str(d.get("groups")))
     finally:
         server.shutdown()
         server.server_close()

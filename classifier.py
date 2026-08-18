@@ -304,17 +304,35 @@ def all_categories(config: dict, groups: dict | None = None) -> list[str]:
     return cats
 
 
+def sanitize_groups(config: dict, groups: dict) -> dict:
+    """剔除指向未知类别（孤儿分组）的 exe_groups，返回清理后的副本。
+
+    历史上的 app_groups.json 可能残留指向不存在的分组名（如 'AI工具'）
+    的映射；这类映射既会伪装成类别、又无法在分组管理里选择/移动。
+    这里把目标不在「内置 ∪ 自定义类别」之内的 exe_groups 移除，保持分组数据自洽。
+    """
+    known = set(all_categories(config, groups))
+    out = dict(groups)
+    eg = {k: v for k, v in (groups.get("exe_groups") or {}).items() if v in known}
+    out["exe_groups"] = eg
+    return out
+
+
 def classify_category(exe: str, title: str, config: dict) -> str:
     """按 用户分组覆盖(exe 精确) -> 配置关键词(exe/title) 匹配，返回类别名。
 
     用户可通过仪表盘「分组」视图把应用放进/移出任意分组（含自定义分组），
-    覆盖层优先级最高且实时生效（无需重启）。
-    """
+    覆盖层优先级最高且实时生效（无需重启）。为防止“孤儿分组”（指向
+    不存在的类别，例如历史遗留的 'AI工具'）伪装成类别渗透进报告，这里
+    只信任指向「已登记类别」（内置 ∪ 自定义）的覆盖层；其余一律忽略并回退
+    到自动分类。"""
     exe_l = (exe or "").lower()
     title_l = (title or "").lower()
-    # 1) 用户覆盖层：exe 精确映射
-    override = load_app_groups(config.get("data_root")).get("exe_groups", {}).get(exe_l)
-    if override:
+    groups = load_app_groups(config.get("data_root"))
+    known = all_categories(config, groups)
+    # 1) 用户覆盖层：仅当目标是已登记类别时才生效（否则忽略孤儿分组）
+    override = groups.get("exe_groups", {}).get(exe_l)
+    if override and override in known:
         return override
     # 2) 配置规则
     for cat in config.get("categories", []):

@@ -31,6 +31,12 @@ Release flow: `git tag vX.Y.Z` → CI builds and publishes the Release automatic
 - 新增 `test_git_insights`：临时 git 仓库两次提交 / 汇总 found / 未配置与关闭 / 非仓库跳过
 - 新增 `test_ai_cost_ledger`：临时 AI 会话账本生成 / 含模型拆分 / 空数据 None 降级
 
+### 修复
+
+- **App groups**：prune 「orphan groups」 — `exe_groups` entries pointing to categories that no longer exist (e.g. legacy `AI工具`); these both masquerade as categories and can't be selected/moved in the group manager. Classification, the `/api/groups` list and import now only trust registered categories (built-in ∪ custom), and orphan mappings are ignored/pruned
+- **Dashboard resilience**：`/api/heatmap` failing to aggregate a single day (e.g. invalid encoding in `usage.jsonl`) no longer 500s the whole heatmap/trend — that day falls back to 0 and the timeline stays continuous
+- **Tests**：`test_app_groups` adds assertions for orphan-group pruning / fallback to auto classification / pruning on import
+
 ## [2.3.0] - 2026-08-18
 
 ### Added (ROADMAP Phase 1 · AI coding deep tracking v1.5)

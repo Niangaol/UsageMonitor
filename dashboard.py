@@ -2906,12 +2906,16 @@ class Handler(BaseHTTPRequestHandler):
             days = _available_days(root)[-n:]
             out = []
             for d in days:
-                agg = report.aggregate(d, root)
-                out.append({
-                    "date": d,
-                    "total_ms": agg["total_active_ms"],
-                    "hourly_ms": agg.get("hourly_ms", [0] * 24),
-                })
+                # 单日聚合失败不拖垮热力图/总活跃（以 0 兜底，时间轴保持连续）
+                try:
+                    agg = report.aggregate(d, root)
+                    out.append({
+                        "date": d,
+                        "total_ms": agg["total_active_ms"],
+                        "hourly_ms": agg.get("hourly_ms", [0] * 24),
+                    })
+                except Exception:  # noqa: BLE001
+                    out.append({"date": d, "total_ms": 0, "hourly_ms": [0] * 24})
             self._send_json({"days": out})
             return
 
@@ -2938,6 +2942,7 @@ class Handler(BaseHTTPRequestHandler):
                 config = _clf.load_config()
                 config["data_root"] = root
                 groups = _clf.load_app_groups(root)
+                groups = _clf.sanitize_groups(config, groups)  # 剔除孤儿分组（如遗留的 AI工具）
                 cats = _clf.all_categories(config, groups)
                 known = _collect_known_apps(root)
                 custom_names = groups.get("app_names", {})
@@ -3200,6 +3205,10 @@ class Handler(BaseHTTPRequestHandler):
                 "app_names": data.get("app_names", {}),
                 "group_meta": data.get("group_meta", {}),
             }
+            # 导入时同样剔除孤儿分组，保证分组系统自洽
+            config = _clf.load_config()
+            config["data_root"] = root
+            groups = _clf.sanitize_groups(config, groups)
             _clf.save_app_groups(groups, root)
             self._send_json({"ok": True, "groups": _clf.load_app_groups(root)})
             return
