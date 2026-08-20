@@ -10,7 +10,7 @@
 2. dashboard 下载新 exe 到 %TEMP%\\usagemonitor-update\\ 并校验
    （Content-Length 大小 + GitHub 提供的 SHA256 digest，digest 缺失时仅校验大小）。
 3. 应用更新：先写 <data_root>/.update-requested 信号文件，monitor 主循环发现后
-   优雅退出；再启动 PowerShell 更新脚本——等待所有 UsageMonitor.exe 退出（60s
+   优雅退出；再启动 PowerShell 更新脚本——等待所有 VibeTrace.exe 退出（60s
    兜底强杀）→ 替换目标 exe → 重启 → 自删脚本与临时文件。
 
 CLI：python updater.py --check [--api-base ...] [--json]
@@ -32,10 +32,10 @@ from urllib.parse import urlparse
 
 import version  # noqa: E402
 
-GITHUB_LATEST_URL = "https://api.github.com/repos/Niangaol/UsageMonitor/releases/latest"
-ASSET_NAME = "UsageMonitor.exe"
+GITHUB_LATEST_URL = "https://api.github.com/repos/Niangaol/VibeTrace/releases/latest"
+ASSET_NAME = "VibeTrace.exe"
 UPDATE_REQUEST_FILE = ".update-requested"
-_UA = f"UsageMonitor/{version.VERSION}"
+_UA = f"VibeTrace/{version.VERSION}"
 
 
 class UpdateError(RuntimeError):
@@ -103,7 +103,7 @@ def _is_allowed_asset_url(url: str, api_base: str | None = None) -> bool:
 def latest_release(api_base: str | None = None, timeout: float = 8.0) -> dict:
     """GET 最新 Release 元数据（含匹配 ASSET_NAME 的资产信息）。
 
-    失败抛 UpdateError（中文可读信息）；assets 中无 UsageMonitor.exe 时
+    失败抛 UpdateError（中文可读信息）；assets 中无 VibeTrace.exe 时
     asset 为 None（调用方视为“无可用更新”）。
     """
     url = str(api_base or GITHUB_LATEST_URL).strip().rstrip("/")
@@ -272,22 +272,22 @@ def clear_update_request(data_root: str) -> None:
         pass
 
 
-def build_update_script(src: str, dst: str, process_name: str = "UsageMonitor") -> str:
+def build_update_script(src: str, dst: str, process_name: str = "VibeTrace") -> str:
     """生成 PowerShell 更新脚本内容。
 
     等待所有 <process_name> 进程退出（60s 超时后强杀兜底）→ 替换 exe →
     重启 → 清理信号文件 / 临时文件 / 脚本自身。编码 UTF-8 with BOM。
-    process_name 供测试注入（生产恒为 UsageMonitor）。
+    process_name 供测试注入（生产恒为 VibeTrace）。
     """
     def q(path: str) -> str:
         return str(path).replace("'", "''")
 
     return (
-        "# UsageMonitor 应用内更新脚本（自动生成，完成后自删）\r\n"
+        "# VibeTrace 应用内更新脚本（自动生成，完成后自删）\r\n"
         "$ErrorActionPreference = 'SilentlyContinue'\r\n"
         f"$src = '{q(src)}'\r\n"
         f"$dst = '{q(dst)}'\r\n"
-        "# 等待所有 UsageMonitor 进程退出（最长 60 秒）\r\n"
+        "# 等待所有 VibeTrace 进程退出（最长 60 秒）\r\n"
         "$deadline = (Get-Date).AddSeconds(60)\r\n"
         "while ((Get-Date) -lt $deadline) {\r\n"
         f"    $running = @(Get-Process -Name '{q(process_name)}' -ErrorAction SilentlyContinue)\r\n"

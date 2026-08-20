@@ -1,10 +1,10 @@
-﻿# uninstaller.ps1 — UsageMonitor 卸载（GUI 确认 / 静默，零依赖）
+﻿# uninstaller.ps1 — VibeTrace 卸载（GUI 确认 / 静默，零依赖）
 <#
 用法：
   powershell -ExecutionPolicy Bypass -File uninstaller.ps1            # GUI 确认
   powershell -ExecutionPolicy Bypass -File uninstaller.ps1 -Silent    # 静默卸载（保留数据与配置）
   powershell -ExecutionPolicy Bypass -File uninstaller.ps1 -Silent -DeleteData  # 连数据一起删除
-  powershell ... -InstallDir "D:\UsageMonitor"                        # 指定安装目录（默认脚本所在目录）
+  powershell ... -InstallDir "D:\VibeTrace"                        # 指定安装目录（默认脚本所在目录）
 
 卸载内容：停止运行中的实例、删除计划任务、删除快捷方式、删除「添加或删除程序」条目、
 删除程序文件；是否删除记录数据与 config.json 由 -DeleteData / GUI 勾选决定。
@@ -20,12 +20,12 @@ $ErrorActionPreference = "Stop"
 $installDir = if ($InstallDir) { [System.IO.Path]::GetFullPath($InstallDir.TrimEnd('\')) } else { $PSScriptRoot }
 
 function Stop-RunningInstances {
-  Get-Process -Name "UsageMonitor" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Get-Process -Name "VibeTrace" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Milliseconds 500
 }
 
 function Remove-Tasks {
-  foreach ($name in @("UsageMonitor", "UsageMonitorReport")) {
+  foreach ($name in @("VibeTrace", "VibeTraceReport")) {
     try {
       Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction Stop
       Write-Host "  已删除计划任务 $name"
@@ -36,12 +36,12 @@ function Remove-Tasks {
 }
 
 function Remove-Shortcuts {
-  $menuDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\UsageMonitor"
+  $menuDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\VibeTrace"
   if (Test-Path -LiteralPath $menuDir) {
     Remove-Item -LiteralPath $menuDir -Recurse -Force
     Write-Host "  已删除开始菜单快捷方式"
   }
-  $desktopLnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "UsageMonitor.lnk"
+  $desktopLnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "VibeTrace.lnk"
   if (Test-Path -LiteralPath $desktopLnk) {
     Remove-Item -LiteralPath $desktopLnk -Force
     Write-Host "  已删除桌面快捷方式"
@@ -49,7 +49,7 @@ function Remove-Shortcuts {
 }
 
 function Remove-RegKey {
-  $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\UsageMonitor"
+  $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\VibeTrace"
   if (Test-Path $key) {
     Remove-Item -Path $key -Recurse -Force
     Write-Host "  已删除「添加或删除程序」条目"
@@ -76,7 +76,7 @@ function Uninstall-All([bool]$wipeData) {
     Invoke-DelayedDelete $installDir
     Write-Host "卸载完成（数据已一并删除）。"
   } else {
-    foreach ($f in @("UsageMonitor.exe")) {
+    foreach ($f in @("VibeTrace.exe")) {
       $p = Join-Path $installDir $f
       if (Test-Path -LiteralPath $p) {
         Remove-Item -LiteralPath $p -Force
@@ -98,7 +98,7 @@ function Show-GuiConfirm {
   [System.Windows.Forms.Application]::EnableVisualStyles()
 
   $form = New-Object System.Windows.Forms.Form
-  $form.Text = "卸载 UsageMonitor"
+  $form.Text = "卸载 VibeTrace"
   $form.ClientSize = New-Object System.Drawing.Size(460, 190)
   $form.FormBorderStyle = "FixedDialog"
   $form.MaximizeBox = $false
@@ -106,7 +106,7 @@ function Show-GuiConfirm {
   $form.StartPosition = "CenterScreen"
 
   $lbl = New-Object System.Windows.Forms.Label
-  $lbl.Text = "确定要卸载 UsageMonitor 吗？`n`n安装目录：$installDir`n将停止运行中的程序，并删除计划任务、快捷方式与程序文件。"
+  $lbl.Text = "确定要卸载 VibeTrace 吗？`n`n安装目录：$installDir`n将停止运行中的程序，并删除计划任务、快捷方式与程序文件。"
   $lbl.SetBounds(24, 20, 410, 70)
   $chk = New-Object System.Windows.Forms.CheckBox
   $chk.Text = "同时删除全部记录数据与 config.json（不可恢复）"
@@ -130,7 +130,7 @@ function Show-GuiConfirm {
   Uninstall-All -wipeData $script:confirmDelete
   [System.Windows.Forms.MessageBox]::Show(
     "卸载完成。" + $(if ($script:confirmDelete) { "" } else { "`n记录数据与 config.json 已保留。" }),
-    "UsageMonitor 卸载", "OK", "Information") | Out-Null
+    "VibeTrace 卸载", "OK", "Information") | Out-Null
   return $true
 }
 
@@ -144,7 +144,7 @@ try {
 } catch {
   Write-Host "卸载失败：$($_.Exception.Message)" -ForegroundColor Red
   if (-not $Silent) {
-    [System.Windows.Forms.MessageBox]::Show("卸载失败：$($_.Exception.Message)", "UsageMonitor 卸载", "OK", "Error") | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("卸载失败：$($_.Exception.Message)", "VibeTrace 卸载", "OK", "Error") | Out-Null
   }
   exit 1
 }

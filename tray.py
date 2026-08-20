@@ -63,7 +63,7 @@ IDI_APPLICATION = 32512
 MB_OK = 0x0000
 CW_USEDEFAULT = 0x80000000
 
-TRAY_CLASS = "UsageMonitorTrayWnd"
+TRAY_CLASS = "VibeTraceTrayWnd"
 TRAY_TIP = "电脑使用监控"
 
 _hwnd: int = 0  # 隐藏窗口句柄（供测试/消息投递）

@@ -1,8 +1,8 @@
-# UsageMonitor · 电脑使用情况监控
+# VibeTrace · 电脑使用情况监控
 
 > Pure vibe coding artifact · Local-first · Python standard library + ctypes · Zero third-party runtime dependencies
 
-[UsageMonitor](https://github.com/Niangaol/UsageMonitor) is a local Windows usage monitoring tool. It runs as a resident daemon, samples the foreground window, records software / social contacts / browser / AI coding usage, and produces daily, weekly, and monthly reports plus a local web dashboard.
+[VibeTrace](https://github.com/Niangaol/VibeTrace) is a local Windows usage monitoring tool. It runs as a resident daemon, samples the foreground window, records software / social contacts / browser / AI coding usage, and produces daily, weekly, and monthly reports plus a local web dashboard.
 
 No build step, no framework, no bundler — pure Python standard library + vanilla JS, with `ctypes` calling Win32 directly. Data stays local by default; no screenshots, no screen recording, no keyboard logging, no chat content reading.
 
@@ -14,7 +14,7 @@ No build step, no framework, no bundler — pure Python standard library + vanil
 
 ## Contents
 
-- [Why UsageMonitor](#why-usagemonitor) — what it is and how it compares
+- [Why VibeTrace](#why-usagemonitor) — what it is and how it compares
 - [Quick start](#quick-start) — clone + `python monitor.py`
 - [Features](#features) — monitoring / reports / insights / adaptation / updates / security
 - [Configuration & access](#configuration--access) — config discovery, env vars, access
@@ -25,11 +25,11 @@ No build step, no framework, no bundler — pure Python standard library + vanil
 
 ---
 
-## Why UsageMonitor
+## Why VibeTrace
 
 Most usage-tracking tools sync data to the cloud, depend on paid services, or miss two dimensions this project targets: AI coding and URL-level browser history.
 
-In most comparable open-source projects, tracking AI coding is either limited to token/session counts in a standalone tool, or handled as a small editor/plugin dimension that is not part of overall computer-usage analysis. UsageMonitor treats AI coding time as a dimension alongside software, social contacts, and browsers — tracked within the same monitoring and reporting system, covering both foreground-window / process-tree AI tool timing and optional local AI session deep stats.
+In most comparable open-source projects, tracking AI coding is either limited to token/session counts in a standalone tool, or handled as a small editor/plugin dimension that is not part of overall computer-usage analysis. VibeTrace treats AI coding time as a dimension alongside software, social contacts, and browsers — tracked within the same monitoring and reporting system, covering both foreground-window / process-tree AI tool timing and optional local AI session deep stats.
 
 Key differences:
 
@@ -42,7 +42,7 @@ Key differences:
 
 **vs. the field**:
 
-| | UsageMonitor | RescueTime | ManicTime | WakaTime | ActivityWatch |
+| | VibeTrace | RescueTime | ManicTime | WakaTime | ActivityWatch |
 |---|---|---|---|---|---|
 | Local by default, no upload | Yes | Cloud | Partial | Cloud | Yes |
 | Open source, free | Yes (MIT) | No | No | Partial | Yes (MPL) |
@@ -59,8 +59,8 @@ Key differences:
 ## Quick start
 
 ```powershell
-git clone https://github.com/Niangaol/UsageMonitor.git
-cd UsageMonitor
+git clone https://github.com/Niangaol/VibeTrace.git
+cd VibeTrace
 
 # Test run for 30 seconds
 python monitor.py --test 30
@@ -139,7 +139,7 @@ python monitor.py --admin   # auto UAC elevation when not running as admin
 ### Optional backends
 
 - SQLite backend `usage.db`: mirror/index beside JSONL; backfill / rebuild / consistency check
-- GitHub Pages docs site: https://niangaol.github.io/UsageMonitor/
+- GitHub Pages docs site: https://niangaol.github.io/VibeTrace/
 
 ---
 
@@ -169,7 +169,7 @@ python monitor.py --admin   # auto UAC elevation when not running as admin
 ```powershell
 python dashboard.py --open            # open http://127.0.0.1:8765
 python dashboard.py --port 9000       # custom port
-UsageMonitor.exe --dashboard --open   # via EXE
+VibeTrace.exe --dashboard --open   # via EXE
 ```
 
 Tray menu: Today's Overview / Open Dashboard / Check for Updates / Pause · Resume / Exit.
@@ -233,4 +233,4 @@ CI: tests → coverage (incl. insights/updater/sqlite_store/ai_sessions) → PyI
 - [TODO.md](TODO.md)（handover / todo list）
 - [ROADMAP.md](docs/ROADMAP.md)（AI coding deep-tracking plan, Chinese）
 - [Requirements](项目需求与开发文档.md)
-- GitHub Pages: https://niangaol.github.io/UsageMonitor/
+- GitHub Pages: https://niangaol.github.io/VibeTrace/

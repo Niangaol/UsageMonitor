@@ -33,7 +33,7 @@ assignees: ""
 
 - [ ] 本地全量测试通过：`python test_all.py` → `ALL TESTS PASSED`（152+ 项）
 - [ ] 新增/更新的测试用例已写入 `test_all.py`（沿用 `check()`/`ok()` 风格）
-- [ ] 打包验证（如改动影响）：`python -m PyInstaller UsageMonitor.spec --noconfirm` + `.\dist\UsageMonitor.exe --version`
+- [ ] 打包验证（如改动影响）：`python -m PyInstaller VibeTrace.spec --noconfirm` + `.\dist\VibeTrace.exe --version`
 
 ```text
 （粘贴 python test_all.py 末尾输出，如：ALL TESTS PASSED · N 项断言）

@@ -15,8 +15,8 @@ assignees: ''
 ## 环境信息
 
 - **操作系统**：Windows 10 / Windows 11（请填具体版本与 32/64 位）
-- **运行方式**：`python xxx.py` / 打包后的 `UsageMonitor.exe` / 计划任务（托盘）
-- **版本号**：`python version.py` 或 `UsageMonitor.exe --version` 的输出（如有）
+- **运行方式**：`python xxx.py` / 打包后的 `VibeTrace.exe` / 计划任务（托盘）
+- **版本号**：`python version.py` 或 `VibeTrace.exe --version` 的输出（如有）
 - **Python 版本**：`python --version`（脚本方式运行时）
 
 ## 问题描述

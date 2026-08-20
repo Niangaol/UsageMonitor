@@ -9,7 +9,7 @@
     "smoke": "electron . --smoke",
     "dist": "electron-builder --win portable"
   },
-  "author": "UsageMonitor",
+  "author": "VibeTrace",
   "license": "MIT",
   "devDependencies": {
     "electron": "^33.0.0",
@@ -17,7 +17,7 @@
   },
   "build": {
     "appId": "cn.usagemonitor.desktop",
-    "productName": "UsageMonitor",
+    "productName": "VibeTrace",
     "files": [
       "main.js",
       "package.json"
@@ -29,7 +29,7 @@
       "icon": "../assets/icon.png"
     },
     "portable": {
-      "artifactName": "UsageMonitor-Desktop-${version}.exe"
+      "artifactName": "VibeTrace-Desktop-${version}.exe"
     }
   }
 }

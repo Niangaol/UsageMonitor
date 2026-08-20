@@ -3,7 +3,7 @@
   "poll_interval_s": 5,
   "idle_threshold_s": 180,
   "retention_days": 90,
-  "data_root": "",
+  "data_root": "D:\\VibeTrace",
   "apps": {
     "code.exe": "VS Code",
     "wechat.exe": "微信",

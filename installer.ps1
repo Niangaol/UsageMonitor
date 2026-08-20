@@ -1,15 +1,15 @@
-﻿# installer.ps1 — UsageMonitor 安装向导（GUI / 静默，零依赖，Windows PowerShell 5.1+）
+﻿# installer.ps1 — VibeTrace 安装向导（GUI / 静默，零依赖，Windows PowerShell 5.1+）
 <#
 用法：
   powershell -ExecutionPolicy Bypass -File installer.ps1               # GUI 向导
   powershell -ExecutionPolicy Bypass -File installer.ps1 -Silent       # 静默安装（默认选项）
   powershell -ExecutionPolicy Bypass -File installer.ps1 -Silent `
-      -InstallDir "D:\UsageMonitor" -NoTasks -NoShortcuts -NoLaunch    # 自定义静默
+      -InstallDir "D:\VibeTrace" -NoTasks -NoShortcuts -NoLaunch    # 自定义静默
 
 安装内容：
-  1) 复制 dist\UsageMonitor.exe、卸载器到安装目录；config.json 缺失时从默认模板生成
+  1) 复制 dist\VibeTrace.exe、卸载器到安装目录；config.json 缺失时从默认模板生成
      （数据目录默认跟随程序目录，可后续在 config.json 中改 data_root）
-  2) 注册计划任务：UsageMonitor（登录自启）/ UsageMonitorReport（每日 19:30 日报）
+  2) 注册计划任务：VibeTrace（登录自启）/ VibeTraceReport（每日 19:30 日报）
   3) 创建开始菜单与桌面快捷方式
   4) 写入 HKCU「添加或删除程序」条目（无需管理员权限）
 #>
@@ -24,7 +24,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = $PSScriptRoot
-$SrcExe = Join-Path $RepoRoot "dist\UsageMonitor.exe"
+$SrcExe = Join-Path $RepoRoot "dist\VibeTrace.exe"
 $SrcUninstaller = Join-Path $RepoRoot "uninstaller.ps1"
 $SrcConfigTemplate = Join-Path $RepoRoot "config.default.json"
 
@@ -35,11 +35,11 @@ function Get-ProgramVersion {
   } catch { return "" }
 }
 $AppVersion = Get-ProgramVersion
-$AppTitle = "UsageMonitor 电脑使用情况监控" + $(if ($AppVersion) { " v$AppVersion" } else { "" })
+$AppTitle = "VibeTrace 电脑使用情况监控" + $(if ($AppVersion) { " v$AppVersion" } else { "" })
 
 function Assert-Sources {
   if (-not (Test-Path -LiteralPath $SrcExe)) {
-    throw "未找到 $SrcExe`n请先在项目目录构建：python -m PyInstaller UsageMonitor.spec --noconfirm"
+    throw "未找到 $SrcExe`n请先在项目目录构建：python -m PyInstaller VibeTrace.spec --noconfirm"
   }
   if (-not (Test-Path -LiteralPath $SrcUninstaller)) {
     throw "未找到卸载器 $SrcUninstaller"
@@ -48,24 +48,24 @@ function Assert-Sources {
 
 function Resolve-InstallDir {
   $dir = $InstallDir
-  if (-not $dir) { $dir = Join-Path $env:LOCALAPPDATA "UsageMonitor" }
+  if (-not $dir) { $dir = Join-Path $env:LOCALAPPDATA "VibeTrace" }
   $dir = [System.IO.Path]::GetFullPath($dir.TrimEnd('\'))
   $srcFull = [System.IO.Path]::GetFullPath($RepoRoot)
   if ($dir.TrimEnd('\') -eq $srcFull.TrimEnd('\')) {
-    throw "安装目录不能是项目源码目录（$srcFull）。请选择其他目录（例如 $env:LOCALAPPDATA\UsageMonitor）。"
+    throw "安装目录不能是项目源码目录（$srcFull）。请选择其他目录（例如 $env:LOCALAPPDATA\VibeTrace）。"
   }
   return $dir
 }
 
 function Stop-RunningInstances {
-  Get-Process -Name "UsageMonitor" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Get-Process -Name "VibeTrace" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Milliseconds 500
 }
 
 function Copy-ProgramFiles([string]$dir, [scriptblock]$log) {
   New-Item -ItemType Directory -Path $dir -Force | Out-Null
-  Copy-Item -LiteralPath $SrcExe -Destination (Join-Path $dir "UsageMonitor.exe") -Force
-  if ($log) { & $log "已复制 UsageMonitor.exe" }
+  Copy-Item -LiteralPath $SrcExe -Destination (Join-Path $dir "VibeTrace.exe") -Force
+  if ($log) { & $log "已复制 VibeTrace.exe" }
   Copy-Item -LiteralPath $SrcUninstaller -Destination (Join-Path $dir "uninstaller.ps1") -Force
   $cfg = Join-Path $dir "config.json"
   if (-not (Test-Path -LiteralPath $cfg) -and (Test-Path -LiteralPath $SrcConfigTemplate)) {
@@ -75,32 +75,32 @@ function Copy-ProgramFiles([string]$dir, [scriptblock]$log) {
 }
 
 function Register-Tasks([string]$dir, [scriptblock]$log) {
-  $exe = Join-Path $dir "UsageMonitor.exe"
+  $exe = Join-Path $dir "VibeTrace.exe"
   $action = New-ScheduledTaskAction -Execute $exe -Argument " " -WorkingDirectory $dir
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
   $settings = New-ScheduledTaskSettingsSet -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-  Register-ScheduledTask -TaskName "UsageMonitor" -Action $action -Trigger $trigger `
+  Register-ScheduledTask -TaskName "VibeTrace" -Action $action -Trigger $trigger `
     -Settings $settings -Force | Out-Null
-  if ($log) { & $log "已注册计划任务 UsageMonitor（登录自启）" }
+  if ($log) { & $log "已注册计划任务 VibeTrace（登录自启）" }
 
   $rAction = New-ScheduledTaskAction -Execute $exe -Argument "--today --write" -WorkingDirectory $dir
   $rTrigger = New-ScheduledTaskTrigger -Daily -At 19:30
   $rSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -StartWhenAvailable
-  Register-ScheduledTask -TaskName "UsageMonitorReport" -Action $rAction -Trigger $rTrigger `
+  Register-ScheduledTask -TaskName "VibeTraceReport" -Action $rAction -Trigger $rTrigger `
     -Settings $rSettings -Force | Out-Null
-  if ($log) { & $log "已注册计划任务 UsageMonitorReport（每日 19:30 日报）" }
+  if ($log) { & $log "已注册计划任务 VibeTraceReport（每日 19:30 日报）" }
 }
 
 function New-Shortcuts([string]$dir, [bool]$desktop, [scriptblock]$log) {
   $ws = New-Object -ComObject WScript.Shell
-  $exe = Join-Path $dir "UsageMonitor.exe"
-  $menuDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\UsageMonitor"
+  $exe = Join-Path $dir "VibeTrace.exe"
+  $menuDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\VibeTrace"
   New-Item -ItemType Directory -Path $menuDir -Force | Out-Null
-  $lnk1 = $ws.CreateShortcut((Join-Path $menuDir "UsageMonitor.lnk"))
+  $lnk1 = $ws.CreateShortcut((Join-Path $menuDir "VibeTrace.lnk"))
   $lnk1.TargetPath = $exe; $lnk1.WorkingDirectory = $dir; $lnk1.IconLocation = "$exe,0"
-  $lnk1.Description = "启动 UsageMonitor（托盘常驻）"
+  $lnk1.Description = "启动 VibeTrace（托盘常驻）"
   $lnk1.Save()
   $lnk2 = $ws.CreateShortcut((Join-Path $menuDir "打开仪表盘.lnk"))
   $lnk2.TargetPath = $exe; $lnk2.Arguments = "--dashboard"
@@ -109,7 +109,7 @@ function New-Shortcuts([string]$dir, [bool]$desktop, [scriptblock]$log) {
   $lnk2.Save()
   if ($desktop) {
     $desktopDir = [Environment]::GetFolderPath("Desktop")
-    $lnk3 = $ws.CreateShortcut((Join-Path $desktopDir "UsageMonitor.lnk"))
+    $lnk3 = $ws.CreateShortcut((Join-Path $desktopDir "VibeTrace.lnk"))
     $lnk3.TargetPath = $exe; $lnk3.WorkingDirectory = $dir; $lnk3.IconLocation = "$exe,0"
     $lnk3.Save()
   }
@@ -118,14 +118,14 @@ function New-Shortcuts([string]$dir, [bool]$desktop, [scriptblock]$log) {
 }
 
 function Write-UninstallKey([string]$dir) {
-  $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\UsageMonitor"
+  $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\VibeTrace"
   $uninst = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $dir 'uninstaller.ps1')`""
   New-Item -Path $key -Force | Out-Null
   New-ItemProperty -Path $key -Name "DisplayName" -Value $AppTitle -PropertyType String -Force | Out-Null
   New-ItemProperty -Path $key -Name "DisplayVersion" -Value $AppVersion -PropertyType String -Force | Out-Null
-  New-ItemProperty -Path $key -Name "DisplayIcon" -Value "$(Join-Path $dir 'UsageMonitor.exe'),0" -PropertyType String -Force | Out-Null
+  New-ItemProperty -Path $key -Name "DisplayIcon" -Value "$(Join-Path $dir 'VibeTrace.exe'),0" -PropertyType String -Force | Out-Null
   New-ItemProperty -Path $key -Name "InstallLocation" -Value $dir -PropertyType String -Force | Out-Null
-  New-ItemProperty -Path $key -Name "Publisher" -Value "UsageMonitor" -PropertyType String -Force | Out-Null
+  New-ItemProperty -Path $key -Name "Publisher" -Value "VibeTrace" -PropertyType String -Force | Out-Null
   New-ItemProperty -Path $key -Name "UninstallString" -Value $uninst -PropertyType String -Force | Out-Null
   New-ItemProperty -Path $key -Name "QuietUninstallString" -Value "$uninst -Silent" -PropertyType String -Force | Out-Null
   New-ItemProperty -Path $key -Name "NoModify" -Value 1 -PropertyType DWord -Force | Out-Null
@@ -294,7 +294,7 @@ function Show-GuiWizard {
     }
     # 完成 / 关闭
     if ($script:installOk -and $chkLaunch.Checked -and -not $script:installError) {
-      Start-Process (Join-Path $script:installDir "UsageMonitor.exe")
+      Start-Process (Join-Path $script:installDir "VibeTrace.exe")
     }
     $form.Close()
   })
@@ -312,10 +312,10 @@ try {
   if ($Silent) {
     $dir = Resolve-InstallDir
     $log = { param($m) Write-Host "  $m" }
-    Write-Host "UsageMonitor 静默安装"
+    Write-Host "VibeTrace 静默安装"
     Install-All $dir $true $log
     Write-Host "安装完成：$dir"
-    if (-not $NoLaunch) { Start-Process (Join-Path $dir "UsageMonitor.exe") }
+    if (-not $NoLaunch) { Start-Process (Join-Path $dir "VibeTrace.exe") }
     exit 0
   }
   Show-GuiWizard | Out-Null
@@ -323,7 +323,7 @@ try {
 } catch {
   Write-Host "安装失败：$($_.Exception.Message)" -ForegroundColor Red
   if (-not $Silent) {
-    [System.Windows.Forms.MessageBox]::Show("安装失败：$($_.Exception.Message)", "UsageMonitor 安装", "OK", "Error") | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("安装失败：$($_.Exception.Message)", "VibeTrace 安装", "OK", "Error") | Out-Null
   }
   exit 1
 }

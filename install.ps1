@@ -1,5 +1,5 @@
-﻿# install.ps1 - Register UsageMonitor scheduled task (auto-start at logon)
-# Preferred runner: dist\UsageMonitor.exe (single-file exe, no Python needed).
+﻿# install.ps1 - Register VibeTrace scheduled task (auto-start at logon)
+# Preferred runner: dist\VibeTrace.exe (single-file exe, no Python needed).
 # Fallback: pythonw.exe + monitor.py --tray.
 # Run as the current user (admin not strictly required; elevation may be needed
 # on some systems to register a scheduled task for another user).
@@ -9,8 +9,8 @@ $ErrorActionPreference = 'Stop'
 try {
     $scriptDir = $PSScriptRoot
 
-    # 1. Prefer the packaged exe (dist\UsageMonitor.exe); fall back to pythonw + script
-    $exe = Join-Path $scriptDir 'dist\UsageMonitor.exe'
+    # 1. Prefer the packaged exe (dist\VibeTrace.exe); fall back to pythonw + script
+    $exe = Join-Path $scriptDir 'dist\VibeTrace.exe'
     $runner = $null
     $runnerArgs = @()
     if (Test-Path -LiteralPath $exe) {
@@ -72,7 +72,7 @@ try {
         -DontStopIfGoingOnBatteries `
         -StartWhenAvailable
 
-    Register-ScheduledTask -TaskName 'UsageMonitor' -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+    Register-ScheduledTask -TaskName 'VibeTrace' -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
 
     # 3. Daily 19:30 report task (regenerate today's report.md/csv incl. browser history)
     if ($runnerArgs.Count -eq 0) {
@@ -93,10 +93,10 @@ try {
         -ExecutionTimeLimit (New-TimeSpan -Minutes 30) `
         -StartWhenAvailable
 
-    Register-ScheduledTask -TaskName 'UsageMonitorReport' -Action $reportAction -Trigger $reportTrigger -Settings $reportSettings -Force | Out-Null
+    Register-ScheduledTask -TaskName 'VibeTraceReport' -Action $reportAction -Trigger $reportTrigger -Settings $reportSettings -Force | Out-Null
 
-    Write-Host "Installed: scheduled task 'UsageMonitor' will start the monitor at logon."
-    Write-Host "Installed: scheduled task 'UsageMonitorReport' will regenerate today's report at 19:30 daily."
+    Write-Host "Installed: scheduled task 'VibeTrace' will start the monitor at logon."
+    Write-Host "Installed: scheduled task 'VibeTraceReport' will regenerate today's report at 19:30 daily."
     Write-Host "  runner:  $runnerDesc"
     Write-Host "  report:  $reportDesc"
     Write-Host "To uninstall, run:  powershell -ExecutionPolicy Bypass -File uninstall.ps1"

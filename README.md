@@ -1,8 +1,8 @@
-# UsageMonitor · 电脑使用情况监控
+# VibeTrace · 电脑使用情况监控
 
 > 纯 vibe coding 产物 · 本地优先 · Python 标准库 + ctypes · 零第三方运行时依赖
 
-[UsageMonitor](https://github.com/Niangaol/UsageMonitor) 是一个 Windows 本地使用情况监控工具。它以常驻守护进程方式运行，采集前台窗口信息，记录软件、社交联系人、浏览器与 AI 编程使用时长，并由此生成日报、周报、月报和本地网页仪表盘。
+[VibeTrace](https://github.com/Niangaol/VibeTrace) 是一个 Windows 本地使用情况监控工具。它以常驻守护进程方式运行，采集前台窗口信息，记录软件、社交联系人、浏览器与 AI 编程使用时长，并由此生成日报、周报、月报和本地网页仪表盘。
 
 No build step，无框架，无打包器 —— 纯 Python 标准库 + vanilla JS，`ctypes` 直调 Win32。数据默认只存在本机，不截屏、不录屏、不读键盘输入、不读聊天内容。
 
@@ -14,7 +14,7 @@ No build step，无框架，无打包器 —— 纯 Python 标准库 + vanilla J
 
 ## Contents
 
-- [Why UsageMonitor](#why-usagemonitor) — 它是什么，和其他工具怎么比
+- [Why VibeTrace](#why-usagemonitor) — 它是什么，和其他工具怎么比
 - [Quick start](#quick-start) — clone + `python monitor.py`
 - [Features](#features) — 监控 / 报表 / 洞察 / 适配 / 更新 / 安全
 - [Configuration & access](#configuration--access) — 配置发现、环境变量、访问方式
@@ -25,11 +25,11 @@ No build step，无框架，无打包器 —— 纯 Python 标准库 + vanilla J
 
 ---
 
-## Why UsageMonitor
+## Why VibeTrace
 
 多数使用统计工具把数据同步到云端，或依赖商业服务计费，且没有专门覆盖“AI 编程”和“浏览器 URL 级历史”两个维度。
 
-在目前的开源项目中，追踪 AI 编程的工具大多只统计 Token 消耗或会话数，且通常是独立工具，不与整体电脑使用数据放在一起分析。UsageMonitor 把 AI 编程时间作为与软件、社交联系人、浏览器并列的一个维度，整合进同一套监控和报表体系——既在前台窗口 / 进程树层面做 AI 工具计时，也支持读取本地 AI 工具会话文件做进一步的深度统计。
+在目前的开源项目中，追踪 AI 编程的工具大多只统计 Token 消耗或会话数，且通常是独立工具，不与整体电脑使用数据放在一起分析。VibeTrace 把 AI 编程时间作为与软件、社交联系人、浏览器并列的一个维度，整合进同一套监控和报表体系——既在前台窗口 / 进程树层面做 AI 工具计时，也支持读取本地 AI 工具会话文件做进一步的深度统计。
 
 与其他工具的关键差异：
 
@@ -42,7 +42,7 @@ No build step，无框架，无打包器 —— 纯 Python 标准库 + vanilla J
 
 **vs. 同类工具**：
 
-| | UsageMonitor | RescueTime | ManicTime | WakaTime | ActivityWatch |
+| | VibeTrace | RescueTime | ManicTime | WakaTime | ActivityWatch |
 |---|---|---|---|---|---|
 | 本地优先、默认不上传 | Yes | 云同步 | 部分 | 云同步 | Yes |
 | 开源免费 | Yes (MIT) | No | No | 部分 | Yes (MPL) |
@@ -59,8 +59,8 @@ No build step，无框架，无打包器 —— 纯 Python 标准库 + vanilla J
 ## Quick start
 
 ```powershell
-git clone https://github.com/Niangaol/UsageMonitor.git
-cd UsageMonitor
+git clone https://github.com/Niangaol/VibeTrace.git
+cd VibeTrace
 
 # 测试运行 30 秒（观察是否正常写当日文件夹）
 python monitor.py --test 30
@@ -139,7 +139,7 @@ python monitor.py --admin   # 非管理员时自动弹 UAC 提权重启
 ### Optional backends
 
 - SQLite 后端 `usage.db`：JSONL 之外的镜像/索引，支持回填 / 重建 / 一致性校验
-- GitHub Pages 文档站：https://niangaol.github.io/UsageMonitor/
+- GitHub Pages 文档站：https://niangaol.github.io/VibeTrace/
 
 ---
 
@@ -169,7 +169,7 @@ python monitor.py --admin   # 非管理员时自动弹 UAC 提权重启
 ```powershell
 python dashboard.py --open            # 打开 http://127.0.0.1:8765
 python dashboard.py --port 9000       # 自定义端口
-UsageMonitor.exe --dashboard --open   # exe 方式
+VibeTrace.exe --dashboard --open   # exe 方式
 ```
 
 托盘右键：今日概览 / 打开仪表盘 / 检查更新 / 暂停·继续 / 退出。
@@ -242,4 +242,4 @@ CI：测试 → coverage（含 insights/updater/sqlite_store/ai_sessions）→ P
 - [TODO.md](TODO.md)（交接/待办清单）
 - [ROADMAP.md](docs/ROADMAP.md)（AI 编程深度追踪规划）
 - [项目需求与开发文档.md](项目需求与开发文档.md)
-- GitHub Pages：https://niangaol.github.io/UsageMonitor/
+- GitHub Pages：https://niangaol.github.io/VibeTrace/

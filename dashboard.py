@@ -384,7 +384,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>UsageMonitor · 概览</title>
+<title>VibeTrace · 刻迹 · 概览</title>
 <style>
   :root{
     --bg:#101318; --surface:#14171e; --surface-2:#1a1e27; --surface-3:#20252f;
@@ -645,7 +645,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         <circle cx="15" cy="15" r="13" stroke="#e0a53c" stroke-width="2.4"/>
         <path d="M15 9v6.2l4.2 2.4" stroke="#e0a53c" stroke-width="2" stroke-linecap="round"/>
       </svg>
-      <div><b>UsageMonitor</b><span>电脑使用情况监控</span></div>
+      <div><b>VibeTrace</b><span>刻迹 · 电脑使用情况监控</span></div>
     </div>
     <nav class="nav" id="nav">
       <a class="nav-item active" data-view="overview" href="#">
@@ -1113,7 +1113,7 @@ function switchView(v, push){
   $$(".view").forEach(el => el.classList.toggle("active", el.id === "view-"+v));
   $$(".nav-item").forEach(a => a.classList.toggle("active", a.dataset.view === v));
   $("#pageTitle").textContent = TITLES[v];
-  document.title = TITLES[v] + " · UsageMonitor";
+  document.title = TITLES[v] + " · VibeTrace";
   if(push !== false) history.replaceState(null, "", v === "overview" ? "/" : "/?view=" + v);
   closeDrawer();
   if(!state.loaded[v]){
@@ -2482,7 +2482,7 @@ function backgroundWatchTheme(){
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "UsageMonitorDashboard/4.0"
+    server_version = "VibeTraceDashboard/4.0"
 
     def log_message(self, fmt, *args):  # 静默，减少刷屏
         pass
@@ -3200,7 +3200,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             asset = result["asset"]
             dest_dir = os.path.join(tempfile.gettempdir(), "usagemonitor-update")
-            dest = os.path.join(dest_dir, f"UsageMonitor-{result['latest']}.exe")
+            dest = os.path.join(dest_dir, f"VibeTrace-{result['latest']}.exe")
             with _UPDATE_LOCK:
                 _UPDATE_STATE.update(state="downloading", downloaded=0, total=0,
                                      path=None, error=None, latest=str(result["latest"]))

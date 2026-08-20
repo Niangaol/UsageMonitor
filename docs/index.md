@@ -1,9 +1,9 @@
 ---
 layout: default
-title: UsageMonitor
+title: VibeTrace
 ---
 
-# UsageMonitor · 电脑使用情况监控
+# VibeTrace · 电脑使用情况监控
 
 Windows 本地使用情况监控工具：纯本地、零第三方依赖、静默低占用。
 
@@ -23,8 +23,8 @@ Windows 本地使用情况监控工具：纯本地、零第三方依赖、静默
 ## 快速开始
 
 ```powershell
-git clone https://github.com/Niangaol/UsageMonitor.git
-cd UsageMonitor
+git clone https://github.com/Niangaol/VibeTrace.git
+cd VibeTrace
 python monitor.py --test 30
 python monitor.py --foreground
 ```

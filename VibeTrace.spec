@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
-# UsageMonitor.spec — PyInstaller 打包配置（monitor.py 多工具入口）
-# 构建：python -m PyInstaller UsageMonitor.spec --noconfirm
+# VibeTrace.spec — PyInstaller 打包配置（monitor.py 多工具入口，原名 UsageMonitor.spec）
+# 构建：python -m PyInstaller VibeTrace.spec --noconfirm
 
 a = Analysis(
     ['monitor.py'],
@@ -26,7 +26,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='UsageMonitor',
+    name='VibeTrace',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

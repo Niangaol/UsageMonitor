@@ -1,4 +1,4 @@
-# UsageMonitor 测试流程方案
+# VibeTrace 测试流程方案
 
 > **文档版本**：v1.1 | **更新日期**：2026-08-20 | **状态**：已落地（Phase 1：pytest 85项 + CI fast/full + 覆盖率门禁 50%）
 
@@ -63,7 +63,7 @@ flowchart TD
 ## 三、目录结构提案
 
 ```
-D:\电脑使用情况监控
+D:\VibeTrace（刻迹）
 ├── test_all.py              # 保留兼容（过渡期）
 ├── tests/
 │   ├── conftest.py          # pytest 全局 fixtures：临时目录、mock_win32、mock_config
@@ -329,9 +329,9 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: '3.11' }
       - run: pip install pyinstaller
-      - run: python -m PyInstaller UsageMonitor.spec --noconfirm --distpath dist --workpath build
+      - run: python -m PyInstaller VibeTrace.spec --noconfirm --distpath dist --workpath build
       - name: Smoke test
-        run: .\dist\UsageMonitor.exe --version
+        run: .\dist\VibeTrace.exe --version
       - name: Assert version matches tag
         shell: pwsh
         run: |
@@ -341,18 +341,18 @@ jobs:
           if ($version -ne $expected) { Write-Error "Version mismatch"; exit 1 }
       - uses: actions/upload-artifact@v4
         with:
-          name: UsageMonitor-windows
+          name: VibeTrace-windows
           path: |
-            dist/UsageMonitor.exe
-            dist/UsageMonitor.exe.sha256
+            dist/VibeTrace.exe
+            dist/VibeTrace.exe.sha256
             installer.ps1
             uninstaller.ps1
       - if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/UsageMonitor.exe
-            dist/UsageMonitor.exe.sha256
+            dist/VibeTrace.exe
+            dist/VibeTrace.exe.sha256
             installer.ps1
             uninstaller.ps1
           generate_release_notes: true
@@ -395,7 +395,7 @@ flowchart LR
 | **E2E** | 启动 monitor 30s → 生成日报 → 断言 Markdown 文件存在 | Tag CI 阻塞 | 管线修改者 |
 | **Performance** | 10万条 JSONL 聚合 < 5s；日报生成 < 2s | Tag CI 警告（不阻塞） | 性能回归者 |
 | **Coverage** | `coverage report --fail-under=85` | Tag CI 阻塞 | 测试补充者 |
-| **Smoke** | `UsageMonitor.exe --version` 退出码 0 | Tag CI 阻塞 | 构建维护者 |
+| **Smoke** | `VibeTrace.exe --version` 退出码 0 | Tag CI 阻塞 | 构建维护者 |
 | **Version** | `version.py` 与 tag 名一致 | Tag CI 阻塞 | 发布负责人 |
 
 ---
@@ -443,10 +443,10 @@ coverage report -m --fail-under=85
 coverage xml -o coverage.xml
 
 # PyInstaller 构建
-python -m PyInstaller UsageMonitor.spec --noconfirm --distpath dist --workpath build
+python -m PyInstaller VibeTrace.spec --noconfirm --distpath dist --workpath build
 
 # Smoke 测试
-.\dist\UsageMonitor.exe --version
+.\dist\VibeTrace.exe --version
 ```
 
 ### 7.3 性能基线
@@ -522,9 +522,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "UsageMonitor"
+name = "VibeTrace"
 version = "0.0.0"  # 实际版本由 version.py 管理
-description = "Windows 本地电脑使用情况监控工具"
+description = "Windows 本地VibeTrace（刻迹）工具"
 requires-python = ">=3.11"
 
 [tool.pytest.ini_options]

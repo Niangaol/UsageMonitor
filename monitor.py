@@ -666,7 +666,7 @@ def open_dashboard(data_root: str, port: int = 8765, view: str | None = None,
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-# exe 多工具分派：单文件 UsageMonitor.exe 内同时提供 monitor / report / dashboard
+# exe 多工具分派：单文件 VibeTrace.exe 内同时提供 monitor / report / dashboard
 # 三个子工具（PyInstaller 打包入口是 monitor.py，通过参数前缀分派到对应模块）。
 _REPORT_FLAGS = {
     "--day", "--today", "--week", "--month", "--reclassify",

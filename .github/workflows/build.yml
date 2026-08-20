@@ -45,18 +45,18 @@ jobs:
       - name: Install PyInstaller
         run: pip install pyinstaller
 
-      - name: Build exe (UsageMonitor.spec)
-        run: python -m PyInstaller UsageMonitor.spec --noconfirm --distpath dist --workpath build
+      - name: Build exe (VibeTrace.spec)
+        run: python -m PyInstaller VibeTrace.spec --noconfirm --distpath dist --workpath build
 
       - name: Generate SHA256 checksum
         shell: pwsh
         run: |
-          $hash = (Get-FileHash .\dist\UsageMonitor.exe -Algorithm SHA256).Hash.ToLower()
-          "$hash  UsageMonitor.exe" | Set-Content -Encoding ASCII .\dist\UsageMonitor.exe.sha256
-          Get-Content .\dist\UsageMonitor.exe.sha256
+          $hash = (Get-FileHash .\dist\VibeTrace.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  VibeTrace.exe" | Set-Content -Encoding ASCII .\dist\VibeTrace.exe.sha256
+          Get-Content .\dist\VibeTrace.exe.sha256
 
       - name: Smoke test (exe --version)
-        run: .\dist\UsageMonitor.exe --version
+        run: .\dist\VibeTrace.exe --version
 
       # 版本一致性断言：tag push 时，tag 名（去掉 v 前缀）必须与 version.py 的
       # VERSION 一致（发布流程要求 version.py / tag / exe 内嵌版本三者一致）。
@@ -84,10 +84,10 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UsageMonitor-windows
+          name: VibeTrace-windows
           path: |
-            dist/UsageMonitor.exe
-            dist/UsageMonitor.exe.sha256
+            dist/VibeTrace.exe
+            dist/VibeTrace.exe.sha256
             installer.ps1
             uninstaller.ps1
 
@@ -96,8 +96,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/UsageMonitor.exe
-            dist/UsageMonitor.exe.sha256
+            dist/VibeTrace.exe
+            dist/VibeTrace.exe.sha256
             installer.ps1
             uninstaller.ps1
           generate_release_notes: true

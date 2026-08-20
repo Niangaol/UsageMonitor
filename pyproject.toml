@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "UsageMonitor"
+name = "VibeTrace"
 version = "0.0.0"
-description = "Windows 本地电脑使用情况监控工具"
+description = "VibeTrace · 刻迹 — 本地 AI 编程时间与成本追踪"
 requires-python = ">=3.11"
 
 [tool.pytest.ini_options]

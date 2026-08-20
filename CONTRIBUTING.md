@@ -1,6 +1,6 @@
 # 贡献指南 · CONTRIBUTING
 
-欢迎为 **电脑使用情况监控（UsageMonitor）** 贡献代码、文档或 Issue。本指南面向所有协作者，
+欢迎为 **VibeTrace（刻迹）（VibeTrace）** 贡献代码、文档或 Issue。本指南面向所有协作者，
 约定项目的开发环境、代码风格、测试、提交、分支与 PR、发布以及隐私要求。
 
 请确保已阅读并理解 [README](README.md) 与《[项目需求与开发文档](./项目需求与开发文档.md)》，
@@ -36,7 +36,7 @@
 | 可选 | `pip install pyinstaller`（本地重建 exe 时用） |
 
 - 项目**零第三方运行时依赖**，正常工作只需 Python 标准库 + `ctypes`，**不要**引入 psutil / pywin32 等包。
-- 需要打包测试时，用 `python -m PyInstaller UsageMonitor.spec --noconfirm` 重建 exe（见 README「打包为 exe」）。
+- 需要打包测试时，用 `python -m PyInstaller VibeTrace.spec --noconfirm` 重建 exe（见 README「打包为 exe」）。
 - 只读检查、本地定时任务、Windows 基础操作一般无需管理员权限；但读取**提权窗口标题**需要以管理员身份运行监控进程。
 
 ---
@@ -74,7 +74,7 @@
 | `test_all.py` | 旧版单文件集成测试（LEGACY 兼容兜底，334 项 check） | 不再新增 case；新测试一律进 `tests/` |
 | `paths.py` | 统一路径解析 | 新增路径一律加到这里 |
 | `install.ps1` / `uninstall.ps1` | 安装/卸载（计划任务） | — |
-| `UsageMonitor.spec` | PyInstaller 打包配置 | 新增资源/图标需同步 |
+| `VibeTrace.spec` | PyInstaller 打包配置 | 新增资源/图标需同步 |
 
 > `config.default.json` 是分类/关键词/黑名单规则的**单一事实源**；新增规则优先改它，用户覆盖放 `config.json`。
 
@@ -95,7 +95,7 @@
   LEGACY，**不再新增 case**。分层与迁移详见 `docs/TEST_WORKFLOW.md`。
 - 测试里**不要依赖真实前台/网络/浏览器数据**；用临时目录隔离测试数据，用例结束后清理。
 - 涉及数据写入的改动（monitor / classifier / report 等），务必跑 `python report.py --verify`（及 `--repair`）验证数据完整性路径不被破坏。
-- 打包类改动可用 `python -m PyInstaller UsageMonitor.spec --noconfirm` 顺带验证 exe 冒烟（`--version`）。
+- 打包类改动可用 `python -m PyInstaller VibeTrace.spec --noconfirm` 顺带验证 exe 冒烟（`--version`）。
 - 覆盖率：`coverage run -m pytest tests/`（当前覆盖率 56%，CI 门禁 `fail-under=50%`）；`ruff check .` 必须 0 违规。
 
 > CI（`.github/workflows/ci-fast.yml`）：push/PR 触发 ruff + unit/integration/api/security；tag push 触发全量 + 覆盖率门禁 + 构建冒烟（见 `docs/TEST_WORKFLOW.md`）。
@@ -152,8 +152,8 @@
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
-4. 查看 GitHub Actions 中的 `test` 与 `build` job：`build` 依赖 `test` 通过，之后构建 `dist\UsageMonitor.exe`，
-   冒烟 `.\dist\UsageMonitor.exe --version`，并（仅 tag push）自动创建 GitHub Release 附上 exe 产物。
+4. 查看 GitHub Actions 中的 `test` 与 `build` job：`build` 依赖 `test` 通过，之后构建 `dist\VibeTrace.exe`，
+   冒烟 `.\dist\VibeTrace.exe --version`，并（仅 tag push）自动创建 GitHub Release 附上 exe 产物。
 5. Release 完成后，在 Release 页面核对产物与版本号一致；如需要可补充发布说明。
 
 > CI 会用 `--version` 冒烟，请确保 tag 版本与 `version.py` 一致（P2 后续计划加入二者一致性断言）。

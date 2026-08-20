@@ -1,4 +1,4 @@
-# UsageMonitor 项目规划文档：AI 编程深度追踪
+# VibeTrace 项目规划文档：AI 编程深度追踪
 
 > **文档版本**：v1.0 | **更新日期**：2026-08-17 | **状态**：规划中
 
@@ -6,7 +6,7 @@
 
 ### 1.1 项目简介
 
-**UsageMonitor** 是一款 Windows 平台的开源电脑使用行为监控工具。与市面上其他同类工具不同，本项目将 **“AI 辅助编程”** 作为核心追踪维度，致力于帮助开发者量化、分析和优化自己在 AI 时代的编程效率与成本。
+**VibeTrace** 是一款 Windows 平台的开源电脑使用行为监控工具。与市面上其他同类工具不同，本项目将 **“AI 辅助编程”** 作为核心追踪维度，致力于帮助开发者量化、分析和优化自己在 AI 时代的编程效率与成本。
 
 ### 1.2 核心价值
 
@@ -16,7 +16,7 @@
 
 ### 1.3 与竞品的差异化
 
-| 维度 | ActivityWatch / Tai | UsageMonitor |
+| 维度 | ActivityWatch / Tai | VibeTrace |
 |------|---------------------|--------------|
 | 核心定位 | 通用时间追踪 | **AI 编程专用场景追踪** |
 | 会话粒度 | 应用/窗口级别 | **AI 对话轮次级** |
@@ -160,6 +160,6 @@ A：分阶段推进，每个 Phase 都可以独立交付，不必一次性完成
 
 ## 八、加入我们
 
-- 📦 项目地址：[github.com/Niangaol/UsageMonitor](https://github.com/Niangaol/UsageMonitor)
-- 🐛 问题反馈：[Issues](https://github.com/Niangaol/UsageMonitor/issues)
+- 📦 项目地址：[github.com/Niangaol/VibeTrace](https://github.com/Niangaol/VibeTrace)
+- 🐛 问题反馈：[Issues](https://github.com/Niangaol/VibeTrace/issues)
 - 💡 功能建议：欢迎提交 Feature Request 或直接发起 PR

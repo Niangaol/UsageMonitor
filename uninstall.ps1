@@ -1,20 +1,20 @@
-# uninstall.ps1 - Remove UsageMonitor scheduled task, optionally delete recorded data
+# uninstall.ps1 - Remove VibeTrace scheduled task, optionally delete recorded data
 $ErrorActionPreference = 'Continue'
 
 # Data root = this script's directory (D:\电脑使用情况监控)
 $dataRoot = $PSScriptRoot
 
 try {
-    Unregister-ScheduledTask -TaskName 'UsageMonitor' -Confirm:$false
-    Write-Host "Scheduled task 'UsageMonitor' removed."
+    Unregister-ScheduledTask -TaskName 'VibeTrace' -Confirm:$false
+    Write-Host "Scheduled task 'VibeTrace' removed."
 }
 catch {
     Write-Host "No task found or removal failed: $_"
 }
 
 try {
-    Unregister-ScheduledTask -TaskName 'UsageMonitorReport' -Confirm:$false
-    Write-Host "Scheduled task 'UsageMonitorReport' removed."
+    Unregister-ScheduledTask -TaskName 'VibeTraceReport' -Confirm:$false
+    Write-Host "Scheduled task 'VibeTraceReport' removed."
 }
 catch {
     Write-Host "No task found or removal failed: $_"
