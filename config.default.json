@@ -85,7 +85,6 @@
     "dopus.exe": "Directory Opus",
     "xyplorer.exe": "XYplorer",
     "winrar.exe": "WinRAR",
-    "7zfm.exe": "7-Zip",
     "utools.exe": "uTools",
     "listary.exe": "Listary",
     "powertoys.exe": "PowerToys",
@@ -1198,13 +1197,27 @@
       "death_loop_window_s": 420,
       "focus_long_min": 45,
       "focus_switch_per_hour": 40,
-      "focus_coding_categories": ["开发", "代码", "AI编程", "编码", "开发工具", "编写"]
+      "focus_coding_categories": [
+        "开发",
+        "代码",
+        "AI编程",
+        "编码",
+        "开发工具",
+        "编写"
+      ]
     },
     "persona": {
       "enabled": true,
       "min_total_min": 30,
       "night_start_hour": 23,
-      "coding_categories": ["开发", "代码", "AI编程", "编码", "开发工具", "编写"]
+      "coding_categories": [
+        "开发",
+        "代码",
+        "AI编程",
+        "编码",
+        "开发工具",
+        "编写"
+      ]
     },
     "git": {
       "enabled": true,
@@ -1216,6 +1229,11 @@
       "enabled": true,
       "factor": 2.0,
       "min_ai_min": 10
+    },
+    "budget": {
+      "enabled": false,
+      "daily": 10.0,
+      "monthly": 200.0
     },
     "ai": {
       "enabled": false,
@@ -1246,6 +1264,23 @@
       "enabled": true,
       "model_pricing": {}
     }
+  },
+  "growth": {
+    "enabled": true,
+    "weeks": 8,
+    "min_days_per_week": 3,
+    "flat_threshold": 0.03
+  },
+  "tool_compare": {
+    "enabled": true,
+    "sort_by": "chars_per_dollar",
+    "top": 10,
+    "min_sessions": 1,
+    "max_days": 90
+  },
+  "query": {
+    "enabled": true,
+    "max_days": 92
   },
   "_comment": "分类与阈值规则，可编辑；修改后重启 monitor 生效"
 }

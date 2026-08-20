@@ -25,7 +25,7 @@ source = [
     "monitor", "classifier", "report", "dashboard",
     "browser_history", "inventory", "win32core", "paths",
     "applog", "tray", "insights", "updater",
-    "sqlite_store", "ai_sessions", "git_insights"
+    "sqlite_store", "ai_sessions", "git_insights", "timeline", "budget", "growth", "tool_compare", "adoption", "query"
 ]
 omit = [
     "test_all.py",

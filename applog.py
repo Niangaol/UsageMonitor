@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections import deque
 from logging.handlers import RotatingFileHandler
 
 _configured = False
@@ -76,16 +77,25 @@ def log_path(data_root: str) -> str:
 
 
 def read_recent(data_root: str, n: int = 300) -> list[str]:
-    """读取最近 n 行日志（从文件尾部向前），用于仪表盘展示。"""
+    """读取最近 n 行日志（从文件尾部向前），用于仪表盘展示。
+
+    流式实现：deque(maxlen=n) 逐行迭代，内存中只保留最近 n 行，
+    占用与日志总行数无关（大文件下相比 readlines() 显著更低）。
+    n <= 0 时返回 []（“最近 n 行”对非正 n 无意义）。
+    """
     path = log_path(data_root)
     if not os.path.isfile(path):
         return []
+    if n <= 0:
+        return []
+    tail: deque[str] = deque(maxlen=n)
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            lines = fh.readlines()
-        return [ln.rstrip("\n") for ln in lines[-n:]]
+            for line in fh:
+                tail.append(line)
     except OSError:
         return []
+    return [ln.rstrip("\n") for ln in tail]
 
 
 def read_errors(data_root: str, day_dirs: list[str], n: int = 300) -> list[str]:

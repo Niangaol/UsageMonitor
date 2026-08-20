@@ -91,6 +91,30 @@ jobs:
             installer.ps1
             uninstaller.ps1
 
+      - name: Extract changelog section for this tag
+        id: changelog
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $ver = $tag.TrimStart('v')
+          $lines = Get-Content CHANGELOG.md -Encoding UTF8
+          $start = -1; $end = $lines.Count
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match "^##\s*\[$([regex]::Escape($ver))\]") { $start = $i; continue }
+            if ($start -ge 0 -and $lines[$i] -match '^##\s*\[') { $end = $i; break }
+          }
+          if ($start -lt 0) {
+            "section=" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Write-Host "No changelog section for $ver; falling back to auto notes"
+          } else {
+            $body = ($lines[$start..($end-1)] -join "`n").Trim()
+            $delim = "CHANGELOG_EOF_$(Get-Random)"
+            "section<<$delim"      | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            $body                  | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            $delim                 | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Write-Host "Extracted changelog for $ver ($($end-$start) lines)"
+          }
+
       - name: Create GitHub Release (tag push only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -100,5 +124,6 @@ jobs:
             dist/VibeTrace.exe.sha256
             installer.ps1
             uninstaller.ps1
+          body: ${{ steps.changelog.outputs.section }}
           generate_release_notes: true
           overwrite_files: true

@@ -23,6 +23,8 @@
 - 只读、带超时、无 git / 未配置 / 非仓库路径均优雅降级；阈值可配 `insights.git`（`enabled` / `projects` / `timeout_s` / `top_files`）
 - **AI 成本账本（周/月汇总支出报表）**（Phase 3）：遍历期间每日 AI 会话深度，聚合消息/轮次/Token/成本，并按 模型 / 项目 / 工具 汇总；月报与周报自动追加「AI 成本账本」章节
 - 只读本地、绝不联网，ai_sessions.enabled 且至少有一天数据时输出，否则自动省略
+- **成本预算告警（v2.6 · P3）**：给 AI 成本设每日/每月预算，聚合 `ai_sessions` 成本后判定 正常(ok) / 接近(warn≥80%) / 超支(exceed) 三态；月报/周报自动追加预算小结章节，仪表盘概览新增预算 banner（超支变红），新增 `/api/budget` 端点（`date` 支持 YYYY-MM-DD 或 YYYY-MM 粒度推断）
+- 默认关闭不打扰：`config.insights.budget`（`enabled`/`daily`/`monthly`）可随时开启，老用户 config.json 无需手动加段（深合并增量生效）；零第三方依赖，预算详情不泄漏会话标题
 
 ### 测试
 
@@ -36,6 +38,43 @@
 - **应用分组**：剔除指向未知类别的「孤儿分组」（如历史遗留 `AI工具`）——这类映射既伪装成类别、又无法在分组管理里选择/移动；现在分类、`/api/groups` 列表与导入时全部只信任已登记类别（内置 ∪ 自定义），孤儿映射一律忽略/剔除
 - **仪表盘健壮性**：`/api/heatmap` 单日聚合失败（如 `usage.jsonl` 非法编码）不再让整个热力图/趋势 500，改为该日以 0 兜底、时间轴保持连续
 - **测试**：`test_app_groups` 补充孤儿分组剔除/恢复自动分类/导入剔除断言
+
+## [2.5.0] - 2026-08-20
+
+> 主题：从「记录用了多久」进化为「看懂 AI 编程过程、成本与成长」。全部离线派生、零第三方运行时依赖、原始 `usage.jsonl` 永不被改写。
+
+### 新增（Vibe Coding 分析平台 · v2.5/v2.6 主线）
+
+- **AI 会话质量评分**（`ai_sessions`）：按 提问含金量 / 返工 / 稳定性 / 上下文健康度 四因子加权算 0–100 分并分档（优/良/中/待优化），逐会话给 `quality_score`、`quality_factors`、`quality_notice`；日报「AI 会话深度」章节增加质量摘要与「质量」列，仪表盘 AI 面板新增质量均分卡并按质量降序排列。纯派生不落盘，明确标注非采纳率
+- **Vibe Coding 时间轴回放**（`timeline.py` + `/api/timeline`）：把 `usage.jsonl` 前台会话、AI 会话深度、Git 提交三源按时间合并成事件流（`session` / `ai_session` / `git_commit`），新增「时间轴」视图按时段回放当天编程叙事，附 summary（AI 分钟 / 提交数 / churn / 成本）
+- **成本预算告警**（`budget.py` + `/api/budget`）：为 AI 成本设日/月预算，判定 正常 / 接近（≥80%）/ 超支 三态；概览新增预算 banner（超支变红），周报月报自动追加预算小结。默认关闭不打扰（`insights.budget`）
+- **多工具横向对比**（`tool_compare.py` + `/api/ai-compare`）：同期间各 AI 工具的 会话 / 轮次 / 分钟 / Token / 成本 / 字符每美元 / 质量均分 / 成本占比对比，支持项目过滤与 1–90 天区间；新增「对比」视图
+- **能力成长曲线**（`growth.py` + `/api/trend`）：按 ISO 周聚合 依赖度 / 效率 / 质量 / 专注度 等周均值，给出 上升 / 持平 / 下降 趋势；周快照 `tmp + os.replace` 原子写、幂等、坏档自愈；新增「成长」视图
+- **受限模板查询**（`query.py` + `/api/query`）：5 类固定模板（AI 成本 / 成本排位 / 专注度趋势 / AI 产出 vs Git 产出 / AI 活跃概况），支持今天/昨天/本周/上周/本月/最近 N 天等周期词；概览页新增「快速提问」面板。**不嵌入任何大模型**，严格正则白名单匹配防注入
+
+### 工程优化（ROADMAP §9）
+
+- **前端模板外抽**：`dashboard.py` 内联 2405 行 `PAGE_TEMPLATE` 抽到 `assets/dashboard.html`，运行时加载并带 `mtime/size` 缓存；三级路径回退（`sys._MEIPASS` → 程序目录 → 源码目录）+ 模板缺失时内联兜底页保证不白屏；`dashboard.py` 由 3957 行降至 1616 行（-59%）
+- **`_available_days` 缓存**：按数据根目录 mtime + 5s TTL 缓存日期列表，返回浅拷贝防污染，避免单次请求内多次 `os.listdir` 与长历史（数百日期文件夹）重复扫描
+- **`applog.read_recent` 流式读尾部**：`deque(maxlen=n)` 逐行迭代替代 `readlines()`，内存占用与日志总行数无关（20 万行日志实测通过）
+
+### 修复
+
+- **日志视图 section 丢失**：前端模板外抽过程中 `<section id="view-log">` 开标签被吞，导致日志页 DOM 错位（已恢复并加接线守卫测试）
+- **功能无入口**：`/api/ai-compare`、`/api/query` 后端已实现但主仪表盘无导航入口，现已补齐视图与调用
+- **配置缺段**：`config.default.json` 补 `query` 段（`enabled` / `max_days`），旧 `config.json` 靠深合并自动获得
+- **覆盖率统计遗漏**：`pyproject.toml` 的 coverage source 补 `query` 模块
+
+### 测试
+
+- **pytest 85 → 290 项**（unit / integration / api / security / performance 五层），`test_all.py` 334 项 LEGACY 兜底保持全过；覆盖率 56% → 59%（`timeline` 89% / `budget` 96% / `tool_compare` 96%）
+- 新增 `test_ai_quality`、`test_timeline`、`test_budget`、`test_tool_compare`、`test_growth`、`test_query`、`test_adoption`、`test_applog`、`test_days_cache`、`test_dashboard_template`、`test_frontend_wiring` 等
+- **接线守卫**：`test_frontend_wiring` 断言 nav ↔ section ↔ loader ↔ TITLES 一致、前端调用的 `/api/*` 后端必须存在，防止「后端做完前端没接」与本次 section 丢失类回归
+
+### 已知限制（诚实声明）
+
+- **采纳率 / 留存率归因不予采用**：`adoption.py` 与 `docs/ADOPTION_SPIKE.md` 记录了基于 Git numstat × AI 会话时间窗 × 文件 mtime 的启发式 spike，真实数据实测三源命中率为 0%（会话在凌晨、写盘在午间、提交在午后），远低于 30% 验收线，因此**不接入仪表盘**，仅留档说明为何不做
+- Token / 成本 / 时间节省 / 质量分均为**离线估算**，非官方账单与真实采纳率，界面与报表均带声明
 
 ## [2.4.0] - 2026-08-20
 

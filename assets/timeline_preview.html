@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Vibe 时间轴回放 · 最小原型</title>
+<style>
+  :root { --line:#e2e2e2; --hl:#b45309; }
+  body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+       margin:24px; color:#222; background:#faf7f2;}
+  h1{font-size:20px;} h2{font-size:14px;color:#666;font-weight:600;}
+  .bar{display:flex;gap:8px;align-items:center;margin:12px 0;}
+  input,button{font-size:14px;padding:6px 10px;border-radius:6px;border:1px solid #ccc;}
+  button{background:#b45309;color:#fff;border:none;cursor:pointer;font-weight:600;}
+  button:hover{background:#92400e;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:10px 0;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);}
+  th{color:#777;font-weight:600;white-space:nowrap;}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;}
+  .kind{display:inline-block;border-radius:4px;padding:1px 6px;font-size:12px;}
+  .ai{background:#fff3e0;color:#b45309;} .git{background:#e8f5e9;color:#2e7d32;}
+  .empty{color:#999;font-style:italic;}
+  .err{color:#c62828;font-weight:600;}
+</style>
+</head>
+<body>
+  <h1>Vibe 时间轴回放 · 前端最小原型</h1>
+  <p>独立预览页（不改 dashboard 核心逻辑）：<code>fetch("/api/timeline")</code> 调通 + 表格展示。实现阶段把此逻辑内联进 <code>PAGE_TEMPLATE</code> 对应视图即可。</p>
+
+  <div class="bar">
+    <label>日期</label>
+    <input id="date" type="date">
+    <label>项目(可选)</label>
+    <input id="project" type="text" placeholder="如 VibeTrace">
+    <label>端口</label>
+    <input id="port" type="number" value="8765" style="width:90px">
+    <label>Token(可选)</label>
+    <input id="token" type="password" style="width:160px">
+    <button id="load">加载时间轴</button>
+  </div>
+
+  <div id="summary" class="card"></div>
+  <div id="result"></div>
+
+<script>
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('date').value = today;
+
+  document.getElementById('load').addEventListener('click', async () => {
+    const date = document.getElementById('date').value;
+    const project = document.getElementById('project').value.trim();
+    const port = document.getElementById('port').value || 8765;
+    const token = document.getElementById('token').value.trim();
+    const out = document.getElementById('result');
+    const sum = document.getElementById('summary');
+    const head = token ? {'X-Dashboard-Token': token} : {};
+    let url = `/api/timeline?date=${encodeURIComponent(date)}`;
+    if (project) url += '&project=' + encodeURIComponent(project);
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}` + url, {headers:head});
+      const d = await r.json();
+      if (!r.ok) { sum.textContent=''; out.innerHTML=`<div class="err">HTTP ${r.status}: ${d.error||JSON.stringify(d)}</div>`; return; }
+      // summary 行
+      const s = d.summary || {};
+      sum.textContent = `AI 块 ${s.ai_blocks??0} · 会话 ${s.conversations??0} · AI 分钟 ${s.ai_minutes??0}` +
+        ` · 提交 ${s.commit_count??0} · churn ${s.churn??0} · 成本 ¥${(s.total_cost??0).toFixed(2)}`;
+      render(d.events||[]);
+    } catch(e) { sum.textContent=''; out.innerHTML=`<div class="err">请求失败: ${e}</div>`; }
+  });
+
+  function render(events){
+    const out = document.getElementById('result');
+    if(!events.length){ out.innerHTML='<div class="empty">空态：该日无时间轴事件（200 空态）</div>'; return; }
+    let html=`<table><tr><th>时间</th><th>类型</th><th>工具/项目</th><th>模型</th>`+
+             `<th class="num">Token</th><th class="num">成本¥</th><th class="num">产出行</th><th>详情</th></tr>`;
+    for(const e of events){
+      const isGit = e.kind==='git_commit';
+      html += `<tr>
+        <td>${e.t_start}</td>
+        <td><span class="kind ${isGit?'git':'ai'}">${isGit?'commit':'AI'}</span></td>
+        <td>${e.tool||''} / ${e.project||''}</td>
+        <td>${e.model||''}</td>
+        <td class="num">${isGit?'—':fmt(e.tokens_total)}</td>
+        <td class="num">${isGit?'—':fmt(e.cost_total,2)}</td>
+        <td class="num">${isGit?'—':fmt(e.generated_lines)}</td>
+        <td>${isGit?`<code>${(e.hash||'').slice(0,8)}</code> +${e.added}/-${e.deleted}`:(e.t_end?`~${e.t_end}`:'')}</td>
+      </tr>`;
+    }
+    out.innerHTML = html + '</table>';
+  }
+  const fmt=(v,d=0)=> (v??0).toLocaleString('zh-CN',{maximumFractionDigits:d});
+</script>
+</body>
+</html>

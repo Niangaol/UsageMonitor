@@ -9,8 +9,10 @@ a = Analysis(
     datas=[
         ('assets/icon.ico', 'assets'),
         ('assets/tray.ico', 'assets'),
+        ('assets/dashboard.html', 'assets'),
     ],
-    hiddenimports=['insights', 'updater', 'sqlite_store', 'ai_sessions'],
+    hiddenimports=['insights', 'updater', 'sqlite_store', 'ai_sessions',
+                   'timeline', 'budget', 'tool_compare', 'growth', 'query', 'adoption'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

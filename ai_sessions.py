@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import math
 import os
 import re
 import sys
@@ -598,6 +599,155 @@ def _count_rounds(msgs: list[dict]) -> int:
     return rounds
 
 
+def _ts_seconds(ts: str) -> float | None:
+    """把时间戳字符串（YYYY-MM-DD[THH:MM:SS...]）转成 epoch 秒；解析失败返回 None。"""
+    if not ts:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+_QUALITY_NOTICE = "仅基于本地会话消息长度/轮次/配比启发式估算，非真实采纳率，仅供参考"
+
+
+# 分档阈值（阈值本身归入高档）：≥80 优 / ≥65 良 / ≥45 中 / 其余待优化
+_GRADE_BOUNDS = (80, 65, 45)
+_GRADE_NAMES = ("优", "良", "中", "待优化")
+
+
+def quality_grade(score: int) -> str:
+    """0-100 分 → 分档：≥80 优 / ≥65 良 / ≥45 中 / 其余待优化。
+
+    纯函数、确定性，供会话/报告/仪表盘复用。
+    """
+    score = int(score or 0)
+    if score >= _GRADE_BOUNDS[0]:
+        return _GRADE_NAMES[0]
+    if score >= _GRADE_BOUNDS[1]:
+        return _GRADE_NAMES[1]
+    if score >= _GRADE_BOUNDS[2]:
+        return _GRADE_NAMES[2]
+    return _GRADE_NAMES[3]
+
+
+def _clamp01(v: float) -> float:
+    """夹到 [0, 1]。"""
+    if v <= 0:
+        return 0.0
+    if v >= 1:
+        return 1.0
+    return v
+
+
+def _conversation_quality(*, user_n: int, assistant_n: int, rounds: int,
+                          tokens_in: int, tokens_out: int, tokens_total: int,
+                          model_count: int, span_s: float,
+                          user_tokens: list[int], generated_chars: int) -> dict:
+    """会话质量派生评分（纯函数、零依赖启发式、best-effort、不伪装精确）。
+
+    四个 0-1 子因子（仅用于解释"为什么是这个分"，非精确测量）：
+    - question_value  提问含金量：用户提问平均长度适中为佳（15-200 token），
+      过短（单字指令）或过长（整段粘贴日志/需求）都降分；无用户消息取中性 0.5。
+    - rework          返工程度（**负向**，越高越差）：用户侧 token 占比高（反复
+      粘贴/重发）、或用户消息多于完成轮次（连发未获答复）视为返工。
+    - stability       稳定性：模型单一、时间密度高（少碎片化挂机）为佳。
+    - context_health  上下文健康度：轮次完成度（user→assistant 配对）+ 输出实质
+      （每条助手回复的 token/字符密度）+ 上下文长度适中（过长稀释记忆、抬高成本）。
+
+    总分 = 0.35*qv + 0.25*(1-rework) + 0.2*stability + 0.2*context_health，
+    再 ×100 取整并夹到 [0, 100]。
+    """
+    # 提问含金量：平均用户消息长度（token 估算，与 token_estimation 开关无关）
+    if user_tokens:
+        avg_ut = sum(user_tokens) / len(user_tokens)
+        if avg_ut < 15:
+            question_value = 0.3 + 0.7 * (avg_ut / 15.0)
+        elif avg_ut <= 200:
+            question_value = 1.0
+        else:
+            question_value = 1.0 - 0.5 * min(1.0, (avg_ut - 200) / 200.0)
+    else:
+        question_value = 0.5
+    question_value = _clamp01(question_value)
+
+    # 返工：用户 token 占比 + 连发未获答复占比
+    user_ratio = tokens_in / max(tokens_total, 1)
+    rework = (user_ratio - 0.3) / 0.5 if user_ratio > 0.3 else 0.0
+    if user_n > 0:
+        rework = max(rework, (user_n - rounds) / user_n)
+    rework = _clamp01(rework)
+
+    # 稳定性：模型统一度 + 时间密度
+    model_stability = 1.0 / math.sqrt(max(model_count, 1))
+    span_h = max(float(span_s) / 3600.0, 0.25)
+    density = (user_n + assistant_n) / span_h / 24.0  # ≥24 条消息/小时视为密集稳定
+    stability = 0.6 * model_stability + 0.4 * _clamp01(density)
+
+    # 上下文健康度：轮次完成度 + 输出实质 + 长度健康
+    round_completion = rounds / max(user_n, 1) if user_n > 0 else 0.5
+    avg_out_tokens = tokens_out / max(assistant_n, 1)
+    substance = _clamp01(avg_out_tokens / 80.0)   # 每条助手回复 ≥80 token 视为有实质
+    char_per_tok = generated_chars / max(tokens_out, 1)
+    efficiency = _clamp01((char_per_tok - 0.5) / 3.5)  # >4 字符/token（代码为主）视为高效
+    output_health = 0.5 * (substance + efficiency)
+    if tokens_total > 60000:
+        length_health = _clamp01(1.0 - (tokens_total - 60000) / 240000.0)
+    else:
+        length_health = 1.0
+    context_health = _clamp01(0.35 * round_completion + 0.35 * output_health + 0.3 * length_health)
+
+    raw = (0.35 * question_value + 0.25 * (1.0 - rework)
+           + 0.2 * stability + 0.2 * context_health)
+    score = int(round(100 * _clamp01(raw)))
+    return {
+        "question_value": round(question_value, 3),
+        "rework": round(rework, 3),
+        "stability": round(stability, 3),
+        "context_health": round(context_health, 3),
+        "score": score,
+        "grade": quality_grade(score),
+    }
+
+
+def _quality_summary(convs: list[dict]) -> dict:
+    """聚合会话质量：平均分 / 最佳 / 最差 / 分档分布。
+
+    空列表返回可展示空态（sessions_scored=0），不抛异常。
+    """
+    scored = [c for c in convs if isinstance(c, dict) and isinstance(c.get("quality_score"), int)]
+    empty = {
+        "sessions_scored": 0, "avg": 0, "best": None, "best_score": 0,
+        "worst": None, "worst_score": 0,
+        "grade_dist": {"优": 0, "良": 0, "中": 0, "待优化": 0},
+        "notice": _QUALITY_NOTICE,
+    }
+    if not scored:
+        return empty
+    avg = int(round(sum(c["quality_score"] for c in scored) / len(scored)))
+    best = max(scored, key=lambda c: c["quality_score"])
+    worst = min(scored, key=lambda c: c["quality_score"])
+    dist = {"优": 0, "良": 0, "中": 0, "待优化": 0}
+    for c in scored:
+        g = c.get("quality_grade") or quality_grade(c["quality_score"])
+        dist[g] = dist.get(g, 0) + 1
+    return {
+        "sessions_scored": len(scored),
+        "avg": avg,
+        "best": best.get("id"), "best_score": best["quality_score"],
+        "worst": worst.get("id"), "worst_score": worst["quality_score"],
+        "grade_dist": dist,
+        "notice": _QUALITY_NOTICE,
+    }
+
+
+def _attach_quality(total: dict) -> dict:
+    """给 total 聚合结果追加 quality_summary（只加不解构，向后兼容）。"""
+    total["quality_summary"] = _quality_summary(total.get("conversations") or [])
+    return total
+
+
 def _web_tool(domain: str) -> str | None:
     """从域名识别 Web AI 工具名；不是 AI 聊天域名返回 None。"""
     domain = (domain or "").lower()
@@ -739,7 +889,7 @@ def collect(date_str: str, config: dict, web_visits: list[dict] | None = None) -
                  "by_tool": {}, "sessions": []}
     if not enabled:
         return {"date": date_str, "enabled": False, "found": False,
-                "tools": {}, "total": _empty_total(), "web_ai": empty_web}
+                "tools": {}, "total": _attach_quality(_empty_total()), "web_ai": empty_web}
 
     tool_paths = _config_paths(config)
     tools: dict[str, dict] = {}
@@ -834,6 +984,7 @@ def collect(date_str: str, config: dict, web_visits: list[dict] | None = None) -
         total["conversations"].extend(stats["conversations"])
     total["conversations"].sort(key=lambda c: c["turns"], reverse=True)
     total["conversations"] = total["conversations"][:20]
+    total = _attach_quality(total)
 
     # Web AI 会话（浏览器历史深度解析）
     web_ai = empty_web
@@ -891,12 +1042,13 @@ def _merge_dim(target: dict, src: dict) -> None:
 
 def _conversation_summary(conv_id: str, tool: str, items: list[dict],
                           token_est: bool) -> dict | None:
-    """把一个会话的消息桶汇总成会话详情（轮次/Token/主导模型/项目）。
+    """把一个会话的消息桶汇总成会话详情（轮次/Token/主导模型/项目/质量）。
 
     items 为 [{msg, role, tokens, model, project}]（其中 project 为显式字段值或 None）：
     - rounds 由原始消息序列按 user→assistant 配对计算；
     - project 取该会话里显式字段（cwd/project/repo...）的众数，缺失则「未识别」；
-    - model 取消息序列的众数。
+    - model 取消息序列的众数；
+    - quality_score/quality_factors 为派生评分（_conversation_quality，纯启发式）。
     """
     if not items:
         return None
@@ -905,17 +1057,24 @@ def _conversation_summary(conv_id: str, tool: str, items: list[dict],
     user_n = assistant_n = tokens_out = tokens_total = 0
     cost_in_sum = cost_out_sum = 0.0
     first = last = ""
+    first_sec = last_sec = None
+    user_tokens: list[int] = []
+    generated_chars = 0
     for it in items:
         role = it.get("role")
         ts = _message_time(it["msg"]) or ""
+        content = _message_content(it["msg"])
         tokens = it.get("tokens") or 0
         c_in = it.get("cost_in") or 0.0
         c_out = it.get("cost_out") or 0.0
         if role in _USER_ROLES:
             user_n += 1
+            # 质量评分独立估算用户消息长度（不受 token_estimation 开关影响）
+            user_tokens.append(estimate_tokens(content))
         elif role in _ASSISTANT_ROLES:
             assistant_n += 1
             tokens_out += tokens
+            generated_chars += len(content)
         tokens_total += tokens
         cost_in_sum += c_in
         cost_out_sum += c_out
@@ -923,19 +1082,32 @@ def _conversation_summary(conv_id: str, tool: str, items: list[dict],
         proj = it.get("project")
         if proj:
             project_counter[proj] = project_counter.get(proj, 0) + 1
+        sec = _ts_seconds(ts)
         if not first or (ts and ts < first):
             first = ts
+            first_sec = sec
         if not last or (ts and ts > last):
             last = ts
+            last_sec = sec
     project = max(project_counter, key=project_counter.get) if project_counter else "未识别"
     model = max(model_counter, key=model_counter.get)
+    rounds = _count_rounds([it["msg"] for it in items])
+    span_s = 0.0
+    if first_sec is not None and last_sec is not None:
+        span_s = max(0.0, last_sec - first_sec)
+    qf = _conversation_quality(
+        user_n=user_n, assistant_n=assistant_n, rounds=rounds,
+        tokens_in=tokens_total - tokens_out, tokens_out=tokens_out,
+        tokens_total=tokens_total, model_count=len(model_counter),
+        span_s=span_s, user_tokens=user_tokens, generated_chars=generated_chars,
+    )
     return {
         "id": conv_id,
         "tool": tool,
         "model": model,
         "project": project,
         "turns": len(items),
-        "rounds": _count_rounds([it["msg"] for it in items]),
+        "rounds": rounds,
         "user_messages": user_n,
         "assistant_messages": assistant_n,
         "tokens_in": tokens_total - tokens_out,
@@ -946,6 +1118,16 @@ def _conversation_summary(conv_id: str, tool: str, items: list[dict],
         "cost_total": round(cost_in_sum + cost_out_sum, 8),
         "first": first,
         "last": last,
+        # 质量派生（0-100 + 因子明细 + 透明声明）
+        "quality_score": qf["score"],
+        "quality_grade": qf["grade"],
+        "quality_factors": {
+            "question_value": qf["question_value"],
+            "rework": qf["rework"],
+            "stability": qf["stability"],
+            "context_health": qf["context_health"],
+        },
+        "quality_notice": _QUALITY_NOTICE,
     }
 
 

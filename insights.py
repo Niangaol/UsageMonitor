@@ -725,6 +725,46 @@ def time_saved_insights(agg: dict, config: dict | None = None) -> dict:
             "label": label}
 
 
+def conversation_quality_insights(ai_data: dict | None = None) -> list[dict]:
+    """AI 会话质量洞察（纯离线派生）：输入 ai_sessions.collect() 结果，
+    把 total.quality_summary 转成 {type, severity, title, detail} 卡片，
+    供日报/仪表盘规则区复用。
+
+    无数据 / 未启用 / 无已评会话时返回空列表（不抛异常、不拖垮上层）。
+    质量分为启发式估算，卡片 detail 内附透明声明。
+    """
+    if not isinstance(ai_data, dict) or not ai_data.get("found"):
+        return []
+    total = ai_data.get("total") if isinstance(ai_data.get("total"), dict) else {}
+    qs = total.get("quality_summary") if isinstance(total.get("quality_summary"), dict) else {}
+    n = int(qs.get("sessions_scored") or 0)
+    if n <= 0:
+        return []
+    avg = int(qs.get("avg") or 0)
+    try:
+        import ai_sessions  # noqa: PLC0415 —— 惰性导入避免无谓开销
+        grade = ai_sessions.quality_grade(avg)
+    except Exception:  # noqa: BLE001 —— 评分模块异常时降级为无分档
+        grade = "-"
+    if avg >= 65:
+        severity = "info"
+    elif avg >= 45:
+        severity = "warn"
+    else:
+        severity = "alert"
+    dist_txt = "；".join(f"{k} {v}" for k, v in (qs.get("grade_dist") or {}).items() if v)
+    parts = [f"今日 {n} 个已解析会话均分 {avg} 分（{grade}）"]
+    if dist_txt:
+        parts.append(f"分档分布：{dist_txt}")
+    if qs.get("best"):
+        parts.append(f"最佳：{str(qs['best'])[:24]} {qs.get('best_score', 0)} 分")
+    if qs.get("worst") and qs.get("worst") != qs.get("best"):
+        parts.append(f"待关注：{str(qs['worst'])[:24]} {qs.get('worst_score', 0)} 分")
+    parts.append("仅基于本地消息长度/轮次/配比启发式估算，非真实采纳率，仅供参考")
+    return [{"type": "ai_quality", "severity": severity,
+             "title": f"AI 会话质量 {avg} 分 · {grade}", "detail": "；".join(parts)}]
+
+
 def _persona_empty() -> dict:
     """无数据 / 关闭时的空人格（避免前端因缺字段而报错）。"""
     return {

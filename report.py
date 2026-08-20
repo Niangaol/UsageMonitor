@@ -404,6 +404,16 @@ def _ai_sessions_daily(date_str: str, data_root: str, max_rows: int | None = Non
         out.append(f"- 本地会话：消息 {total.get('turns', 0)} 条 / 对话轮次 {total.get('rounds', 0)} 轮，"
                    f"Token 估算 进 {total.get('tokens_in', 0)} / 出 {total.get('tokens_out', 0)}，"
                    f"成本估算 {ai_sessions._fmt_cost(total.get('cost_total', 0))}")
+        qs = total.get("quality_summary") or {}
+        if qs.get("sessions_scored"):
+            # v2.5 质量维度（派生估算，透明声明）
+            q_avg = int(qs.get("avg") or 0)
+            out.append(f"- 会话质量：已评 {qs['sessions_scored']} 个会话，均分 {q_avg} 分"
+                       f"（{ai_sessions.quality_grade(q_avg)}）· 仅本地启发式估算，非采纳率")
+            if qs.get("best"):
+                out.append(f"  - 最佳：{str(qs['best'])[:40]} · {qs.get('best_score', 0)} 分")
+            if qs.get("worst") and qs.get("worst") != qs.get("best"):
+                out.append(f"  - 待关注：{str(qs['worst'])[:40]} · {qs.get('worst_score', 0)} 分")
         if data.get("tools"):
             sub = "；".join(
                 f"{tool} {st.get('turns', 0)} 条/{st.get('rounds', 0)} 轮"
@@ -428,9 +438,11 @@ def _ai_sessions_daily(date_str: str, data_root: str, max_rows: int | None = Non
             rows = [[
                 c.get("tool", ""), str(c.get("id", ""))[:30], c.get("model", "-"),
                 c.get("project", "-"), str(c.get("rounds", 0)), str(c.get("turns", 0)),
-                str(c.get("tokens_out", 0)), ai_sessions._fmt_cost(c.get("cost_total", 0)),
+                str(c.get("tokens_out", 0)),
+                str(c.get("quality_score", "-")) if isinstance(c.get("quality_score"), int) else "-",
+                ai_sessions._fmt_cost(c.get("cost_total", 0)),
             ] for c in convs]
-            out.append(_md_table(["工具", "会话", "模型", "项目", "轮次", "消息", "Token 出", "成本"], rows))
+            out.append(_md_table(["工具", "会话", "模型", "项目", "轮次", "消息", "Token 出", "质量", "成本"], rows))
             out.append("")
         if web.get("found") and web.get("sessions"):
             rows = [[
@@ -441,7 +453,8 @@ def _ai_sessions_daily(date_str: str, data_root: str, max_rows: int | None = Non
             out.append("")
         out.append("注：Token 为长度折算的估算值；成本为按模型定价表（USD/百万 Token）的估算，"
                    "可用 config 的 ai_sessions.costs.model_pricing 自定义单价；对话轮次为消息序列中 "
-                   "user→assistant 陪对数；Web 会话访问次数为浏览器侧轮次的近似。所有解析均在本地完成，不上传任何数据。")
+                   "user→assistant 陪对数；质量分为消息长度/轮次/配比启发式估算（非真实采纳率）；"
+                   "Web 会话访问次数为浏览器侧轮次的近似。所有解析均在本地完成，不上传任何数据。")
         return "\n".join(out)
     except Exception:  # noqa: BLE001
         return None
@@ -932,6 +945,20 @@ def generate_month_report_md(month_str: str, data_root: str) -> str:
     if ledger:
         out.append("")
         out.append(ledger)
+    # v2.6 P3：月度成本预算小结（默认关闭；超支/接近才提示，失败静默降级）
+    try:
+        import budget  # noqa: PLC0415
+        import classifier  # noqa: PLC0415
+        config_path = os.path.join(data_root, "config.json")
+        config = (classifier.load_config(config_path)
+                  if os.path.isfile(config_path) else classifier.load_config())
+        bmd = budget.budget_summary_md(
+            budget.budget_status(month_str, data_root, config, period="monthly"))
+        if bmd:
+            out.append("")
+            out.append(bmd)
+    except Exception:  # noqa: BLE001 —— 预算小结失败不影响月报主体
+        pass
     if len(out) <= 3:
         out.append("（当月无数据）")
     return "\n".join(out)
@@ -1152,6 +1179,18 @@ def main(argv: list[str] | None = None) -> int:
         week_md = _report_from_agg(agg, "电脑使用情况周报（最近 7 天）")
         if week_ledger:
             week_md = week_md + chr(10) + chr(10) + week_ledger
+        # v2.6 P3：逐日预算小结（默认关闭；失败静默降级）
+        try:
+            import budget  # noqa: PLC0415
+            import classifier  # noqa: PLC0415
+            config_path = os.path.join(data_root, "config.json")
+            config = (classifier.load_config(config_path)
+                      if os.path.isfile(config_path) else classifier.load_config())
+            bmd = budget.budget_week_summary(days, data_root, config)
+            if bmd:
+                week_md = week_md + chr(10) + chr(10) + bmd
+        except Exception:  # noqa: BLE001 —— 预算小结失败不影响周报主体
+            pass
         if args.json:
             print(json.dumps(agg, ensure_ascii=False, indent=2, default=str))
         else:

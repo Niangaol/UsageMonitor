@@ -379,2106 +379,70 @@ def _merge_restore(data_root: str, tmp: str) -> dict:
     return {"days": restored_days, "files": restored_files}
 
 
-PAGE_TEMPLATE = r"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>VibeTrace · 刻迹 · 概览</title>
-<style>
-  :root{
-    --bg:#101318; --surface:#14171e; --surface-2:#1a1e27; --surface-3:#20252f;
-    --border:rgba(255,255,255,.07); --border-strong:rgba(255,255,255,.13);
-    --text:#e8e6e1; --dim:#9aa0ab; --faint:#6b7280;
-    --accent:#e0a53c; --accent-soft:rgba(224,165,60,.13);
-    --danger:#e0533d; --warn:#d9a441; --ok:#7fb069;
-    --code-bg:#0d1016; --md-h2:#e8b46a; --md-a:#8fb8ff; --url:#6b7280; --err-txt:#d98a7d;
-    --grid-line:rgba(255,255,255,.06); --bar-empty:#232936; --chart-axis:#6b7280; --chart-bar:#e0a53c;
-    --scroll-thumb:#2a303c; --scroll-thumb-hover:#39414f;
-    --hm-1:#1c212b; --hm-2:#2c3342; --hm-3:#6b5323; --hm-4:#a06f24; --hm-5:#e0a53c;
-    --tag-ai-text:#e8b46a; --tag-ai-border:rgba(232,180,106,.35); --tag-ai-bg:rgba(232,180,106,.08);
-    --mono:ui-monospace,"Cascadia Code",Consolas,"Courier New",monospace;
-    --radius:8px; --sidebar-w:216px;
-    --ease:cubic-bezier(.22,.61,.36,1);
-  }
-  html[data-theme="light"]{
-    --bg:#f4f5f7; --surface:#ffffff; --surface-2:#eef0f3; --surface-3:#e4e7ec;
-    --border:rgba(20,25,36,.10); --border-strong:rgba(20,25,36,.18);
-    --text:#1e232b; --dim:#5a6472; --faint:#89919d;
-    --accent:#b47a1c; --accent-soft:rgba(180,122,28,.12);
-    --danger:#c4422c; --warn:#96670f; --ok:#3e7736;
-    --code-bg:#ffffff; --md-h2:#a06a12; --md-a:#2a6fd6; --url:#5a6472; --err-txt:#c4422c;
-    --grid-line:rgba(20,25,36,.08); --bar-empty:#d9dde3; --chart-axis:#89919d; --chart-bar:#b47a1c;
-    --scroll-thumb:#c3c9d2; --scroll-thumb-hover:#aab2bd;
-    --hm-1:#dfe3ea; --hm-2:#c9d1e0; --hm-3:#d3ad5c; --hm-4:#c08a1f; --hm-5:#b47a1c;
-    --tag-ai-text:#8a5a10; --tag-ai-border:rgba(180,122,28,.35); --tag-ai-bg:rgba(180,122,28,.08);
-  }
-  *{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%}
-  body{background:var(--bg);color:var(--text);
-    font-family:ui-sans-serif,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
-    font-size:13px;line-height:1.55;-webkit-font-smoothing:antialiased}
-  ::selection{background:var(--accent-soft)}
-  ::-webkit-scrollbar{width:10px;height:10px}
-  ::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:5px;border:2px solid var(--bg)}
-  ::-webkit-scrollbar-thumb:hover{background:var(--scroll-thumb-hover)}
-  ::-webkit-scrollbar-track{background:transparent}
-  button,input,select{font:inherit;color:inherit}
-  .app{display:flex;min-height:100vh}
-
-  /* ---------- 登录/口令遮罩 ---------- */
-  .auth-mask{position:fixed;inset:0;background:var(--bg);z-index:200;display:none;
-    align-items:center;justify-content:center;flex-direction:column;gap:14px;padding:20px}
-  .auth-mask.show{display:flex}
-  .auth-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-    padding:26px 28px;width:min(360px,92vw);text-align:center}
-  .auth-card h3{font-size:16px;margin-bottom:6px}
-  .auth-card p{font-size:12px;color:var(--dim);margin-bottom:16px}
-  .auth-card .controls{justify-content:center}
-  .auth-err{color:var(--danger);font-size:12px;min-height:16px;margin-top:8px}
-
-  /* ---------- 侧边栏 ---------- */
-  .sidebar{width:var(--sidebar-w);flex-shrink:0;background:var(--surface);
-    border-right:1px solid var(--border);display:flex;flex-direction:column;
-    position:fixed;top:0;bottom:0;left:0;z-index:50}
-  .brand{display:flex;align-items:center;gap:10px;padding:18px 16px 14px;
-    border-bottom:1px solid var(--border)}
-  .brand svg{flex-shrink:0}
-  .brand b{display:block;font-size:14px;letter-spacing:.2px}
-  .brand span{display:block;font-size:11px;color:var(--faint);margin-top:1px}
-  .nav{padding:10px 8px;flex:1;overflow-y:auto}
-  .nav-item{display:flex;align-items:center;gap:10px;padding:8px 10px;margin:2px 0;
-    border-radius:6px;color:var(--dim);text-decoration:none;position:relative;
-    transition:background .18s var(--ease),color .18s var(--ease)}
-  .nav-item svg{flex-shrink:0;opacity:.85}
-  .nav-item:hover{background:var(--surface-2);color:var(--text)}
-  .nav-item.active{color:var(--text);background:var(--accent-soft)}
-  .nav-item.active::before{content:"";position:absolute;left:-8px;top:20%;bottom:20%;width:3px;
-    border-radius:2px;background:var(--accent)}
-  .side-foot{padding:14px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--faint)}
-  .side-foot .root{font-family:var(--mono);font-size:10px;word-break:break-all;color:var(--dim);
-    margin-bottom:6px}
-  .backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:40;opacity:0;pointer-events:none;
-    transition:opacity .2s var(--ease)}
-  .hamburger{display:none;position:fixed;top:12px;left:12px;z-index:60;width:36px;height:36px;
-    border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;
-    align-items:center;justify-content:center}
-
-  /* ---------- 主内容 ---------- */
-  .content{flex:1;margin-left:var(--sidebar-w);padding:26px 30px 60px;max-width:1240px}
-  .page-head{display:flex;align-items:center;justify-content:space-between;gap:14px;
-    flex-wrap:wrap;margin-bottom:22px}
-  .page-head h1{font-size:19px;font-weight:600;letter-spacing:.1px}
-  .page-head .sub{font-size:12px;color:var(--faint);margin-top:3px}
-  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  /* ——— 输入框美化：统一圆角/阴影/聚焦环，告别系统默认 ——— */
-  select,input[type=text],input[type=month],input[type=password],input[type=number],input[type=file],textarea,button.btn{
-    font:inherit;color:inherit;outline:none;
-    transition:border-color .18s var(--ease),background .18s var(--ease),box-shadow .18s var(--ease),transform .12s var(--ease)}
-  select,input[type=text],input[type=month],input[type=password],input[type=number],textarea{
-    background:var(--surface-2);border:1px solid var(--border);
-    border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);
-    box-shadow:0 1px 0 rgba(0,0,0,.04) inset, 0 0 0 transparent;
-    min-height:36px}
-  textarea{resize:vertical;min-height:72px;line-height:1.6;padding:10px 12px}
-  input::placeholder,textarea::placeholder{color:var(--faint);opacity:1}
-  select:hover,input:hover,textarea:hover{border-color:var(--border-strong);background:var(--surface)}
-  select:focus,input:focus,textarea:focus{border-color:var(--accent);background:var(--surface);
-    box-shadow:0 0 0 3px var(--accent-soft), 0 1px 0 rgba(0,0,0,.04) inset}
-  select{appearance:none;-webkit-appearance:none;padding-right:30px;cursor:pointer;
-    background-image:
-      linear-gradient(45deg, transparent 50%, var(--faint) 50%),
-      linear-gradient(135deg, var(--faint) 50%, transparent 50%);
-    background-position:calc(100% - 16px) calc(50% - 2px), calc(100% - 11px) calc(50% - 2px);
-    background-size:5px 5px, 5px 5px;background-repeat:no-repeat}
-  select:disabled,input:disabled,textarea:disabled{opacity:.55;cursor:not-allowed}
-  /* 文件选择：原生按钮胶囊化 */
-  input[type=file]{background:var(--surface-2);border:1px dashed var(--border);border-radius:8px;
-    padding:6px 10px;width:260px;font-size:12.5px;cursor:pointer}
-  input[type=file]:hover{border-color:var(--border-strong);background:var(--surface)}
-  input[type=file]::file-selector-button{
-    margin-right:10px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;
-    background:var(--surface-3);color:var(--text);font-size:12px;font-weight:600;
-    cursor:pointer;transition:background .18s var(--ease),border-color .18s var(--ease)}
-  input[type=file]::file-selector-button:hover{background:var(--surface-2);border-color:var(--border-strong)}
-  /* 按钮 */
-  button.btn{background:var(--surface-2);border:1px solid var(--border);
-    border-radius:8px;padding:7px 14px;font-size:13px;font-weight:500;color:var(--text);cursor:pointer;
-    box-shadow:0 1px 0 rgba(0,0,0,.04)}
-  button.btn:hover{background:var(--surface);border-color:var(--border-strong);transform:translateY(-1px);
-    box-shadow:0 2px 8px rgba(0,0,0,.10)}
-  button.btn:active{transform:none;box-shadow:0 1px 0 rgba(0,0,0,.04) inset}
-  button.btn:focus-visible{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
-  button.btn.primary{background:var(--accent);border-color:var(--accent);color:#141008;font-weight:700;
-    box-shadow:0 1px 10px rgba(224,165,60,.25)}
-  html[data-theme="light"] button.btn.primary{color:#fff}
-  button.btn.primary:hover{background:#eab356;box-shadow:0 2px 12px rgba(224,165,60,.32)}
-  /* 小尺寸输入（表格内/分组页） */
-  .tbl input, .tbl select{padding:6px 9px;min-height:32px;font-size:12.5px;border-radius:6px}
-
-  /* ---------- 视图切换动画 ---------- */
-  .view{display:none}
-  .view.active{display:block;animation:viewIn .24s var(--ease) both}
-  @keyframes viewIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-
-  /* ---------- 卡片 ---------- */
-  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;margin-bottom:18px}
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-    padding:14px 16px;transition:border-color .18s var(--ease),transform .18s var(--ease)}
-  .card:hover{border-color:var(--border-strong);transform:translateY(-1px)}
-  .card .label{font-size:11.5px;color:var(--dim);display:flex;align-items:center;gap:6px}
-  .card .value{font-size:23px;font-weight:600;margin-top:7px;font-variant-numeric:tabular-nums;
-    letter-spacing:-.2px}
-  .card .value small{font-size:12px;color:var(--faint);font-weight:400;margin-left:4px}
-  .card .trend{font-size:11px;margin-top:4px;color:var(--faint)}
-
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-  @media(max-width:960px){.grid{grid-template-columns:1fr}}
-  .panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-    padding:16px 18px;margin-bottom:12px}
-  .panel h2{font-size:12px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;
-    color:var(--faint);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between}
-  .panel h2 .hint{font-size:11px;text-transform:none;letter-spacing:0;font-weight:400}
-
-  /* ---------- 统计行（类别/应用条） ---------- */
-  .stat-row{margin-bottom:9px}
-  .stat-row .top{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
-  .stat-row .top .name{color:var(--text)}
-  .stat-row .top .val{color:var(--dim);font-variant-numeric:tabular-nums}
-  .bar{height:6px;border-radius:3px;background:var(--surface-3);overflow:hidden}
-  .bar > i{display:block;height:100%;border-radius:3px;background:var(--accent);
-    width:0;transition:width .7s var(--ease)}
-
-  /* ---------- 表格 ---------- */
-  .tbl-wrap{overflow:auto;border:1px solid var(--border);border-radius:var(--radius)}
-  table.tbl{width:100%;border-collapse:collapse;font-size:12.5px;min-width:640px}
-  .tbl th{text-align:left;padding:8px 10px;color:var(--faint);font-weight:500;font-size:11px;
-    text-transform:uppercase;letter-spacing:.5px;background:var(--surface-2);
-    border-bottom:1px solid var(--border);position:sticky;top:0;white-space:nowrap}
-  .tbl td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top}
-  .tbl tbody tr{transition:background .12s var(--ease)}
-  .tbl tbody tr:hover{background:var(--surface-2)}
-  .tbl td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
-  .tbl td.mono{font-family:var(--mono);font-size:11.5px}
-  .tag{display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px;margin-right:5px;
-    background:var(--surface-3);border:1px solid var(--border-strong);color:var(--dim);white-space:nowrap}
-  .tag.ai{color:var(--tag-ai-text);border-color:var(--tag-ai-border);background:var(--tag-ai-bg)}
-  .url-cell{font-family:var(--mono);font-size:11px;color:var(--url);max-width:280px;
-    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
-
-  /* ---------- 日志 ---------- */
-  .log-box{background:var(--code-bg);border:1px solid var(--border);border-radius:var(--radius);
-    font-family:var(--mono);font-size:11.5px;line-height:1.7;padding:12px 14px;
-    height:calc(100vh - 300px);min-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-all}
-  #view-log .grid{grid-template-columns:1fr}
-  .log-line{display:flex;gap:10px}
-  .log-line .ts{color:var(--faint);flex-shrink:0}
-  .log-line .lv{flex-shrink:0;width:34px}
-  .log-line .lv.INFO{color:var(--faint)}
-  .log-line .lv.WARN{color:var(--warn)}
-  .log-line .lv.ERRO{color:var(--danger)}
-  .log-line .msg{color:var(--dim)}
-  .log-line.err .msg{color:var(--err-txt)}
-
-  /* ---------- 日报渲染 ---------- */
-  .md h1{font-size:19px;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:16px}
-  .md h2{font-size:14px;color:var(--md-h2);margin:20px 0 10px;letter-spacing:.3px}
-  .md table{border-collapse:collapse;width:100%;font-size:12.5px;margin:8px 0 16px}
-  .md th,.md td{border:1px solid var(--border);padding:6px 10px;text-align:left}
-  .md th{background:var(--surface-2);color:var(--faint);font-weight:500}
-  .md a{color:var(--md-a);text-decoration:none}
-  .md blockquote{color:var(--dim);border-left:3px solid var(--border-strong);padding-left:10px;margin:8px 0}
-  .mdbar{height:6px;border-radius:3px;background:var(--surface-3);overflow:hidden;min-width:60px}
-  .mdbar i{display:block;height:100%;background:var(--accent);border-radius:3px}
-  .md p{font-size:12.5px;margin:6px 0}
-  .md li{font-size:12.5px;margin:3px 0 3px 18px}
-
-  /* ---------- 骨架屏 ---------- */
-  .sk{position:relative;overflow:hidden;background:var(--surface-3);border-radius:6px}
-  .sk::after{content:"";position:absolute;inset:0;transform:translateX(-100%);
-    background:linear-gradient(90deg,transparent,rgba(255,255,255,.05),transparent);
-    animation:shimmer 1.3s infinite}
-  html[data-theme="light"] .sk::after{background:linear-gradient(90deg,transparent,rgba(20,25,36,.06),transparent)}
-  @keyframes shimmer{to{transform:translateX(100%)}}
-  .empty{padding:34px 0;text-align:center;color:var(--faint);font-size:12.5px}
-  canvas{width:100%;display:block}
-
-  /* ---------- 热力图 ---------- */
-  .hm{display:flex;gap:2px;min-height:264px}
-  .hm .hl-col{display:flex;flex-direction:column;width:22px;gap:2px;flex-shrink:0}
-  .hm .hl-col span{font-family:var(--mono);font-size:8.5px;color:var(--faint);line-height:11px;height:11px}
-  .hm .grid-col{display:flex;flex-direction:column;gap:2px;flex:1}
-  .hm .cell{height:11px;border-radius:2px;transition:background .2s var(--ease)}
-  .hm-legend{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--faint);
-    justify-content:flex-end;margin-top:8px}
-  .hm-legend .sw{width:10px;height:10px;border-radius:2px}
-
-  /* ---------- 设置区（备份/恢复/口令） ---------- */
-  .set-group{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-    padding:16px 18px;margin-bottom:12px}
-  .set-group h3{font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
-  .set-group .desc{font-size:11.5px;color:var(--faint);margin-bottom:12px;line-height:1.6}
-  .set-restore{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  .set-note{font-size:11px;color:var(--faint);margin-top:8px}
-
-  /* ---------- 响应式 ---------- */
-  @media(max-width:920px){
-    .sidebar{transform:translateX(-100%);transition:transform .26s var(--ease)}
-    .sidebar.open{transform:none;box-shadow:0 0 40px rgba(0,0,0,.5)}
-    .content{margin-left:0;padding:18px 16px 50px}
-    .hamburger{display:flex}
-    .backdrop.show{opacity:1;pointer-events:auto}
-    .page-head h1{display:none}
-  }
-  @media(prefers-reduced-motion:reduce){
-    *,*::before,*::after{animation:none!important;transition:none!important}
-  }
-
-</style>
-</head>
-<body>
-<div class="auth-mask" id="authMask" style="display:none"></div>
-<div class="app">
-  <aside class="sidebar" id="sidebar">
-    <div class="brand">
-      <svg width="30" height="30" viewBox="0 0 30 30" fill="none" aria-hidden="true">
-        <circle cx="15" cy="15" r="13" stroke="#e0a53c" stroke-width="2.4"/>
-        <path d="M15 9v6.2l4.2 2.4" stroke="#e0a53c" stroke-width="2" stroke-linecap="round"/>
-      </svg>
-      <div><b>VibeTrace</b><span>刻迹 · 电脑使用情况监控</span></div>
-    </div>
-    <nav class="nav" id="nav">
-      <a class="nav-item active" data-view="overview" href="#">
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="1.5" width="5.6" height="5.6" rx="1"/><rect x="8.9" y="1.5" width="5.6" height="5.6" rx="1"/><rect x="1.5" y="8.9" width="5.6" height="5.6" rx="1"/><rect x="8.9" y="8.9" width="5.6" height="5.6" rx="1"/></svg>
-        概览
-      </a>
-      <a class="nav-item" data-view="trends" href="#">
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.5 13.5h13M3 11l3-4 2.5 2.5L13 4.5"/></svg>
-        趋势
-      </a>
-      <a class="nav-item" data-view="report" href="#">
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3M5.5 8.5h5M5.5 11h5"/></svg>
-        日报
-      </a>
-      <a class="nav-item" data-view="week" href="#">
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 3.5h11v9h-11z"/><path d="M2.5 7h11M5 2v2.5M11 2v2.5"/></svg>
-        周报
-      </a>
-      <a class="nav-item" data-view="month" href="#">
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 2.5h11v11h-11z"/><path d="M2.5 5.5h11"/><path d="M5.5 1.5v2.5M10.5 1.5v2.5"/></svg>
-        月报
-      </a>
-      <a class="nav-item" data-view="sessions" href="#">
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4h12M2 8h12M2 12h7"/></svg>
-        会话
-      </a>
-      <a class="nav-item" data-view="log" href="#">
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M5 6l2.2 2L5 10M9 10.5h2.5"/></svg>
-        日志
-      </a>
-      <a class="nav-item" data-view="groups" href="#">
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4.5h12v7H2z"/><path d="M2 7h12"/><path d="M6 4.5V9M10 4.5V9"/></svg>
-        分组
-      </a>
-      <a class="nav-item" data-view="insights" id="navInsights" href="#">
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.6c3.2 0 5.4 2.1 5.4 4.9 0 2.1-1.2 3.3-2 4.4-.4.6-.8 1-.8 1.6H5.4c0-.6-.4-1-.8-1.6-.8-1.1-2-2.3-2-4.4 0-2.8 2.2-4.9 5.4-4.9z"/><path d="M6.9 14.5h2.2"/></svg>
-        AI 洞察
-      </a>
-      <a class="nav-item" data-view="settings" href="#">
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3M3.4 3.4l2.1 2.1M10.5 10.5l2.1 2.1M12.6 3.4l-2.1 2.1M5.5 10.5l-2.1 2.1"/><circle cx="8" cy="8" r="2.2"/></svg>
-        设置
-      </a>
-    </nav>
-    <div class="side-foot">
-      <div class="root" id="rootPath" title="数据目录"></div>
-      <div>v1.0.0 · 仅监听 127.0.0.1 · 纯本地</div>
-    </div>
-  </aside>
-  <div class="backdrop" id="backdrop"></div>
-  <button class="hamburger" id="hamburger" aria-label="菜单" aria-expanded="false" aria-controls="sidebar">
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
-  </button>
-
-  <main class="content">
-    <div class="page-head">
-      <div><h1 id="pageTitle">概览</h1><div class="sub" id="pageSub"></div></div>
-      <div class="controls" id="headControls"></div>
-    </div>
-
-    <!-- 概览 -->
-    <section class="view active" id="view-overview">
-      <div class="cards" id="ovCards"></div>
-      <div class="grid">
-        <div class="panel"><h2>最近 14 天活跃趋势</h2><canvas id="ovTrend" height="190"></canvas></div>
-        <div class="panel"><h2>今日类别分布</h2><div id="ovCats"></div></div>
-      </div>
-      <div class="grid">
-        <div class="panel"><h2>今日应用 Top 10</h2><div id="ovApps"></div></div>
-        <div class="panel"><h2>AI 工具 / 联系人</h2><div id="ovMisc"></div></div>
-      </div>
-      <div class="panel"><h2>AI 会话深度 <span class="hint">本地会话 + 浏览器 Web AI 会话 · 始终开启</span></h2><div id="ovAiSessions"></div></div>
-    </section>
-
-    <!-- 趋势 -->
-    <section class="view" id="view-trends">
-      <div class="panel"><h2>活跃热力图（24 小时 × 最近 84 天）<span class="hint">行=小时 · 列=日期</span></h2>
-        <div id="trHeatmap"></div>
-        <div class="hm-legend">少 <span class="sw" style="background:var(--hm-1)"></span><span class="sw" style="background:var(--hm-2)"></span><span class="sw" style="background:var(--hm-3)"></span><span class="sw" style="background:var(--hm-4)"></span><span class="sw" style="background:var(--hm-5)"></span> 多</div>
-      </div>
-      <div class="panel"><h2>日活跃柱状图</h2>
-        <div class="controls" style="margin-bottom:12px">
-          <button class="btn" data-range="14">14 天</button>
-          <button class="btn primary" data-range="30">30 天</button>
-        </div>
-        <canvas id="trBars" height="210"></canvas>
-      </div>
-    </section>
-
-    <!-- 日报 -->
-    <section class="view" id="view-report">
-      <div class="panel"><h2>日报 <span class="hint">选日期渲染当日 report.md</span></h2>
-        <div class="controls" style="margin-bottom:12px">
-          <button class="btn" data-export="csv" data-scope="day">导出 CSV</button>
-          <button class="btn" data-export="json" data-scope="day">导出 JSON</button>
-        </div>
-        <div class="md" id="rpMd"></div>
-      </div>
-    </section>
-
-    <!-- 周报 -->
-    <section class="view" id="view-week">
-      <div class="panel"><h2>周报 <span class="hint">最近 7 个有数据日 · 自动</span></h2>
-        <div class="controls" style="margin-bottom:12px">
-          <button class="btn" data-export="csv" data-scope="week">导出 CSV</button>
-          <button class="btn" data-export="json" data-scope="week">导出 JSON</button>
-        </div>
-        <div class="md" id="wkMd"></div>
-      </div>
-    </section>
-
-    <!-- 月报 -->
-    <section class="view" id="view-month">
-      <div class="panel"><h2>月报 <span class="hint">按自然月汇总</span></h2>
-        <div class="controls" style="margin-bottom:12px">
-          <input type="month" id="moSel" value="">
-          <button class="btn primary" id="moGo">查看</button>
-          <button class="btn" data-export="csv" data-scope="month">导出 CSV</button>
-          <button class="btn" data-export="json" data-scope="month">导出 JSON</button>
-        </div>
-        <div class="md" id="moMd"></div>
-      </div>
-    </section>
-
-    <!-- 会话 -->
-    <section class="view" id="view-sessions">
-      <div class="panel">
-        <div class="controls" style="margin-bottom:12px">
-          <select id="ssCat"></select>
-          <select id="ssApp"></select>
-          <input type="text" id="ssSearch" placeholder="搜索标题 / 应用…" style="width:200px">
-          <span class="hint" id="ssCount" style="color:var(--faint);font-size:11.5px"></span>
-        </div>
-        <div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>开始</th><th>时长</th><th>应用</th><th>标题</th><th>类别</th><th>备注</th></tr></thead>
-          <tbody id="ssBody"></tbody>
-        </table></div>
-      </div>
-    </section>
-
-    <!-- 日志 -->
-    <section class="view" id="view-log">
-      <div class="grid">
-        <div class="panel"><h2>运行日志（app.log）<span class="hint">自动刷新 15s</span></h2>
-          <div class="log-box" id="lgEntries"></div>
-        </div>
-        <div class="panel"><h2>错误日志（errors.log · 最近 3 天）</h2>
-          <div class="log-box" id="lgErrors"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- 分组管理 -->
-    <section class="view" id="view-groups">
-      <div class="panel">
-        <div class="controls" style="margin-bottom:14px">
-          <input type="text" id="grpSearch" placeholder="搜索应用…" style="width:200px">
-          <input type="text" id="grpNewName" placeholder="新分组名称" style="width:150px" maxlength="20">
-          <button class="btn primary" id="grpAdd">新增分组</button>
-          <button class="btn" id="grpExport">导出配置</button>
-          <input type="file" id="grpImportFile" accept=".json,application/json" style="display:none">
-          <button class="btn" id="grpImport">导入配置</button>
-          <span id="grpStatus" style="color:var(--faint);font-size:11.5px"></span>
-        </div>
-        <div id="grpCats" style="margin-bottom:14px;line-height:2"></div>
-        <div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>应用</th><th>显示名</th><th>当前分组</th><th>移动到</th></tr></thead>
-          <tbody id="grpBody"></tbody>
-        </table></div>
-        <div id="grpCount" style="color:var(--faint);font-size:11.5px;margin-top:8px"></div>
-        <div class="set-note" id="grpImportNote" style="margin-top:8px"></div>
-      </div>
-    </section>
-
-    <!-- 智能洞察 -->
-    <section class="view" id="view-insights">
-      <div class="panel">
-        <h2>规则洞察 <span class="hint">离线规则引擎 · 自动跟随所选日期</span></h2>
-        <div class="controls" style="margin-bottom:12px">
-          <button class="btn" id="inReload">刷新</button>
-          <span class="hint">规则 100% 本地计算，不上送任何数据</span>
-        </div>
-        <div class="grid" id="inRules" style="margin-top:12px"></div>
-      </div>
-      <div class="panel">
-        <h2>行为洞察 <span class="hint">专注度评分 · 死循环检测 · 人格 · 离线</span></h2>
-        <div id="inBehavior"></div>
-      </div>
-      <div class="panel">
-        <h2>时间节省估算 <span class="hint">AI 编程效率 × 因子 · 离线估算 · Phase 3</span></h2>
-        <div id="inTimeSaved"></div>
-      </div>
-      <div class="panel">
-        <h2>代码产出（Git） <span class="hint">只读本地提交 · 离线 · Phase 2</span></h2>
-        <div id="inGit"></div>
-      </div>
-      <div class="panel">
-        <h2>AI 洞察 <span class="hint">可选 · OpenAI 兼容 API · 默认关闭</span></h2>
-        <div class="controls" style="margin-bottom:12px">
-          <button class="btn primary" id="inGen">生成 AI 洞察</button>
-          <span class="hint" id="inAiMeta"></span>
-        </div>
-        <div class="set-note" id="inAiError" style="display:none"></div>
-        <div id="inAiCards" style="margin-top:12px"></div>
-      </div>
-      <div class="panel">
-        <h2>AI 洞察模块 <span class="hint">客制化 · 持久化于数据目录 ai_custom.json · 可导入导出</span></h2>
-        <div class="controls" style="margin-bottom:12px">
-          <button class="btn primary" id="aiModSave">保存模块设置</button>
-          <button class="btn" id="aiModExport">导出配置</button>
-          <input type="file" id="aiModImportFile" accept=".json,application/json" style="display:none">
-          <button class="btn" id="aiModImport">导入配置</button>
-          <span id="aiModStatus" style="color:var(--faint);font-size:11.5px"></span>
-        </div>
-        <div style="margin-bottom:14px">
-          <b style="font-size:13px">自定义 Provider 预设</b>
-          <div class="hint" style="margin:2px 0 8px">显示在「设置 → Provider 预设」下拉中，优先于内置预设；ID 仅限小写字母 / 数字 / _ / -。</div>
-          <div class="tbl-wrap"><table class="tbl">
-            <thead><tr><th>ID</th><th>名称</th><th>Base URL</th><th>Model</th><th style="width:44px"></th></tr></thead>
-            <tbody id="aiModProvBody"></tbody>
-          </table></div>
-          <button class="btn" id="aiModAddProv" style="margin-top:8px">＋ 新增 Provider</button>
-        </div>
-        <div style="margin-bottom:14px">
-          <b style="font-size:13px">发送给 AI 的数据内容</b>
-          <div class="hint" style="margin:2px 0 8px">勾选决定提示词包含哪些统计段；仅聚合数字，不含标题 / URL / 联系人名。</div>
-          <div id="aiModSections" style="display:flex;flex-wrap:wrap;gap:10px 18px"></div>
-        </div>
-        <div style="margin-bottom:14px">
-          <b style="font-size:13px">洞察数量</b>
-          <div style="margin-top:6px">
-            <input type="number" id="aiModMin" min="1" max="10" style="width:80px"> ~
-            <input type="number" id="aiModMax" min="1" max="10" style="width:80px"> 条
-          </div>
-        </div>
-        <div>
-          <b style="font-size:13px">自定义指令</b>
-          <div class="hint" style="margin:2px 0 8px">附加到提示词末尾，让 AI 聚焦你的关注点（最多 500 字）。</div>
-          <textarea id="aiModInstruction" maxlength="500" rows="2" placeholder="例如：我最近在备考，请重点分析学习时段与干扰来源…" style="width:min(560px,100%)"></textarea>
-        </div>
-        <div class="set-note" id="aiModNote" style="margin-top:8px"></div>
-      </div>
-    </section>
-
-    <!-- 设置（备份/恢复/口令/主题） -->
-    <section class="view" id="view-settings">
-      <div class="set-group">
-        <h3>✨ AI 洞察（可选功能）</h3>
-        <div class="desc">AI 洞察默认关闭（隐私优先）。开启后，聚合统计会发送到你选择的 API 端点；
-          规则洞察始终离线。可选用内置 provider 预设，或选「自定义」填写任意 OpenAI 兼容端点。</div>
-        <div class="controls" style="margin:10px 0 14px">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-            <input type="checkbox" id="aiEnabled" style="width:auto">
-            <b>启用 AI 洞察</b>
-          </label>
-        </div>
-        <div class="ai-fields">
-          <label style="display:block;margin:8px 0">Provider 预设
-            <select id="aiProvider" style="width:min(420px,100%);margin-top:4px"></select>
-          </label>
-          <label style="display:block;margin:8px 0">Base URL
-            <input type="text" id="aiBaseUrl" placeholder="https://api.example.com/v1" style="width:min(420px,100%);margin-top:4px">
-          </label>
-          <label style="display:block;margin:8px 0">API Key
-            <input type="password" id="aiApiKey" placeholder="留空保持不变" autocomplete="off" style="width:min(420px,100%);margin-top:4px">
-          </label>
-          <label style="display:block;margin:8px 0">Model
-            <input type="text" id="aiModel" placeholder="model-name（Ollama 可点下方按钮拉取列表）" style="width:min(420px,100%);margin-top:4px" list="aiModelList">
-            <datalist id="aiModelList"></datalist>
-          </label>
-          <div id="aiOllamaBox" style="display:none;margin:8px 0">
-            <button class="btn" id="aiOllamaFetch" type="button">刷新 Ollama 模型列表</button>
-            <span class="hint" id="aiOllamaHint"></span>
-          </div>
-          <label style="display:block;margin:8px 0">超时（秒）
-            <input type="number" id="aiTimeout" min="1" max="600" value="60" style="width:min(180px,100%);margin-top:4px">
-          </label>
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:8px 0">
-            <input type="checkbox" id="aiSendRaw" style="width:auto"> 发送标题 / URL 样本（默认不发送，联系人名永不上送）
-          </label>
-        </div>
-        <div class="controls" style="margin-top:12px">
-          <button class="btn primary" id="aiSave">保存 AI 设置</button>
-          <span class="set-note" id="aiSaveNote"></span>
-        </div>
-        <div class="set-note" id="aiCfgNote" style="margin-top:8px"></div>
-      </div>
-      <div class="set-group">
-        <h3>🔄 软件更新</h3>
-        <div class="desc">当前版本 <b id="upCurrent">…</b>。从 GitHub Releases 检测新版本，
-          可在应用内下载并安装（替换 exe 后自动重启；开发模式仅支持检测）。</div>
-        <div class="controls" style="margin:10px 0 6px">
-          <button class="btn" id="upCheck">检查更新</button>
-          <span class="set-note" id="upStatus"></span>
-        </div>
-        <div id="upPanel" style="display:none;margin-top:6px">
-          <div id="upInfo" style="font-size:12.5px;line-height:1.7"></div>
-          <div class="controls" style="margin-top:10px">
-            <button class="btn primary" id="upDownload" style="display:none">下载并安装</button>
-            <button class="btn primary" id="upApply" style="display:none">立即重启应用完成更新</button>
-          </div>
-          <div id="upBarWrap" style="display:none;margin-top:10px">
-            <div style="height:8px;border-radius:4px;background:rgba(128,128,128,.18);overflow:hidden;max-width:420px">
-              <i id="upBar" style="display:block;height:100%;width:0%;background:var(--accent);transition:width .3s"></i>
-            </div>
-            <span class="hint" id="upBarText" style="font-size:11.5px"></span>
-          </div>
-        </div>
-        <div class="set-note" id="upNote" style="margin-top:8px"></div>
-      </div>
-      <div class="set-group">
-        <h3>🗄️ 数据备份</h3>
-        <div class="desc">打包数据目录（各日期文件夹 + config.json / app_groups.json / aliases.json，
-          已排除 .log / 临时 / 备份大文件）为 zip 一键下载，用于迁移或存档。</div>
-        <div class="controls"><button class="btn primary" id="bkDownload">备份下载（zip）</button></div>
-      </div>
-      <div class="set-group">
-        <h3>♻️ 数据恢复</h3>
-        <div class="desc">选择上文备份生成的 zip 上传，解压校验后按日期目录/配置合并覆盖到当前数据目录。
-          相同日期目录会被覆盖、缺失的会补齐；不会删除已有的其他数据。</div>
-        <div class="set-restore">
-          <input type="file" id="bkFile" accept=".zip,application/zip" style="display:none">
-          <button class="btn" id="bkPick">选择备份文件</button>
-          <button class="btn primary" id="bkRestore">恢复上传</button>
-          <span class="hint" id="bkPickName"></span>
-        </div>
-        <div class="set-note" id="bkNote"></div>
-      </div>
-      <div class="set-group">
-        <h3>🔒 访问口令</h3>
-        <div class="desc">是否启用口令由数据根目录 <span class="url-cell">config.json</span> 的
-          <b>dashboard_token</b> 决定（缺失/为空 = 关闭）。开启后所有 API 需携带
-          <span class="url-cell">X-Dashboard-Token</span> 请求头；本机浏览器首次会在右上角输入口令并记住。
-          本页面不会显示/修改口令。</div>
-        <div class="set-note" id="authNote"></div>
-      </div>
-    </section>
-  </main>
-</div>
-
-<script>
-"use strict";
-const ROOT_DIR = DATA_ROOT;
-const AUTH_REQUIRED = AUTH_FLAG;
-const TITLES = {overview:"概览",trends:"趋势",report:"日报",week:"周报",month:"月报",
-                sessions:"会话",log:"日志",groups:"分组",insights:"洞察",settings:"设置"};
-const $ = s => document.querySelector(s);
-const $$ = s => [...document.querySelectorAll(s)];
-const state = { view:"overview", day:null, month:null, dates:[], loaded:{}, authed:!AUTH_REQUIRED };
-const NO_ANIM = location.search.includes("static=1") || matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-/* ---------- 访问口令（P1-8） ---------- */
-let authShown = false;
-function tokenHeaders(){
-  const t = localStorage.getItem("dash_token");
-  return t ? {"X-Dashboard-Token": t} : {};
-}
-function failAuth(){
-  if(authShown) return;
-  authShown = true;
-  buildAuthMask();
-  $("#authMask").classList.add("show");
-  window.__pendingNav = null;
-}
-function buildAuthMask(){
-  const mask = $("#authMask");
-  mask.style.cssText = "display:flex;position:fixed;inset:0;background:var(--bg);z-index:300;" +
-    "align-items:center;justify-content:center;flex-direction:column;gap:14px";
-  mask.innerHTML = '<div class="auth-card">' +
-    '<h3>请输入访问口令</h3>' +
-    '<p>仪表盘开启了口令保护，请输入后继续。</p>' +
-    '<div class="controls"><input type="password" id="authInput" placeholder="访问口令" autofocus>' +
-    '<button class="btn primary" id="authGo">解锁</button></div>' +
-    '<div class="auth-err" id="authErr"></div></div>';
-  $("#authGo").onclick = tryUnlock;
-  $("#authInput").onkeydown = e => { if(e.key === "Enter") tryUnlock(); if(e.key === "Escape") { mask.classList.remove("show"); mask.style.display="none"; authShown=false; } };
-  // 遮罩显示后自动聚焦输入框（autofocus在动态innerHTML中不可靠，需显式focus）
-  requestAnimationFrame(()=>{ const inp=$("#authInput"); if(inp) inp.focus(); });
-}
-async function tryUnlock(){
-  const val = $("#authInput").value.trim();
-  if(!val) return;
-  const saved = localStorage.getItem("dash_token");
-  // 先尝试校验；成功则记录并继续
-  state.authed = true;
-  try{
-    const r = await fetch("/api/dates", {headers:{"X-Dashboard-Token": val}});
-    if(r.status === 401){
-      state.authed = false;
-      $("#authErr").textContent = "口令错误，请重试。";
-      return;
-    }
-    if(!r.ok) throw new Error("HTTP " + r.status);
-  }catch(e){
-    // 网络错误也放行为本地状态，交由后续请求判断
-  }
-  localStorage.setItem("dash_token", val);
-  authShown = false;
-  $("#authMask").classList.remove("show");
-  $("#authMask").style.display = "none";
-  // 触发当前视图重载
-  if(state.loaded[state.view]){ state.loaded[state.view] = false; }
-  startApp();
-}
-
-/* ---------- 工具 ---------- */
-async function api(path){
-  const r = await fetch(path, {headers: tokenHeaders()});
-  if(r.status === 401){ failAuth(); throw new Error("口令未授权"); }
-  if(!r.ok) throw new Error("HTTP " + r.status);
-  return r.json();
-}
-function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
-function fmtMs(ms){
-  if(ms == null || ms < 0) return "-";
-  const s = Math.floor(ms/1000), h = Math.floor(s/3600), m = Math.floor(s%3600/60), sec = s%60;
-  const p = [];
-  if(h) p.push(h + " 小时"); if(m) p.push(m + " 分钟"); if(!h && !m && sec) p.push(sec + " 秒");
-  return p.join(" ") || "0 秒";
-}
-function fmtDurS(sec){ return fmtMs(Math.round(sec)*1000); }
-function fmtCompact(ms){
-  if(ms == null || ms < 0) return "-";
-  const s = Math.floor(ms/1000);
-  if(s >= 3600) return (s/3600).toFixed(1) + "h";
-  if(s >= 60) return Math.round(s/60) + "m";
-  return s + "s";
-}
-function countUp(el, value, fmt, dur){
-  if(!el) return;
-  if(NO_ANIM){ el.textContent = fmt(value); return; }
-  const t0 = performance.now(), durMs = dur || 500;
-  function tick(t){
-    const p = Math.min(1, (t - t0)/durMs), e = 1 - Math.pow(1-p, 3);
-    const v = Math.min(value, Math.max(0, Math.round(value * e)));
-    el.textContent = fmt(v);
-    if(p < 1) requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-}
-function skeleton(rows){
-  return '<div class="sk" style="height:' + (rows*14) + 'px;width:100%"></div>';
-}
-function statRows(data, fmt){
-  const max = Math.max(1, ...Object.values(data));
-  return Object.entries(data).sort((a,b)=>b[1]-a[1]).map(([k,v])=>{
-    const pct = Math.max(2, Math.round(v/max*100));
-    return '<div class="stat-row"><div class="top"><span class="name">' + esc(k) + '</span>' +
-      '<span class="val">' + fmt(v) + '</span></div><div class="bar"><i style="width:' + pct + '%"></i></div></div>';
-  }).join("") || '<div class="empty">（无数据）</div>';
-}
-
-/* ---------- 视图切换 ---------- */
-function closeDrawer(){
-  $("#sidebar").classList.remove("open");
-  $("#backdrop").classList.remove("show");
-  const hb=$("#hamburger"); if(hb) hb.setAttribute("aria-expanded","false");
-}
-function openDrawer(){
-  $("#sidebar").classList.add("open");
-  $("#backdrop").classList.add("show");
-  const hb=$("#hamburger"); if(hb) hb.setAttribute("aria-expanded","true");
-}
-function switchView(v, push){
-  state.view = v;
-  $$(".view").forEach(el => el.classList.toggle("active", el.id === "view-"+v));
-  $$(".nav-item").forEach(a => a.classList.toggle("active", a.dataset.view === v));
-  $("#pageTitle").textContent = TITLES[v];
-  document.title = TITLES[v] + " · VibeTrace";
-  if(push !== false) history.replaceState(null, "", v === "overview" ? "/" : "/?view=" + v);
-  closeDrawer();
-  if(!state.loaded[v]){
-    state.loaded[v] = true;
-    Promise.resolve().then(async () => {
-      try { await loaders[v](); }
-      catch(err){ const box = $("#view-" + v); if(box) box.innerHTML = '<div class="empty">加载失败：' + esc(err.message) + '</div>'; }
-    });
-  }
-}
-const loaders = { overview:loadOverview, trends:loadTrends, report:loadReport,
-                  week:loadWeek, month:loadMonth,
-                  sessions:loadSessions, log:loadLog, groups:loadGroups,
-                  insights:loadInsights, settings:loadSettings };
-
-/* ---------- 头部控件（日期选择 + 主题切换） ---------- */
-function buildHeadControls(){
-  const c = $("#headControls");
-  c.innerHTML = '<select id="daySel"></select><button class="btn" id="btnToday">今天</button>' +
-    '<button class="btn" id="themeBtn" title="切换主题：自动/浅色/深色">🌗</button>';
-  $("#btnToday").onclick = () => { pickDay(todayStr()); };
-  $("#daySel").onchange = e => pickDay(e.target.value);
-  $("#themeBtn").onclick = cycleTheme;
-  updateThemeBtn();
-}
-function pickDay(d){
-  state.day = d; $("#daySel").value = d;
-  // 换日后所有依赖日期的视图数据失效，切回时按新日期重载（避免仍显示旧日期数据）
-  ["overview","report","sessions","insights"].forEach(v=>{ state.loaded[v] = false; });
-  const reload = {overview:loadOverview, report:loadReport, sessions:loadSessions, insights:loadInsights}[state.view];
-  if(reload){ state.loaded[state.view] = true; reload(); }
-}
-function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-
-/* ---------- 主题切换（P1-7） ---------- */
-const THEME_LABEL = {auto:"🌗 自动", light:"☀️ 浅色", dark:"🌙 深色"};
-function currentTheme(){
-  const pref = localStorage.getItem("dash_theme") || "auto";
-  if(pref === "auto") return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-  return pref;
-}
-function applyTheme(){
-  const eff = currentTheme();
-  document.documentElement.dataset.theme = eff;
-  updateThemeBtn();
-  // 重绘 canvas 图表以匹配新配色
-  if(state.view === "overview" && state.loaded.overview) loadOverview();
-  else if(state.view === "trends" && state.loaded.trends) loadTrends();
-}
-function cycleTheme(){
-  const order = ["auto", "light", "dark"];
-  const pref = localStorage.getItem("dash_theme") || "auto";
-  const next = order[(order.indexOf(pref) + 1) % order.length];
-  localStorage.setItem("dash_theme", next);
-  applyTheme();
-}
-function updateThemeBtn(){
-  const b = $("#themeBtn");
-  if(b) b.textContent = THEME_LABEL[localStorage.getItem("dash_theme") || "auto"];
-}
-function canvasCssVar(name, fallback){
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return v || fallback;
-}
-
-/* ---------- 画布图表 ---------- */
-function setupCanvas(cv){
-  const dpr = window.devicePixelRatio || 1;
-  let w = cv.clientWidth, h = cv.clientHeight;
-  if(w < 20){ w = cv.parentElement ? cv.parentElement.clientWidth : 600; }
-  if(h < 20){ h = parseInt(cv.getAttribute("height") || "200", 10); }
-  cv.style.width = w + "px"; cv.style.height = h + "px";  // 保持 CSS 尺寸恒定
-  cv.width = w * dpr; cv.height = h * dpr;   // 缓冲按设备像素比放大
-  const ctx = cv.getContext("2d"); ctx.setTransform(dpr,0,0,dpr,0,0);
-  ctx.clearRect(0,0,w,h);
-  return {ctx, w, h};
-}
-function niceMax(v){
-  if(v <= 0) return 1;
-  const exp = Math.pow(10, Math.floor(Math.log10(v)));
-  const f = v / exp;
-  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * exp;
-}
-function drawBarChart(cv, labels, values, fmt){
-  const {ctx,w,h} = setupCanvas(cv);
-  const padL = 44, padB = 22, padT = 14;
-  const max = niceMax(Math.max(1, ...values));
-  const n = values.length, bw = Math.max(6, (w-padL-8)/n);
-  const labelStep = bw < 60 ? 2 : 1;
-  const tickFmt = v => v >= 3600000 ? Math.round(v/3600000) + "h" : Math.round(v/60000) + "m";
-  // 主题相关颜色：从 CSS 变量读取，切换主题后重绘即同步
-  const gridColor = canvasCssVar("--grid-line", "rgba(255,255,255,.06)");
-  const axisColor = canvasCssVar("--chart-axis", "#6b7280");
-  const barColor = canvasCssVar("--chart-bar", "#e0a53c");
-  const emptyColor = canvasCssVar("--bar-empty", "#232936");
-  function paint(ease){
-    ctx.clearRect(0,0,w,h);
-    ctx.strokeStyle = gridColor; ctx.fillStyle = axisColor;
-    ctx.font = "10px " + getComputedStyle(document.body).fontFamily;
-    ctx.lineWidth = 1;
-    for(let g=0; g<=4; g++){
-      const y = padT + (h-padT-padB) * g/4;
-      ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-4,y); ctx.stroke();
-      ctx.textAlign = "right";
-      ctx.fillText(tickFmt(Math.round(max * (1 - g/4))), padL-6, y+3);
-    }
-    values.forEach((v,i)=>{
-      const bh = Math.max(2, (v/max) * (h-padT-padB) * ease);
-      const x = padL + i*bw, y = h-padB-bh;
-      ctx.fillStyle = v > 0 ? barColor : emptyColor;
-      ctx.fillRect(x+2, y, bw-4, bh);
-      if(i % labelStep === 0){
-        ctx.fillStyle = axisColor; ctx.textAlign = "center";
-        ctx.fillText(String(labels[i]).slice(5), x+bw/2, h-8);
-      }
-    });
-  }
-  if(NO_ANIM){ paint(1); return; }
-  const t0 = performance.now();
-  function frame(t){
-    const p = Math.min(1, (t - t0)/650);
-    paint(1 - Math.pow(1-p, 3));
-    if(p < 1) requestAnimationFrame(frame);
-  }
-  requestAnimationFrame(frame);
-}
-
-/* ---------- 概览 ---------- */
-async function loadOverview(){
-  const cards = $("#ovCards");
-  cards.innerHTML = [0,1,2,3].map(()=>'<div class="card"><div class="label">…</div><div class="sk" style="height:26px;margin-top:7px"></div></div>').join("");
-  const d = await api("/api/day?date=" + state.day);
-  const a = d.aggregate;
-  const ai = Object.values(a.by_ai||{}).reduce((s,v)=>s+v,0);
-  const social = (a.by_category||{})["社交聊天"] || 0;
-  cards.innerHTML =
-    '<div class="card"><div class="label">总活跃时长</div><div class="value" id="cTotal"></div><div class="trend">'+a.session_count+' 个会话</div></div>' +
-    '<div class="card"><div class="label">AI 编程时长</div><div class="value" id="cAi"></div></div>' +
-    '<div class="card"><div class="label">社交聊天</div><div class="value" id="cSocial"></div></div>' +
-    '<div class="card"><div class="label">浏览器停留</div><div class="value" id="cUrl">—</div><div class="trend">标签页口径 · 含挂机</div></div>';
-  countUp($("#cTotal"), a.total_active_ms, fmtMs);
-  countUp($("#cAi"), ai, fmtMs);
-  countUp($("#cSocial"), social, fmtMs);
-  try{
-    const u = await api("/api/urls?date=" + state.day);
-    countUp($("#cUrl"), (u.total_duration_s||0)*1000, fmtMs);
-  }catch(e){ $("#cUrl").textContent = "-"; }
-  $("#ovCats").innerHTML = skeleton(6);
-  $("#ovCats").innerHTML = statRows(a.by_category, fmtMs);
-  $("#ovApps").innerHTML = statRows(a.by_app, fmtMs);
-  const aiBlock = '<div style="margin-bottom:16px"><b style="font-size:12px;color:var(--dim);letter-spacing:.4px">AI 工具</b>' +
-    (Object.keys(a.by_ai||{}).length ? statRows(a.by_ai, fmtMs) : '<div class="empty">（无 AI 工具记录）</div>') + '</div>';
-  const ctBlock = '<div><b style="font-size:12px;color:var(--dim);letter-spacing:.4px">联系人</b>' +
-    ((a.by_contact && Object.keys(a.by_contact).length) ? statRows(Object.fromEntries(Object.entries(a.by_contact).flatMap(([app,cs])=>Object.entries(cs).map(([c,v])=>[app+"/"+c, v]))), fmtMs) : '<div class="empty">（无联系人记录）</div>') + '</div>';
-  $("#ovMisc").innerHTML = aiBlock + ctBlock;
-  // AI 会话深度（始终开启，固定面板）
-  $("#ovAiSessions").innerHTML = '<div class="empty">加载中…</div>';
-  try{
-    const sd = await api("/api/ai-sessions?date=" + state.day);
-    renderAiSessions(sd.ai_sessions);
-  }catch(e){ $("#ovAiSessions").innerHTML = '<div class="empty">加载失败</div>'; }
-  // 最近 14 天活跃趋势（单日数据失败/接口异常时降级显示，不影响其它面板）
-  try{
-    const days = await api("/api/days?n=14");
-    drawBarChart($("#ovTrend"), days.days.map(x=>x.date), days.days.map(x=>x.total_ms),
-      v => v>=3600000 ? (v/3600000).toFixed(1)+"h" : Math.round(v/60000)+"m");
-  }catch(err){
-    const tcv = $("#ovTrend");
-    if(tcv && tcv.parentElement){
-      tcv.parentElement.insertAdjacentHTML("beforeend", '<div class="empty">趋势加载失败：' + esc(err.message || err) + '</div>');
-    }
-  }
-}
-
-/* ---------- 趋势 ---------- */
-async function loadTrends(){
-  $("#trHeatmap").innerHTML = skeleton(20);
-  $("#trBars").style.display = "none";
-  const hm = await api("/api/heatmap?days=84");
-  const maxH = Math.max(1, ...hm.days.flatMap(d=>d.hourly_ms));
-  const box = $("#trHeatmap");
-  const lvl = [
-    canvasCssVar("--hm-1","#242a36"), canvasCssVar("--hm-2","#2f3a4d"),
-    canvasCssVar("--hm-3","#6b5323"), canvasCssVar("--hm-4","#a06f24"), canvasCssVar("--hm-5","#e0a53c")];
-  const nDays = hm.days.length;
-  // 行=小时(24)，列=天数；flex 布局：标签列 + 每天一列
-  const cols = [];
-  for(let di=0; di<nDays; di++){
-    const day = hm.days[di];
-    let col = '<div class="grid-col" title="'+day.date+'">';
-    for(let hi=0; hi<24; hi++){
-      const ms = day.hourly_ms[hi] || 0;
-      const s = ms>0 ? Math.max(1, Math.min(4, Math.round(ms/maxH*4))) : 0;
-      const delay = NO_ANIM ? 0 : (di*2+hi*0.3);
-      col += '<div class="cell" style="background:'+lvl[s]+';opacity:1;transition-delay:'+delay+'ms" title="'+day.date+' '+String(hi).padStart(2,"0")+':00 — '+fmtMs(ms)+'"></div>';
-    }
-    col += '</div>';
-    cols.push(col);
-  }
-  let labels = '<div class="hl-col">';
-  for(let hi=0; hi<24; hi++){
-    labels += '<span>'+(hi%4===0 ? String(hi).padStart(2,"0") : "")+'</span>';
-  }
-  labels += '</div>';
-  box.innerHTML = labels + cols.join("");
-  $("#trBars").style.display = "block";
-  drawBarChart($("#trBars"), hm.days.slice(-30).map(d=>d.date), hm.days.slice(-30).map(d=>d.total_ms),
-    v => v>=3600000 ? (v/3600000).toFixed(1)+"h" : Math.round(v/60000)+"m");
-  $$("#view-trends [data-range]").forEach(b=>b.onclick = ()=>{
-    $$("#view-trends [data-range]").forEach(x=>x.classList.remove("primary"));
-    b.classList.add("primary");
-    const n = +b.dataset.range;
-    const days = hm.days.slice(-n);
-    drawBarChart($("#trBars"), days.map(d=>d.date), days.map(d=>d.total_ms),
-      v => v>=3600000 ? (v/3600000).toFixed(1)+"h" : Math.round(v/60000)+"m");
-  });
-}
-
-/* ---------- Markdown 渲染（日报/周报/月报 通用） ---------- */
-function md2html(src){
-  const lines = (src||"").split("\n"); let out = [], inT = false;
-  for(const line of lines){
-    if(line.startsWith("|") && line.endsWith("|")){
-      const cells = line.slice(1,-1).split("|").map(c=>c.trim());
-      if(cells.length && cells.every(c => /^:?-+:?$/.test(c))) continue; // 表头分隔行，跳过
-      if(!inT){ out.push("<table>"); inT = true; }
-      const tag = "td";
-      out.push("<tr>" + cells.map(c=>{
-        const pure = c.replace(/[█▇▆▅▄▃▂▁\s]/g, "");
-        if(pure === "" && /[█▇▆▅▄▃▂▁]/.test(c)){
-          const n = (c.match(/[█▇▆▅▄▃▂▁]/g) || []).length;
-          return "<" + tag + "><div class='mdbar'><i style='width:" + Math.min(100, n * 10) + "%'></i></div></" + tag + ">";
-        }
-        if(c.trim() === "-" || c.trim() === "--") return "<" + tag + "><span style='color:var(--faint)'>—</span></" + tag + ">";
-        return "<" + tag + ">" + inline(c) + "</" + tag + ">";
-      }).join("") + "</tr>");
-      continue;
-    }
-    if(inT){ out.push("</table>"); inT = false; }
-    if(/^#\s/.test(line)) out.push("<h1>" + inline(line.slice(2)) + "</h1>");
-    else if(/^##\s/.test(line)) out.push("<h2>" + inline(line.slice(3)) + "</h2>");
-    else if(/^>\s?/.test(line)) out.push("<blockquote>" + inline(line.replace(/^>\s?/,"")) + "</blockquote>");
-    else if(/^-\s/.test(line)) out.push("<li>" + inline(line.slice(2)) + "</li>");
-    else if(!line.trim()) out.push("");
-    else out.push("<p>" + inline(line) + "</p>");
-  }
-  if(inT) out.push("</table>");
-  return out.join("\n");
-  function inline(s){
-    let t = esc(s);
-    t = t.replace(/\[([^\]]*)\]\(([^)]*)\)/g, (m,a,b)=>{ const u=b.split("?")[0]; return '<a href="'+esc(b)+'">'+esc(a)+'</a><span class="url-cell">'+esc(u.slice(0,80))+'</span>'; });
-    t = t.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-    if(/[█▇▆▅▄▃▂▁]/.test(t)) t = t.replace(/([█▇▆▅▄▃▂▁]+)/g, '<span style="color:var(--md-h2);letter-spacing:1px">$1</span>');
-    return t;
-  }
-}
-async function loadReport(){
-  $("#rpMd").innerHTML = skeleton(18);
-  const r = await api("/api/report?date=" + state.day);
-  if(!r.exists){ $("#rpMd").innerHTML = '<div class="empty">当日无日报（守护进程跨天时自动生成，或运行 report.py --day '+state.day+' --write）</div>'; return; }
-  $("#rpMd").innerHTML = md2html(r.markdown);
-}
-
-/* ---------- 周报 / 月报（P1-1） ---------- */
-async function loadWeek(){
-  $("#wkMd").innerHTML = skeleton(14);
-  const r = await api("/api/week");
-  if(!r.days || !r.days.length){
-    $("#wkMd").innerHTML = '<div class="empty">近 7 天无数据</div>'; return;
-  }
-  $("#wkMd").innerHTML = md2html(r.markdown);
-}
-async function loadMonth(){
-  $("#moMd").innerHTML = skeleton(14);
-  if(!state.month) return;
-  const r = await api("/api/month?month=" + state.month);
-  if(!r.exists){ $("#moMd").innerHTML = '<div class="empty">当月无数据</div>'; return; }
-  $("#moMd").innerHTML = md2html(r.markdown);
-}
-function monthInit(){
-  const sel = $("#moSel");
-  const now = new Date();
-  const latest = availableMonths()[availableMonths().length-1] ||
-    now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0");
-  state.month = latest;
-  if(sel){ sel.value = latest; sel.max = latest; }
-  $("#moGo").onclick = ()=>{ state.month = sel.value; if(state.loaded.month){ state.loaded.month = false; } loadMonth(); };
-}
-function availableMonths(){
-  const s = new Set();
-  (state.dates || []).forEach(d => s.add(d.slice(0,7)));
-  return [...s].sort();
-}
-
-/* ---------- 导出（P1-2） ---------- */
-async function downloadToFile(url, filename){
-  const r = await fetch(url, {headers: tokenHeaders()});
-  if(r.status === 401){ failAuth(); throw new Error("口令未授权"); }
-  if(!r.ok) throw new Error("HTTP " + r.status);
-  const blob = await r.blob();
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
-}
-let exporting = false;
-async function doExport(scope, type){
-  if(exporting) return;
-  exporting = true;
-  try{
-    let url = "/api/export?type=" + type + "&scope=" + scope;
-    let name = "report";
-    if(scope === "day"){ const d = state.day || todayStr(); url += "&date=" + d; name = "report_" + d; }
-    else if(scope === "week"){ name = "week_" + (state.dates.length ? state.dates[state.dates.length-1] : todayStr()); }
-    else if(scope === "month"){ const m = state.month || todayStr().slice(0,7); url += "&month=" + m; name = "month_" + m; }
-    name += (type === "csv" ? ".csv" : ".json");
-    await downloadToFile(url, name);
-  }catch(e){
-    alert("导出失败：" + e.message);
-  }finally{
-    exporting = false;
-  }
-}
-function wireExportButtons(){
-  $$("[data-export]").forEach(b => b.onclick = () => doExport(b.dataset.export, b.dataset.scope));
-}
-
-/* ---------- 备份/恢复（P1-4） ---------- */
-async function bkDownload(){
-  try{
-    const name = "usagemonitor_backup_" + todayStr() + ".zip";
-    await downloadToFile("/api/backup", name);
-  }catch(e){ alert("备份下载失败：" + e.message); }
-}
-async function bkRestore(){
-  const file = $("#bkFile").files[0];
-  const note = $("#bkNote");
-  if(!file){ note.textContent = "请先选择要恢复的 zip 备份文件。"; note.style.color = "var(--danger)"; return; }
-  if(!confirm("确认恢复「" + file.name + "」？\n将把备份中的日期目录/配置合并覆盖到当前数据目录（缺失补齐、相同覆盖）。\n建议先「备份下载」留底。")) return;
-  note.textContent = "正在上传与校验…"; note.style.color = "var(--dim)";
-  try{
-    const buf = await file.arrayBuffer();
-    const r = await fetch("/api/backup/restore", {method:"POST",
-      headers:Object.assign({"Content-Type":"application/octet-stream"}, tokenHeaders()),
-      body: buf});
-    if(r.status === 401){ failAuth(); note.textContent = ""; return; }
-    const result = await r.json();
-    if(!r.ok || !result.ok){ throw new Error(result.error || ("HTTP " + r.status)); }
-    note.textContent = "恢复完成：" + (result.days||[]).length + " 个日期目录、配置 " +
-      (result.files||[]).length + " 项（如需查看请刷新页面重新载入日期）。";
-    note.style.color = "var(--ok)";
-    $("#bkFile").value = "";
-    $("#bkPickName").textContent = "";
-  }catch(e){
-    note.textContent = "恢复失败：" + e.message;
-    note.style.color = "var(--danger)";
-  }
-}
-function fillAiProviderOptions(presets, selected){
-  const sel = $("#aiProvider");
-  if(!sel) return;
-  const opts = (presets || []).map(p =>
-    '<option value="'+esc(p.id)+'" data-base="'+esc(p.base_url || "")+'" data-model="'+esc(p.model || "")+'"' +
-    (p.id === selected ? " selected" : "") + '>'+esc(p.name)+'</option>'
-  ).join("");
-  sel.innerHTML = opts;
-  if(selected && !(presets || []).some(p => p.id === selected)){
-    const opt = document.createElement("option");
-    opt.value = selected; opt.textContent = "当前：" + selected;
-    sel.appendChild(opt);
-  }
-}
-function applyAiSettingsView(d){
-  const ai = d.ai || {};
-  const en = $("#aiEnabled");
-  if(en) en.checked = !!ai.enabled;
-  fillAiProviderOptions(d.presets || [], ai.provider);
-  if($("#aiBaseUrl")) $("#aiBaseUrl").value = ai.base_url || "";
-  if($("#aiModel")) $("#aiModel").value = ai.model || "";
-  if($("#aiTimeout")) $("#aiTimeout").value = ai.timeout_s || 60;
-  if($("#aiSendRaw")) $("#aiSendRaw").checked = !!ai.send_raw_titles;
-  if($("#aiApiKey")){
-    $("#aiApiKey").value = "";
-    $("#aiApiKey").placeholder = ai.api_key_set ? "已设置，留空保持不变" : "未设置（本地端点可留空）";
-  }
-  const note = $("#aiCfgNote");
-  if(!note) return;
-  note.textContent = ai.enabled
-    ? "AI 洞察已开启。" + (ai.api_key_set ? " API Key 已配置。" : " 尚未配置 API Key（部分本地端点可留空）。")
-    : "AI 洞察当前关闭（可选功能，默认关闭）。规则洞察始终离线。";
-  note.style.color = ai.enabled ? "var(--ok)" : "var(--dim)";
-  updateAiOllamaBox();
-}
-async function loadSettings(){
-  $("#authNote").textContent = AUTH_REQUIRED ?
-    "已开启：当前页面需要访问口令。" :
-    "当前关闭：config.json 缺失 dashboard_token（或为空）。如需开启，在 config.json 增加 \"dashboard_token\":\"你的口令\" 后重启仪表盘。";
-  try{
-    const d = await api("/api/insights/settings");
-    applyAiSettingsView(d);
-    const note = $("#aiSaveNote");
-    if(note){ note.textContent = ""; }
-  }catch(e){
-    const note = $("#aiCfgNote");
-    if(note){
-      note.textContent = "读取 AI 设置失败：" + e.message;
-      note.style.color = "var(--danger)";
-    }
-  }
-}
-async function saveAiSettings(){
-  const note = $("#aiSaveNote");
-  if(!note) return;
-  note.textContent = "保存中…";
-  note.style.color = "var(--dim)";
-  const payload = {
-    enabled: $("#aiEnabled").checked,
-    provider: $("#aiProvider").value,
-    base_url: $("#aiBaseUrl").value.trim(),
-    api_key: $("#aiApiKey").value.trim(),
-    model: $("#aiModel").value.trim(),
-    timeout_s: parseInt($("#aiTimeout").value || "60", 10),
-    send_raw_titles: $("#aiSendRaw").checked,
-    language: "zh"
-  };
-  try{
-    const d = await postJson("/api/insights/settings", payload);
-    applyAiSettingsView(d);
-    note.textContent = "已保存。";
-    note.style.color = "var(--ok)";
-    if(state.loaded.insights){ state.loaded.insights = false; }
-  }catch(e){
-    note.textContent = "保存失败：" + e.message;
-    note.style.color = "var(--danger)";
-  }
-}
-function updateAiOllamaBox(){
-  const box = $("#aiOllamaBox");
-  if(!box) return;
-  const sel = $("#aiProvider");
-  const isOllama = sel && sel.value === "ollama";
-  box.style.display = isOllama ? "" : "none";
-  if(isOllama) fetchOllamaModels();
-}
-async function fetchOllamaModels(){
-  const hint = $("#aiOllamaHint");
-  if(!hint) return;
-  const btn = $("#aiOllamaFetch");
-  if(btn) btn.disabled = true;
-  hint.textContent = "正在连接 Ollama…";
-  hint.style.color = "var(--dim)";
-  try{
-    const d = await api("/api/insights/ollama/models");
-    const list = $("#aiModelList");
-    if(list) list.innerHTML = (d.models || []).map(m=>'<option value="'+esc(m)+'"></option>').join("");
-    if(d.error){
-      hint.textContent = d.error;
-      hint.style.color = "var(--danger)";
-    }else if(d.models && d.models.length){
-      const cur = $("#aiModel");
-      if(cur && !cur.value) cur.value = d.models[0];
-      hint.textContent = "已连接，共 " + d.models.length + " 个模型（输入框可下拉选择）";
-      hint.style.color = "var(--ok)";
-    }else{
-      hint.textContent = "已连接，但本地还没有模型（先运行 ollama pull <模型名>）";
-      hint.style.color = "var(--dim)";
-    }
-  }catch(e){
-    hint.textContent = "无法获取模型列表：" + e.message;
-    hint.style.color = "var(--danger)";
-  }finally{
-    if(btn) btn.disabled = false;
-  }
-}
-function wireAiSettings(){
-  const sel = $("#aiProvider");
-  if(sel){
-    sel.onchange = () => {
-      const opt = sel.selectedOptions[0];
-      if(opt && opt.dataset.base !== undefined){
-        if(opt.dataset.base && $("#aiBaseUrl")) $("#aiBaseUrl").value = opt.dataset.base;
-        if(opt.dataset.model && $("#aiModel")) $("#aiModel").value = opt.dataset.model;
-      }
-      updateAiOllamaBox();
-    };
-  }
-  const btn = $("#aiSave");
-  if(btn) btn.onclick = saveAiSettings;
-  const ollamaBtn = $("#aiOllamaFetch");
-  if(ollamaBtn) ollamaBtn.onclick = fetchOllamaModels;
-}
-
-/* ---------- 会话 ---------- */
-async function loadSessions(){
-  const d = await api("/api/day?date=" + state.day);
-  const a = d.aggregate, sessions = a.sessions || [];
-  const catSel = $("#ssCat"), appSel = $("#ssApp");
-  catSel.innerHTML = '<option value="">全部类别</option>' + Object.keys(a.by_category).map(c=>'<option>'+esc(c)+'</option>').join("");
-  appSel.innerHTML = '<option value="">全部应用</option>' + Object.keys(a.by_app).map(c=>'<option>'+esc(c)+'</option>').join("");
-  $("#ssSearch").value = "";
-  renderSessions(sessions, a);
-}
-function renderSessions(sessions, agg){
-  const cat = $("#ssCat").value, app = $("#ssApp").value, q = $("#ssSearch").value.toLowerCase();
-  const rows = sessions.filter(s =>
-    (!cat || s.category === cat) && (!app || (s.app||s.exe) === app) &&
-    (!q || ((s.title||"")+(s.app||"")+(s.exe||"")).toLowerCase().includes(q))
-  ).slice(0, 300);
-  $("#ssCount").textContent = rows.length + " / " + sessions.length + " 条" + (sessions.length>300 ? "（仅显示前 300）" : "");
-  $("#ssBody").innerHTML = rows.map(s=>{
-    const tags = [];
-    if(s.ai_tool) tags.push('<span class="tag ai">AI:'+esc(s.ai_tool)+'</span>');
-    if(s.term_tool) tags.push('<span class="tag term">终端:'+esc(s.term_tool)+'</span>');
-    if(s.contact) tags.push('<span class="tag contact">'+esc(s.contact)+'</span>');
-    if(s.subcategory) tags.push('<span class="tag sub">'+esc(s.subcategory)+'</span>');
-    if(s.window_state && s.window_state !== "normal") tags.push('<span class="tag ws">'+({fullscreen:"全屏",maximized:"最大化"}[s.window_state]||s.window_state)+'</span>');
-    if(s.url) tags.push(s.url === "[已隐藏]" ? '<span class="tag">URL已隐藏</span>' : '<span class="url-cell" title="'+esc(s.url)+'">'+esc(s.url.split("?")[0].slice(0,56))+'</span>');
-    return "<tr><td class='mono num'>"+(s.start||"").slice(11,19)+"</td>" +
-      "<td class='num'>"+fmtCompact(s.duration_ms||0)+"</td>" +
-      "<td>"+esc(s.app||s.exe||"")+"</td>" +
-      "<td class='mono'>"+esc(s.title||"")+"</td>" +
-      "<td>"+esc(s.category||"")+"</td>" +
-      "<td>"+tags.join("")+"</td></tr>";
-  }).join("") || '<tr><td colspan="6" class="empty">无匹配会话</td></tr>';
-  $("#ssCat").onchange = ()=>renderSessions(sessions, agg);
-  $("#ssApp").onchange = ()=>renderSessions(sessions, agg);
-  $("#ssSearch").oninput = ()=>renderSessions(sessions, agg);
-}
-
-/* ---------- 日志 ---------- */
-function logRow(line, isErr){
-  const m = line.match(/^(\S+ \S+) \[([A-Z]+)\] \[([^\]]+)\] (.*)$/);
-  if(!m) return '<div class="log-line'+(isErr?' err':'')+'"><span class="msg">'+esc(line)+'</span></div>';
-  return '<div class="log-line'+(isErr?' err':'')+'"><span class="ts">'+esc(m[1])+'</span>' +
-    '<span class="lv '+m[2]+'">'+esc(m[2])+'</span>' +
-    '<span class="msg">['+esc(m[3])+'] '+esc(m[4])+'</span></div>';
-}
-async function loadLog(){
-  const d = await api("/api/log");
-  $("#lgEntries").innerHTML = d.entries.length
-    ? d.entries.map(l=>logRow(l)).join("")
-    : '<div class="empty">暂无运行日志</div>';
-  $("#lgErrors").innerHTML = d.errors.length
-    ? d.errors.map(l=>logRow(l,true)).join("")
-    : '<div class="empty">无错误记录</div>';
-  scrollLogBottom();
-}
-let logTimer = null;
-function scrollLogBottom(){
-  const el = $("#lgEntries");
-  if(el) el.scrollTop = el.scrollHeight;
-}
-function armLogTimer(){
-  if(logTimer) clearInterval(logTimer);
-  logTimer = setInterval(()=>{ if(state.view==="log" && state.loaded.log && state.authed) loadLog(); }, 15000);
-}
-
-/* ---------- 分组管理 ---------- */
-let grpFlashTimer = null;
-function grpFlash(msg){
-  const el = $("#grpStatus");
-  el.textContent = msg;
-  el.style.color = "var(--ok)";
-  if(grpFlashTimer) clearTimeout(grpFlashTimer);
-  grpFlashTimer = setTimeout(()=>{ el.textContent = ""; }, 3000);
-}
-async function postJson(url, obj){
-  const r = await fetch(url, {method:"POST",
-    headers:Object.assign({"Content-Type":"application/json"}, tokenHeaders()),
-    body: JSON.stringify(obj)});
-  if(r.status === 401){ failAuth(); throw new Error("口令未授权"); }
-  if(!r.ok) throw new Error("HTTP " + r.status);
-  return r.json();
-}
-async function loadGroups(){
-  const d = await api("/api/groups");
-  state.groups = d;
-  $("#grpCats").innerHTML = d.categories.map(c=>{
-    const custom = d.custom_categories.includes(c);
-    return '<span class="tag" style="padding:4px 10px;margin-right:6px">'+esc(c)+
-      (custom ? ' <a href="#" class="grp-del" data-name="'+esc(c)+'" title="删除分组" style="color:var(--danger);text-decoration:none;margin-left:4px">✕</a>' : '')+'</span>';
-  }).join("");
-  renderGroups();
-}
-function renderGroups(){
-  const q = $("#grpSearch").value.toLowerCase();
-  const d = state.groups || {apps:[]};
-  const rows = d.apps.filter(a => (a.app+" "+a.exe).toLowerCase().includes(q));
-  $("#grpCount").textContent = rows.length + " / " + d.apps.length + " 个应用（下拉选分组即时生效；清空=恢复自动分类；显示名可自定义）";
-  $("#grpBody").innerHTML = rows.map(a=>{
-    const opts = ['<option value="">自动分类</option>'].concat(
-      d.categories.map(c=>'<option value="'+esc(c)+'"'+(a.overridden && a.category===c ? " selected" : "")+'>'+esc(c)+'</option>')
-    ).join("");
-    return "<tr><td>"+esc(a.app)+"<span class='url-cell' style='margin-left:8px'>"+esc(a.exe)+"</span></td>"+
-      "<td><input class='grp-name' data-exe='"+esc(a.exe)+"' value='"+esc(a.app)+"' placeholder='默认' style='width:140px'></td>"+
-      "<td>"+(a.overridden ? '<span class="tag ai">'+esc(a.category)+'</span>' : '<span style="color:var(--dim)">'+esc(a.category)+'</span>')+"</td>"+
-      "<td><select data-exe='"+esc(a.exe)+"'>"+opts+"</select></td></tr>";
-  }).join("") || '<tr><td colspan="4" class="empty">无匹配应用</td></tr>';
-  $$("#grpBody select").forEach(sel=>{
-    sel.onchange = async ()=>{
-      try{
-        await postJson("/api/groups/set", {exe: sel.dataset.exe, category: sel.value});
-        grpFlash("已保存：" + sel.dataset.exe + " → " + (sel.value || "自动分类"));
-        await loadGroups();
-        if(state.loaded.overview) loadOverview();
-      }catch(e){ grpFlash("保存失败：" + e.message); }
-    };
-  });
-  $$("#grpBody .grp-name").forEach(inp=>{
-    inp.onchange = async ()=>{
-      const name = inp.value.trim();
-      try{
-        await postJson("/api/groups/rename", {exe: inp.dataset.exe, display_name: name});
-        grpFlash("已更新显示名：" + (name || "恢复默认"));
-        await loadGroups();
-        if(state.loaded.overview) loadOverview();
-      }catch(e){ grpFlash("保存失败：" + e.message); }
-    };
-  });
-}
-async function grpExport(){
-  try{
-    await downloadToFile("/api/groups/export", "app_groups.json");
-  }catch(e){ alert("导出失败：" + e.message); }
-}
-async function grpImport(){
-  const input = $("#grpImportFile");
-  const file = input.files[0];
-  const note = $("#grpImportNote");
-  if(!file){ note.textContent = "请先选择要导入的 app_groups.json 文件。"; note.style.color = "var(--danger)"; return; }
-  note.textContent = "正在导入「" + file.name + "」…";
-  note.style.color = "var(--dim)";
-  try{
-    const text = await file.text();
-    const obj = JSON.parse(text);
-    const d = await postJson("/api/groups/import", obj);
-    note.textContent = "导入成功：" + Object.keys((d.groups && d.groups.exe_groups) || {}).length + " 个应用分组配置。";
-    note.style.color = "var(--ok)";
-    await loadGroups();
-    if(state.loaded.overview) loadOverview();
-  }catch(e){
-    note.textContent = "导入失败：" + e.message;
-    note.style.color = "var(--danger)";
-  }finally{
-    input.value = "";  // 清空输入，保证再次选择同一文件也能触发 change
-  }
-}
-async function groupsInit(){
-  $("#grpAdd").onclick = async ()=>{
-    const name = $("#grpNewName").value.trim();
-    if(!name){ grpFlash("请输入分组名称"); return; }
-    try{
-      await postJson("/api/groups/add", {name});
-      $("#grpNewName").value = "";
-      grpFlash("已新增分组：" + name);
-      await loadGroups();
-    }catch(e){ grpFlash("新增失败：" + e.message); }
-  };
-  $("#grpSearch").oninput = renderGroups;
-  $("#grpCats").onclick = async (e)=>{
-    const el = e.target.closest(".grp-del");
-    if(!el) return;
-    e.preventDefault();
-    const name = el.dataset.name;
-    if(!confirm("删除分组「" + name + "」？组内应用将恢复自动分类。")) return;
-    try{
-      await postJson("/api/groups/delete", {name});
-      grpFlash("已删除分组：" + name);
-      await loadGroups();
-      if(state.loaded.overview) loadOverview();
-    }catch(err){ grpFlash("删除失败：" + err.message); }
-  };
-  $("#grpExport").onclick = grpExport;
-  $("#grpImport").onclick = () => { $("#grpImportFile").click(); };
-  $("#grpImportFile").onchange = grpImport;
-}
-
-/* ---------- 智能洞察（规则 + AI） ---------- */
-const SEV_STYLE = {
-  info:   {c:"var(--accent)", bg:"color-mix(in srgb, var(--accent) 10%, transparent)"},
-  warn:   {c:"#e0a53c", bg:"rgba(224,165,60,.12)"},
-  alert:  {c:"var(--danger)", bg:"rgba(239,68,68,.12)"}
-};
-function insightCardHTML(item){
-  const s = SEV_STYLE[item.severity] || SEV_STYLE.info;
-  const label = {info:"建议", warn:"注意", alert:"提醒"}[item.severity] || "建议";
-  return '<div class="panel" style="padding:14px 16px;margin:0;border-left:3px solid '+s.c+'">' +
-    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
-      '<b style="font-size:13px">'+esc(item.title || "AI")+'</b>' +
-      '<span style="font-size:10.5px;padding:2px 8px;border-radius:999px;background:'+s.bg+';color:'+s.c+'">'+label+'</span>' +
-    '</div>' +
-    '<div style="color:var(--dim);font-size:12.5px;line-height:1.7">'+esc(item.detail || "")+'</div>' +
-  '</div>';
-}
-async function loadInsights(){
-  const box = $("#inRules");
-  box.innerHTML = skeleton(6);
-  $("#inAiError").style.display = "none";
-  $("#inAiCards").innerHTML = "";
-  let d;
-  try{
-    d = await api("/api/insights?date=" + state.day);
-  }catch(err){
-    box.innerHTML = '<div class="empty">加载失败：' + esc(err.message) + '</div>';
-    return;
-  }
-  box.innerHTML = (d.rules && d.rules.length)
-    ? d.rules.map(insightCardHTML).join("")
-    : '<div class="empty">当日暂无规则洞察（数据为空或 insights.enabled=false）</div>';
-  renderAiPanel(d);
-  renderBehavior(d.behavior, d.persona);
-  renderTimeSaved(d.time_saved);
-  renderGit(d.git);
-  loadAiModule().catch(() => { /* 模块面板加载失败不影响规则/AI 展示 */ });
-}
-function aiStatCard(label, val, extra){
-  return '<div style="flex:1;min-width:118px;padding:9px 12px;border:1px solid var(--border);border-radius:10px">'+
-    '<div style="font-size:11px;color:var(--faint)">'+esc(label)+'</div>'+
-    '<div style="font-size:18px;font-weight:600;margin-top:2px">'+esc(String(val))+'</div>'+
-    (extra ? '<div style="font-size:11px;color:var(--dim);margin-top:2px">'+esc(extra)+'</div>' : '')+
-    '</div>';
-}
-function fmtCost(v){
-  v = Number(v || 0);
-  if(!v) return "$0";
-  if(v < 0.01) return "$" + v.toFixed(4);
-  if(v < 1) return "$" + v.toFixed(3);
-  return "$" + v.toFixed(2);
-}
-function renderAiSessions(s){
-  const el = $("#ovAiSessions");
-  if(!el) return;
-  if(!s || s.enabled === false){
-    el.innerHTML = 'AI 会话深度未开启（config.json: ai_sessions.enabled=false）。';
-    return;
-  }
-  if(!s || !s.found){
-    el.innerHTML = '当日未发现 AI 会话记录（本地会话文件或浏览器 Web AI 会话）。';
-    return;
-  }
-  const t = s.total || {};
-  const web = s.web_ai || {};
-  let html = "";
-
-  html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 4px">'+
-    aiStatCard("消息", t.turns)+
-    aiStatCard("对话轮次", t.rounds, "user→assistant 配对")+
-    aiStatCard("Token 进", t.tokens_in, "≈ 输入折算")+
-    aiStatCard("Token 出", t.tokens_out, "≈ 生成折算")+
-    aiStatCard("成本估算", fmtCost(t.cost_total), "USD · 模型定价估算")+
-    '</div>';
-
-  // 按工具
-  const toolNames = Object.keys(s.tools || {});
-  if(toolNames.length){
-    html += '<div class="hint" style="margin-top:8px">按工具：';
-    html += toolNames.map(tn => {
-      const st = s.tools[tn];
-      return '<b>'+esc(tn)+'</b>('+st.turns+' 条 / '+st.rounds+' 轮'+
-             (st.tokens_out ? ' · '+st.tokens_out+' tok 出' : '')+
-             (st.generated_lines ? ' · '+st.generated_lines+' 行' : '')+')';
-    }).join('　');
-    html += '</div>';
-  }
-
-  // 模型 / 项目分布
-  const topK = (obj, k) => Object.entries(obj||{}).sort((a,b)=>b[1].turns-a[1].turns).slice(0,k);
-  const byModel = t.by_model || {}, byProj = t.by_project || {};
-  const mList = topK(byModel, 5).map(e=>esc(e[0])+' '+e[1].turns+' 条 · '+fmtCost(e[1].cost_total));
-  if(mList.length) html += '<div class="hint">模型分布：'+mList.join('，')+'</div>';
-  const pList = topK(byProj, 6).map(e=>esc(e[0])+' '+e[1].turns+' 条 · '+fmtCost(e[1].cost_total));
-  if(pList.length) html += '<div class="hint">项目分布：'+pList.join('，')+'</div>';
-
-  // 本地会话详情表
-  const convs = t.conversations || [];
-  if(convs.length){
-    html += '<div style="margin-top:10px"><b style="font-size:13px">会话详情（本地 · 前 '+convs.length+'）</b>'+
-            '<span class="hint"> 轮次=完成一轮问答；Token 出=生成折算</span></div>';
-    html += '<div class="tbl-wrap"><table class="tbl"><thead><tr>'+
-      '<th>工具</th><th>会话</th><th>模型</th><th>项目</th><th>轮次</th><th>消息</th><th>Token 出</th><th>成本</th><th>时段</th></tr></thead><tbody>';
-    for(const c of convs){
-      html += '<tr><td>'+esc(c.tool)+'</td><td title="'+esc(c.id)+'">'+esc(c.id.length>26 ? c.id.slice(0,26)+'…' : c.id)+'</td>'+
-              '<td>'+esc(c.model)+'</td><td>'+esc(c.project)+'</td><td>'+c.rounds+'</td><td>'+c.turns+'</td><td>'+c.tokens_out+'</td>'+
-              '<td>'+fmtCost(c.cost_total)+'</td>'+
-              '<td>'+esc((c.first||'').slice(11,16)+'~'+(c.last||'').slice(11,16))+'</td></tr>';
-    }
-    html += '</tbody></table></div>';
-  }
-
-  // Web AI 会话（浏览器侧）
-  if(web && web.found){
-    html += '<div style="margin-top:10px"><b style="font-size:13px">Web AI 会话 <span class="hint">浏览器历史深度解析 · 尽力而为</span></b></div>';
-    html += '<div class="hint">'+web.conversations+' 个会话 · '+web.turns+' 次页面访问（同一会话页面的每次返回/刷新 ≈ 1 轮）</div>';
-    const wt = web.by_tool || {};
-    if(Object.keys(wt).length){
-      html += '<div class="hint">按工具：'+Object.entries(wt).map(e=>'<b>'+esc(e[0])+'</b>('+e[1].conversations+' 会话 / '+e[1].turns+' 次)').join('，')+'</div>';
-    }
-    const ws = web.sessions || [];
-    if(ws.length){
-      html += '<div class="tbl-wrap"><table class="tbl"><thead><tr>'+
-        '<th>工具</th><th>会话 ID</th><th>标题</th><th>访问次数</th><th>时段</th></tr></thead><tbody>';
-      for(const w of ws){
-        html += '<tr><td>'+esc(w.tool)+'</td><td>'+esc(w.id)+'</td><td>'+esc(w.title||'-')+'</td><td>'+w.visits+'</td>'+
-                '<td>'+esc((w.first||'').slice(11)+' → '+(w.last||'').slice(11))+'</td></tr>';
-      }
-      html += '</tbody></table></div>';
-    }
-    html += '<div class="hint" style="margin-top:4px">注：聊天 SPA 页面在回复时不新增历史条目的情况较多，访问次数仅作「轮次」的近似估算，非精确值。</div>';
-  }
-  el.innerHTML = html;
-}
-
-
-function renderBehavior(b, persona){
-  const el = $("#inBehavior");
-  if(!el) return;
-  b = b || {}; persona = persona || {};
-  const bd = b.breakdown || {};
-  if(!b.focus_score && !b.grade && !b.death_loop){
-    el.innerHTML = '<div class="empty">当日暂无行为数据（无会话或 insights.enabled=false）</div>';
-    return;
-  }
-  const secs = v => { v = Number(v||0);
-      if(v >= 3600) return (v/3600).toFixed(1)+" 小时";
-      if(v >= 60) return Math.round(v/60)+" 分钟";
-      return Math.round(v)+" 秒"; };
-  let html = "";
-  // Vibe 编程人格（趣味）卡
-  if(persona.label){
-    const dims = persona.dimensions || {};
-    html += '<div style="display:flex;gap:12px;align-items:center;padding:12px 14px;'+
-            'border:1px solid var(--border);border-radius:12px;margin-bottom:10px;'+
-            'background:linear-gradient(135deg,rgba(168,85,247,.10),rgba(59,130,246,.08))">'+
-      '<div style="font-size:34px;line-height:1">'+esc(persona.emoji||"🧭")+'</div>'+
-      '<div style="flex:1">'+
-        '<div style="font-size:16px;font-weight:700">今日 Vibe 人格：'+esc(persona.label)+'</div>'+
-        '<div style="font-size:12px;color:var(--dim);margin-top:2px">'+esc(persona.tagline||"")+'</div>'+
-        (persona.traits && persona.traits.length
-          ? '<div style="margin-top:6px">'+persona.traits.map(t=>'<span style="display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(168,85,247,.12);color:var(--accent);margin:2px 4px 2px 0">'+esc(t)+'</span>').join('')+'</div>'
-          : '')+
-        '<div class="hint" style="margin-top:4px">基于今日活跃分布 · 纯离线规则 · 仅供娱乐</div>'+
-      '</div>'+
-    '</div>';
-  }
-  html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 4px">'+
-    aiStatCard("专注度评分", b.focus_score + " / 100", "等级 " + esc(b.grade || "—"))+
-    aiStatCard("会话数", bd.session_count || 0, "平均 " + secs(bd.avg_session_s))+
-    aiStatCard("最长专注", secs(bd.longest_session_s), "编码占比 " + Math.round((bd.coding_ratio||0)*100) + "%")+
-    aiStatCard("切换次数", bd.switch_count || 0, (bd.switch_per_hour||0) + " 次/小时")+
-    '</div>';
-  const dl = b.death_loop;
-  if(dl){
-    html += '<div style="margin-top:8px;padding:9px 11px;border:1px solid var(--danger);border-radius:8px;color:var(--danger)">'+
-      '<b>⚠ 疑似死循环切换</b> — ' + dl.count + ' 次短会话高频切换，涉及 ' + dl.distinct_apps +
-      ' 个应用（' + esc((dl.apps||[]).join('、')) + '），窗口约 ' + secs(dl.window_s) + '</div>';
-  }
-  html += '<div class="hint" style="margin-top:6px">专注度 = 最长专注段(45%) + 编码占比(30%) − 切换负担(25%)，离线计算，不入库不上传。</div>';
-  el.innerHTML = html;
-}
-
-function renderGit(g){
-  const el = $("#inGit");
-  if(!el) return;
-  g = g || {};
-  if(!g.enabled){
-    el.innerHTML = '<div class="empty">Git 代码产出未开启（config.json: insights.git.enabled=false）</div>';
-    return;
-  }
-  if(!g.found || !(g.total && g.total.commit_count)){
-    el.innerHTML = '<div class="empty">' + esc(g.notice || "当日无 Git 提交或未配置仓库") + '</div>';
-    return;
-  }
-  const t = g.total || {};
-  const secs2 = v => { v = Number(v||0);
-      if(v >= 3600000) return (v/3600000).toFixed(1)+"k";
-      return (v/1000).toFixed(1)+"k"; };
-  const fmtN = v => (Number(v)||0).toLocaleString("en-US");
-  let html = '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 8px">'+
-    aiStatCard("本地提交", fmtN(t.commit_count), "今天的 commit 数")+
-    aiStatCard("新增行", '+' + fmtN(t.lines_added), "代码产出")+
-    aiStatCard("删除行", '-' + fmtN(t.lines_deleted), "改写/返工")+
-    aiStatCard("变更量", fmtN(t.churn), "add + del")+
-    aiStatCard("改动文件", fmtN(t.files), "涉及文件数")+
-    '</div>';
-  if((t.modify_ratio||0) > 0.4){
-    html += '<div style="padding:8px 11px;border:1px solid var(--warn, #e0a53c);border-radius:8px;margin-bottom:8px">'+
-      '<b>⌨ 修改率偏高 ' + Math.round(t.modify_ratio*100) + '%</b> — ' +
-      '删除占变更近半，可能有较多重写/反复改动，建议拆小步、先梳理方案。</div>';
-  }
-  for(const r of (g.repos||[])){
-    html += '<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px">'+
-      '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px">'+
-        '<b>'+esc(r.name)+'</b>'+
-        '<span class="hint">'+r.commit_count+' commits · +'+fmtN(r.lines_added)+' / -'+fmtN(r.lines_deleted)+
-          ' · '+fmtN(r.files)+' 文件'+(r.authors&&r.authors.length? ' · '+esc(r.authors.join('、')) : '')+'</span>'+
-      '</div>';
-    const tf = r.top_files || [];
-    if(tf.length){
-      html += '<div class="hint" style="margin-top:6px">改动最多的文件：';
-      html += tf.map(f=>'<b>'+esc(f.path.split(/[\/]/).pop())+'</b>(+'+fmtN(f.added)+' / -'+fmtN(f.deleted)+')').join('，');
-      html += '</div>';
-    }
-    html += '</div>';
-  }
-  html += '<div class="hint" style="margin-top:2px">数据来自你在 config.json 配置的本地 Git 仓库（insights.git.projects），只读、不上传。修改率 = 删除行 / (新增+删除)，作为「返工」近似指标。</div>';
-  el.innerHTML = html;
-}
-
-function renderTimeSaved(t){
-  const el = $("#inTimeSaved");
-  if(!el) return;
-  t = t || {};
-  if(!t.enabled){
-    el.innerHTML = '<div class="empty">时间节省估算未开启（config.json: insights.time_saved.enabled=false）</div>';
-    return;
-  }
-  if(!t.ai_ms){
-    el.innerHTML = '<div class="empty">' + esc(t.label || "当日无 AI 编程") + '</div>';
-    return;
-  }
-  const fmtH = ms => { const s=Math.round(ms/1000); if(s>=3600) return (s/3600).toFixed(1)+" 小时"; if(s>=60) return Math.round(s/60)+" 分钟"; return s+" 秒"; };
-  let html = '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 8px">'+
-    aiStatCard("AI 活跃", fmtH(t.ai_ms), "今日 AI 编程时长")+
-    aiStatCard("估算手工", fmtH(t.est_manual_ms), "×" + t.factor + " 因子")+
-    aiStatCard("节省时长", fmtH(t.saved_ms), Math.round(t.saved_ratio*100)+"% 估算")+
-    '</div>';
-  html += '<div class="hint" style="margin-top:6px">' + esc(t.label) + ' · 粗估公式：节省 = AI 时长 × (因子-1)，因子可在 config.json → insights.time_saved.factor 调整（1.0-5.0），未来将接入 Git 行数做更可信估算。</div>';
-  el.innerHTML = html;
-}
-
-function renderAiPanel(d){
-  const btn = $("#inGen"), meta = $("#inAiMeta"), err = $("#inAiError"), cards = $("#inAiCards");
-  if(btn) btn.disabled = false;
-  if(!d.ai_enabled){
-    meta.textContent = "未开启（config.json: insights.ai.enabled=false）";
-    cards.innerHTML = '<div class="empty">AI 洞察未开启。开启后聚合统计会发送到你配置的 API 端点；规则洞察始终离线。</div>';
-    return;
-  }
-  const ai = d.ai || {};
-  const bits = [];
-  if(ai.provider) bits.push("provider " + esc(ai.provider));
-  if(ai.model) bits.push("模型 " + esc(ai.model));
-  if(ai.generated_at) bits.push("上次生成 " + esc(String(ai.generated_at).replace("T", " ")));
-  meta.textContent = bits.length ? bits.join(" · ") : "尚未生成（点击左侧按钮）";
-  if(ai.error){
-    err.style.display = "block";
-    err.textContent = "生成失败：" + ai.error;
-    err.style.color = "var(--danger)";
-  }else{
-    err.style.display = "none";
-  }
-  if(ai.insights && ai.insights.length){
-    cards.innerHTML = ai.insights.map(insightCardHTML).join("");
-  }else if(!ai.error){
-    cards.innerHTML = '<div class="empty">暂无 AI 洞察缓存。</div>';
-  }else{
-    cards.innerHTML = "";
-  }
-}
-let aiGenerating = false;
-function wireInsights(){
-  $("#inReload").onclick = () => { loadInsights(); };
-  $("#inGen").onclick = async () => {
-    if(aiGenerating) return;
-    aiGenerating = true;
-    const btn = $("#inGen");
-    btn.disabled = true;
-    btn.textContent = "生成中…（可能需数十秒）";
-    $("#inAiError").style.display = "none";
-    try{
-      const d = await api("/api/insights/ai?date=" + state.day + "&refresh=1");
-      renderAiPanel(d);
-    }catch(err){
-      $("#inAiError").style.display = "block";
-      $("#inAiError").textContent = "生成失败：" + err.message;
-      $("#inAiError").style.color = "var(--danger)";
-    }finally{
-      aiGenerating = false;
-      const b = $("#inGen");
-      if(b){ b.disabled = false; b.textContent = "重新生成 AI 洞察"; }
-    }
-  };
-}
-
-/* ---------- AI 洞察模块（客制化，同应用分组模式） ---------- */
-let aiModFlashTimer = null;
-function aiModFlash(msg, ok){
-  const el = $("#aiModStatus");
-  if(!el) return;
-  el.textContent = msg;
-  el.style.color = ok === false ? "var(--danger)" : "var(--ok)";
-  if(aiModFlashTimer) clearTimeout(aiModFlashTimer);
-  aiModFlashTimer = setTimeout(()=>{ el.textContent = ""; }, 4000);
-}
-async function loadAiModule(){
-  const d = await api("/api/ai/module");
-  state.aiModule = d;
-  renderAiModule(d);
-}
-function renderAiModule(d){
-  const c = d.custom || {providers:[], prompt:{sections:{}, min_insights:3, max_insights:6, instruction:""}};
-  const p = c.prompt || {};
-  const body = $("#aiModProvBody");
-  if(body) body.innerHTML = (c.providers || []).map((pr,i)=>aiModProvRow(pr, i)).join("");
-  const sec = $("#aiModSections");
-  if(sec && d.sections){
-    const s = p.sections || {};
-    sec.innerHTML = d.sections.map(x=>
-      '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px">'+
-      '<input type="checkbox" class="aim-sec" data-key="'+esc(x.key)+'"'+(s[x.key] !== false ? " checked" : "")+'> '+esc(x.label)+'</label>'
-    ).join("");
-  }
-  if($("#aiModMin")) $("#aiModMin").value = p.min_insights || 3;
-  if($("#aiModMax")) $("#aiModMax").value = p.max_insights || 6;
-  if($("#aiModInstruction")) $("#aiModInstruction").value = p.instruction || "";
-}
-function aiModProvRow(pr, i){
-  return '<tr>' +
-    '<td><input class="aim-prov" data-f="id" value="'+esc(pr.id)+'" placeholder="my-provider" style="width:130px"></td>' +
-    '<td><input class="aim-prov" data-f="name" value="'+esc(pr.name)+'" placeholder="我的服务" style="width:140px"></td>' +
-    '<td><input class="aim-prov" data-f="base_url" value="'+esc(pr.base_url)+'" placeholder="https://…/v1" style="width:220px"></td>' +
-    '<td><input class="aim-prov" data-f="model" value="'+esc(pr.model)+'" placeholder="model-name" style="width:150px"></td>' +
-    '<td><button class="btn aim-prov-del" data-i="'+i+'" title="删除" style="padding:2px 8px;color:var(--danger)">✕</button></td></tr>';
-}
-function collectAiModule(){
-  const providers = [];
-  $$("#aiModProvBody tr").forEach(tr=>{
-    const row = {};
-    [...tr.querySelectorAll(".aim-prov")].forEach(inp=>{ row[inp.dataset.f] = inp.value.trim(); });
-    if(!row.id && !row.name && !row.base_url && !row.model) return; // 全空行忽略
-    providers.push(row);
-  });
-  const sections = {};
-  $$("#aiModSections input.aim-sec").forEach(cb=>{ sections[cb.dataset.key] = cb.checked; });
-  return {
-    providers,
-    prompt: {
-      sections,
-      min_insights: parseInt($("#aiModMin").value || "3", 10),
-      max_insights: parseInt($("#aiModMax").value || "6", 10),
-      instruction: $("#aiModInstruction").value.trim()
-    }
-  };
-}
-async function saveAiModule(){
-  const payload = collectAiModule();
-  for(const pr of payload.providers){
-    if(!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(pr.id || "")){
-      aiModFlash("Provider ID 非法（小写字母/数字开头，仅含 a-z 0-9 _ -）", false);
-      return;
-    }
-    if(!pr.base_url || !pr.model){
-      aiModFlash("Provider 需填写 Base URL 与 Model：" + pr.id, false);
-      return;
-    }
-  }
-  const mn = payload.prompt.min_insights, mx = payload.prompt.max_insights;
-  if(mn < 1 || mn > 10 || mx < 1 || mx > 10 || mx < mn){
-    aiModFlash("洞察数量需在 1-10 之间，且最大值不小于最小值", false);
-    return;
-  }
-  try{
-    const d = await postJson("/api/ai/module", payload);
-    renderAiModule(d);
-    aiModFlash("已保存：自定义 Provider " + (d.custom.providers || []).length + " 个");
-  }catch(e){ aiModFlash("保存失败：" + e.message, false); }
-}
-async function aiModExport(){
-  try{ await downloadToFile("/api/ai/module/export", "ai_custom.json"); }
-  catch(e){ aiModFlash("导出失败：" + e.message, false); }
-}
-async function aiModImport(){
-  const input = $("#aiModImportFile");
-  const file = input.files[0];
-  if(!file){ aiModFlash("请先选择要导入的 ai_custom.json 文件。", false); return; }
-  try{
-    const text = await file.text();
-    const obj = JSON.parse(text);
-    const d = await postJson("/api/ai/module/import", obj);
-    renderAiModule(d);
-    aiModFlash("导入成功：自定义 Provider " + (d.custom.providers || []).length + " 个");
-  }catch(e){ aiModFlash("导入失败：" + e.message, false); }
-  finally{ input.value = ""; } // 保证再次选择同一文件也能触发 change
-}
-function wireAiModule(){
-  const addBtn = $("#aiModAddProv");
-  if(addBtn) addBtn.onclick = () => {
-    const body = $("#aiModProvBody");
-    if(body) body.insertAdjacentHTML("beforeend", aiModProvRow({id:"",name:"",base_url:"",model:""}, body.children.length));
-  };
-  const body = $("#aiModProvBody");
-  if(body) body.onclick = (e) => {
-    const del = e.target.closest(".aim-prov-del");
-    if(!del) return;
-    e.preventDefault();
-    const tr = del.closest("tr");
-    if(tr) tr.remove();
-  };
-  const save = $("#aiModSave");
-  if(save) save.onclick = saveAiModule;
-  const ex = $("#aiModExport");
-  if(ex) ex.onclick = aiModExport;
-  const im = $("#aiModImport");
-  if(im) im.onclick = () => { $("#aiModImportFile").click(); };
-  const imf = $("#aiModImportFile");
-  if(imf) imf.onchange = aiModImport;
-}
-
-/* ---------- 软件更新 ---------- */
-let upPollTimer = null;
-function fmtMB(n){
-  const v = Number(n) || 0;
-  return (v / 1048576).toFixed(1) + " MB";
-}
-async function loadUpdateInfo(){
-  try{
-    const d = await api("/api/update/status");
-    const el = $("#upCurrent");
-    if(el) el.textContent = "v" + (d.current || "?");
-    if(d.dev){
-      const st = $("#upStatus");
-      if(st){ st.textContent = "开发模式：仅支持检测新版本，不支持应用内安装"; st.style.color = "var(--dim)"; }
-    }
-  }catch(e){ /* 忽略：更新信息非关键 */ }
-}
-async function checkUpdate(){
-  const st = $("#upStatus");
-  if(!st) return;
-  st.textContent = "正在检查更新…";
-  st.style.color = "var(--dim)";
-  const btn = $("#upCheck");
-  if(btn) btn.disabled = true;
-  try{
-    const d = await api("/api/update/check");
-    renderUpdate(d);
-  }catch(e){
-    st.textContent = "检查失败：" + e.message;
-    st.style.color = "var(--danger)";
-  }finally{
-    if(btn) btn.disabled = false;
-  }
-}
-function renderUpdate(d){
-  const st = $("#upStatus");
-  if(!st) return;
-  const panel = $("#upPanel");
-  if(d.error){
-    st.textContent = d.error;
-    st.style.color = "var(--danger)";
-    if(panel) panel.style.display = "none";
-    return;
-  }
-  if(!d.has_update){
-    st.textContent = "已是最新版本（v" + esc(d.current) + "）";
-    st.style.color = "var(--ok)";
-    if(panel) panel.style.display = "none";
-    return;
-  }
-  st.textContent = "发现新版本 v" + esc(d.latest);
-  st.style.color = "var(--ok)";
-  if(panel) panel.style.display = "";
-  const info = $("#upInfo");
-  if(info){
-    const size = d.asset && d.asset.size ? " · " + fmtMB(d.asset.size) : "";
-    info.innerHTML = '<b style="font-size:13px">v' + esc(d.latest) + "</b>" +
-      ' · 发布于 ' + esc(String(d.published_at || "").slice(0, 10)) + size +
-      (d.notes ? '<div class="hint" style="margin-top:6px;white-space:pre-wrap;max-height:130px;overflow:auto">' +
-        esc(String(d.notes).slice(0, 600)) + '</div>' : '');
-  }
-  const dl = $("#upDownload");
-  if(dl){
-    dl.style.display = d.asset ? "" : "none";
-    dl.textContent = "下载并安装" + (d.asset && d.asset.size ? "（" + fmtMB(d.asset.size) + "）" : "");
-  }
-  const ap = $("#upApply");
-  if(ap) ap.style.display = "none";
-  const bw = $("#upBarWrap");
-  if(bw) bw.style.display = "none";
-}
-async function startDownload(){
-  const btn = $("#upDownload");
-  if(!btn) return;
-  btn.disabled = true;
-  btn.textContent = "下载中…";
-  const bw = $("#upBarWrap");
-  if(bw) bw.style.display = "";
-  const bar = $("#upBar"), bt = $("#upBarText");
-  if(bar) bar.style.width = "0%";
-  if(bt) bt.textContent = "";
-  try{
-    const r = await postJson("/api/update/download", {});
-    if(r && r.error) throw new Error(r.error);
-    if(upPollTimer) clearInterval(upPollTimer);
-    upPollTimer = setInterval(pollDownload, 700);
-  }catch(e){
-    btn.disabled = false;
-    btn.textContent = "下载并安装";
-    const st = $("#upStatus");
-    if(st){ st.textContent = "下载失败：" + e.message; st.style.color = "var(--danger)"; }
-    if(bw) bw.style.display = "none";
-  }
-}
-async function pollDownload(){
-  let d;
-  try{ d = await api("/api/update/status"); }
-  catch(e){ return; }
-  const bar = $("#upBar"), bt = $("#upBarText");
-  if(d.state === "downloading"){
-    const pct = d.total ? Math.round(d.downloaded / d.total * 100) : 0;
-    if(bar) bar.style.width = pct + "%";
-    if(bt) bt.textContent = fmtMB(d.downloaded) + " / " + fmtMB(d.total);
-  }else if(d.state === "ready"){
-    if(upPollTimer){ clearInterval(upPollTimer); upPollTimer = null; }
-    if(bar) bar.style.width = "100%";
-    if(bt) bt.textContent = "下载完成";
-    const dl = $("#upDownload");
-    if(dl) dl.style.display = "none";
-    const ap = $("#upApply");
-    if(ap) ap.style.display = "";
-  }else if(d.state === "error"){
-    if(upPollTimer){ clearInterval(upPollTimer); upPollTimer = null; }
-    const bw = $("#upBarWrap");
-    if(bw) bw.style.display = "none";
-    const dl = $("#upDownload");
-    if(dl){ dl.disabled = false; dl.textContent = "重试下载"; }
-    const st = $("#upStatus");
-    if(st){ st.textContent = "下载失败：" + (d.error || "未知错误"); st.style.color = "var(--danger)"; }
-  }else if(d.state === "applying"){
-    if(upPollTimer){ clearInterval(upPollTimer); upPollTimer = null; }
-    const st = $("#upStatus");
-    if(st){ st.textContent = "正在应用更新…"; st.style.color = "var(--ok)"; }
-  }
-}
-async function applyUpdate(){
-  const st = $("#upStatus");
-  if(!st) return;
-  st.textContent = "正在应用更新…仪表盘即将关闭，更新完成后会自动重启";
-  st.style.color = "var(--ok)";
-  const btn = $("#upApply");
-  if(btn) btn.disabled = true;
-  try{
-    const r = await postJson("/api/update/apply", {});
-    if(r && r.error) throw new Error(r.error);
-    st.textContent = "更新已启动，仪表盘即将关闭，请稍候自动重启";
-  }catch(e){
-    st.textContent = "应用失败：" + e.message;
-    st.style.color = "var(--danger)";
-    if(btn) btn.disabled = false;
-  }
-}
-function wireUpdate(){
-  const ck = $("#upCheck");
-  if(ck) ck.onclick = checkUpdate;
-  const dl = $("#upDownload");
-  if(dl) dl.onclick = startDownload;
-  const ap = $("#upApply");
-  if(ap) ap.onclick = applyUpdate;
-  loadUpdateInfo();
-}
-
-/* ---------- 初始化 ---------- */
-function startApp(){
-  buildHeadControls();
-  applyTheme();
-  backgroundWatchTheme();
-  wireExportButtons();
-  wireInsights();
-  wireAiSettings();
-  wireAiModule();
-  wireUpdate();
-  monthInit();
-  $("#bkDownload").onclick = bkDownload;
-  $("#bkPick").onclick = () => { $("#bkFile").click(); };
-  $("#bkFile").onchange = () => {
-    const f = $("#bkFile").files[0];
-    $("#bkPickName").textContent = f ? "已选择：" + f.name : "";
-  };
-  $("#bkRestore").onclick = bkRestore;
-
-  // 导航
-  $$(".nav-item").forEach(a => a.onclick = e => { e.preventDefault(); switchView(a.dataset.view); });
-  // 移动端抽屉
-  $("#hamburger").onclick = openDrawer;
-  $("#backdrop").onclick = closeDrawer;
-  document.addEventListener("keydown", e=>{ if(e.key==="Escape" && $("#sidebar").classList.contains("open")) closeDrawer(); });
-
-  // 加载日期
-  $("#pageSub").textContent = "数据目录：" + ROOT_DIR;
-  $("#rootPath").textContent = ROOT_DIR;
-  Promise.all([api("/api/dates"), api("/api/insights/settings").catch(()=>({ai_enabled:true}))]).then(async ([dates, set]) => {
-    state.dates = dates.dates || [];
-    $("#daySel").innerHTML = state.dates.map(d=>'<option value="'+d+'">'+d+'</option>').join("");
-    state.day = state.dates.length ? state.dates[state.dates.length-1] : todayStr();
-    if(!state.dates.includes(state.day)) {
-      const opt = document.createElement("option");
-      opt.value = state.day; opt.textContent = state.day + "（今天）";
-      $("#daySel").appendChild(opt);
-    }
-    $("#daySel").value = state.day;
-
-    // URL 视图
-    const qs = new URLSearchParams(location.search);
-    const v = qs.get("view");
-    let target = v && TITLES[v] ? v : "overview";
-    if(set && set.ai_enabled === false){
-      const ni = document.getElementById("navInsights");
-      if(ni) ni.style.display = "none";
-      if(target === "insights") target = "overview";
-    }
-    groupsInit();
-    armLogTimer();
-    let resizeTimer = null;
-    window.addEventListener("resize", ()=>{
-      if(resizeTimer) clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(()=>{
-        resizeTimer = null;
-        if(state.view==="overview" && state.loaded.overview) loadOverview();
-        else if(state.view==="trends" && state.loaded.trends) loadTrends();
-      }, 250);  // 防抖：拖动窗口时避免每次 resize 事件都整页重拉数据/重绘
-    });
-    if(target !== "overview") switchView(target, false);
-    else { state.loaded.overview = true; loadOverview(); }
-    // 托盘「检查更新」→ ?view=settings&update=1：自动触发检查并滚动到更新分组
-    if(target === "settings" && qs.get("update") === "1"){
-      setTimeout(()=>{
-        checkUpdate();
-        const st = $("#upStatus");
-        if(st) st.scrollIntoView({behavior:"smooth", block:"center"});
-      }, 600);
-    }
-  }).catch(err => {
-    if(String(err.message).includes("口令")) return; // 认证流程已接管
-    $("#daySel").innerHTML = '<option>加载失败</option>';
-  });
-}
-let themeMedia = null;
-function backgroundWatchTheme(){
-  if(themeMedia) return;
-  themeMedia = matchMedia("(prefers-color-scheme: light)");
-  themeMedia.addEventListener("change", ()=>{
-    if((localStorage.getItem("dash_theme") || "auto") === "auto") applyTheme();
-  });
-}
-
-(async function init(){
-  if(AUTH_REQUIRED){
-    // 尝试用已存口令静默通过；失败则弹出口令框
-    const t = localStorage.getItem("dash_token");
-    if(t){
-      try{
-        const r = await fetch("/api/dates", {headers:{"X-Dashboard-Token": t}});
-        if(r.ok){ state.authed = true; }
-      }catch(e){ /* 忽略，稍后重试 */ }
-    }
-    if(state.authed) startApp();
-    else { failAuth(); }
-  }else{
-    startApp();
-  }
-})();
-</script>
-</body>
-</html>
+# ---------------------------------------------------------------------------
+# 页面模板：外置 assets/dashboard.html（ROADMAP §9.2 #1）
+# 运行时加载，兼容源码运行（paths.script_dir()/assets）与 PyInstaller 打包
+# （sys._MEIPASS/assets，spec 的 datas 已包含该文件）。文件缺失/读取失败时
+# 回退到极简内联兜底页，保证仪表盘不白屏（best-effort，不抛异常）。
+# 带 mtime/size 缓存：开发时改 HTML 免重启即生效，生产下等价一次性加载。
+# ---------------------------------------------------------------------------
+_TEMPLATE_NAME = "dashboard.html"
+_FALLBACK_TEMPLATE = """<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>VibeTrace</title></head><body style="font-family:sans-serif;padding:32px">
+<h1>VibeTrace</h1>
+<p>页面模板 assets/dashboard.html 缺失或不可读，仪表盘前端无法加载。</p>
+<p>数据接口仍可用，例如 <code>/api/dates</code>、<code>/api/day?date=YYYY-MM-DD</code>。</p>
+</body></html>
 """
+
+_template_cache: dict = {"path": None, "mtime": None, "size": None, "data": None}
+
+
+def template_paths() -> list[str]:
+    """页面模板候选路径（按优先级）：打包解压目录 > 程序目录 > 本文件目录。"""
+    candidates: list[str] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(os.path.join(str(meipass), "assets", _TEMPLATE_NAME))
+    candidates.append(os.path.join(paths.script_dir(), "assets", _TEMPLATE_NAME))
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates.append(os.path.join(here, "assets", _TEMPLATE_NAME))
+    out: list[str] = []
+    for c in candidates:
+        if c not in out:
+            out.append(c)
+    return out
+
+
+def load_page_template() -> str:
+    """读取页面模板（mtime/size 缓存）；全部候选不可用时返回内联兜底页。"""
+    for path in template_paths():
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        cache = _template_cache
+        if (cache["data"] is not None and cache["path"] == path
+                and cache["mtime"] == st.st_mtime and cache["size"] == st.st_size):
+            return cache["data"]
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = fh.read()
+        except OSError:
+            continue
+        _template_cache.update(path=path, mtime=st.st_mtime, size=st.st_size, data=data)
+        return data
+    return _FALLBACK_TEMPLATE
+
+
+def _page_html(root: str, auth_enabled: bool) -> str:
+    """把数据根目录与鉴权标记注入模板（与原内联替换逻辑等价）。"""
+    return (load_page_template()
+            .replace("DATA_ROOT", json.dumps(root).replace("$", "\\$"))
+            .replace("AUTH_FLAG", "true" if auth_enabled else "false"))
+
+
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -2650,9 +614,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/" or path == "/index.html":
-            html = (PAGE_TEMPLATE
-                    .replace("DATA_ROOT", json.dumps(root).replace("$", "\\$"))
-                    .replace("AUTH_FLAG", "true" if auth_enabled else "false"))
+            html = _page_html(root, auth_enabled)
             body = html.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2711,6 +673,143 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"ai-sessions unavailable: {exc}"}, 500)
             return
 
+        if path == "/api/timeline":
+            # Vibe 时间轴回放（v2.5）：三源合并（前台 AI 会话 + AI 会话深度 + Git 提交）
+            # 纯派生、best-effort：无数据返回 200 空态；缓存复用 report._agg_cache（usage.jsonl mtime/size 失效）。
+            date = self._valid_date(query)
+            if not date:
+                self._send_json({"error": "invalid date"}, 400)
+                return
+            project = (query.get("project") or [None])[0] or None
+            config = _load_config_for_root(root, self.server.config_path)
+            try:
+                import timeline  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
+                data = timeline.build_timeline(date, root, config, project=project)
+                self._send_json({"date": date, "events": data.get("events") or [],
+                                 "summary": data.get("summary") or {}})
+            except Exception as exc:  # noqa: BLE001 —— 时间轴失败不拖垮仪表盘
+                self._send_json({"error": f"timeline unavailable: {exc}"}, 500)
+            return
+
+        if path in ("/api/trend", "/api/growth"):
+            # v2.6 P7：能力成长曲线（周均值快照）。纯派生 + 持久化快照（growth_baseline.json）：
+            # 首次/坏档全量现算（自愈），此后增量跳过重算；weeks 为最近 N 周（默认 8，1..52）。
+            try:
+                weeks = int((query.get("weeks") or ["8"])[0])
+            except (TypeError, ValueError):
+                weeks = 8
+            if not (1 <= weeks <= 52):
+                self._send_json({"error": "invalid weeks"}, 400)
+                return
+            config = _load_config_for_root(root, self.server.config_path)
+            try:
+                import growth  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
+                data = growth.growth_snapshot(root, config)
+                data["weeks"] = data.get("weeks") or []
+                if weeks < len(data["weeks"]):
+                    data["weeks"] = data["weeks"][-weeks:]
+                self._send_json(data)
+            except Exception as exc:  # noqa: BLE001 —— 成长曲线失败不拖垮仪表盘
+                self._send_json({"error": f"trend unavailable: {exc}"}, 500)
+            return
+
+        if path in ("/api/ai-compare", "/api/tool-compare"):
+            # v2.6 P6：多工具横向对比（纯派生、best-effort）。
+            # start/end 必填且全匹配 YYYY-MM-DD；end<start 或范围非 1..90 天 → 400；
+            # project 可选模糊过滤；无数据 → 200 空态；内部异常降级 500 不拖垮仪表盘。
+            start = (query.get("start") or [""])[0]
+            end = (query.get("end") or [""])[0]
+            if not _DAY_RE.fullmatch(start) or not _DAY_RE.fullmatch(end):
+                self._send_json({"error": "invalid date"}, 400)
+                return
+            try:
+                d0 = datetime.date.fromisoformat(start)
+                d1 = datetime.date.fromisoformat(end)
+            except ValueError:
+                self._send_json({"error": "invalid date"}, 400)
+                return
+            if d1 < d0 or (d1 - d0).days + 1 > 90:
+                self._send_json({"error": "invalid range"}, 400)
+                return
+            project = (query.get("project") or [None])[0] or None
+            config = _load_config_for_root(root, self.server.config_path)
+            try:
+                import tool_compare  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
+                days = [(d0 + datetime.timedelta(days=i)).isoformat()
+                        for i in range((d1 - d0).days + 1)]
+                data = tool_compare.compare_tools(days, root, config, project=project)
+                self._send_json(data)
+            except ValueError:
+                self._send_json({"error": "invalid range"}, 400)
+            except Exception as exc:  # noqa: BLE001 —— 对比失败不拖垮仪表盘
+                self._send_json({"error": f"ai-compare unavailable: {exc}"}, 500)
+            return
+
+        if path == "/api/query":
+            # v2.6 P7：受限模板查询（非 LLM，docs/VIBECODING_IMPLEMENTATION_GUIDE.md §6.2）。
+            # 两种入口：?q=<自然语言模板>（如「昨天 opencode 花了多少钱」「本周哪个项目成本最高」）
+            # 或指南兼容的 ?tpl=q1&start=...&end=...（显式模板 ID + 日期参数）。
+            # 只做固定模板匹配，不接受任意自由文本；参数白名单校验（周期词表 + YYYY-MM-DD），
+            # 未命中/非法参数 → 400；内部异常降级 500 不拖垮仪表盘；无数据 → 200 空态 + 文案。
+            q_text = (query.get("q") or [""])[0].strip()
+            config = _load_config_for_root(root, self.server.config_path)
+            try:
+                import query as _qmod  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
+                if q_text:
+                    result = _qmod.run_query(q_text, root, config)
+                else:
+                    tpl_id = (query.get("tpl") or [""])[0].strip()
+                    if not tpl_id:
+                        self._send_json({"error": "missing q or tpl"}, 400)
+                        return
+                    result = _qmod.run_template(tpl_id, query, root, config)
+            except Exception as exc:  # noqa: BLE001 —— 查询解析/执行失败不拖垮仪表盘
+                self._send_json({"error": f"query unavailable: {exc}"}, 500)
+                return
+            if not result.get("ok"):
+                self._send_json({"error": result.get("error") or "bad query"}, 400)
+                return
+            self._send_json(result)
+            return
+
+        if path == "/api/budget":
+            # v2.6 P3：成本预算状态（默认关闭）。纯派生、best-effort：
+            # period=daily|monthly；date 用 YYYY-MM-DD（daily）或 YYYY-MM（monthly），
+            # 缺省按日期粒度推断；配置未开启/无效/异常 → 200 空态，不拖垮概览。
+            period = (query.get("period") or [""])[0].strip().lower()
+            if period not in ("", "daily", "monthly"):
+                self._send_json({"error": "invalid period"}, 400)
+                return
+            config = _load_config_for_root(root, self.server.config_path)
+            if period == "monthly":
+                m = self._valid_month({"month": query.get("date", [""])})
+                if not m:
+                    self._send_json({"error": "invalid date"}, 400)
+                    return
+                date = m
+            elif period == "daily":
+                d = self._valid_date(query)
+                if not d:
+                    self._send_json({"error": "invalid date"}, 400)
+                    return
+                date = d
+            else:
+                d = self._valid_date(query)
+                if d:
+                    date, period = d, "daily"
+                else:
+                    m = self._valid_month({"month": query.get("date", [""])})
+                    if not m:
+                        self._send_json({"error": "invalid date"}, 400)
+                        return
+                    date, period = m, "monthly"
+            try:
+                import budget  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
+                self._send_json(budget.budget_status(date, root, config, period=period))
+            except Exception as exc:  # noqa: BLE001 —— 预算异常降级为关闭态，不 500 拖垮概览
+                self._send_json({"error": f"budget unavailable: {exc}"}, 500)
+            return
+
         if path == "/api/insights":
             # 规则即时计算（离线）；AI 只读缓存/按需生成（成功才写缓存）
             date = self._valid_date(query)
@@ -2737,6 +836,14 @@ class Handler(BaseHTTPRequestHandler):
                 time_saved = insights.time_saved_insights(agg, config)
                 import git_insights  # noqa: PLC0415 —— 只读本地 Git 分析
                 git = git_insights.git_insights(config, date)
+                # v2.5：AI 会话质量卡片（纯离线派生；失败不影响既有洞察）
+                ai_quality = []
+                try:
+                    import ai_sessions as _ai_mod  # noqa: PLC0415
+                    ai_quality = insights.conversation_quality_insights(
+                        _ai_mod.collect(date, config))
+                except Exception:  # noqa: BLE001
+                    ai_quality = []
                 self._send_json({
                     "date": date, "rules": rules,
                     "ai_enabled": ai_enabled, "ai": ai,
@@ -2744,6 +851,7 @@ class Handler(BaseHTTPRequestHandler):
                     "persona": persona,
                     "time_saved": time_saved,
                     "git": git,
+                    "ai_quality": ai_quality,
                 })
             except Exception as exc:  # noqa: BLE001 —— 洞察失败不拖垮仪表盘
                 self._send_json({"error": f"insights unavailable: {exc}"}, 500)
@@ -3317,15 +1425,62 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"error": "method not allowed"}, 405)
 
 
+# ---------------------------------------------------------------------------
+# _available_days 结果缓存（按 data_root 分桶）
+# 范式同 report._agg_cache / classifier.load_config：目录 mtime 变化（新增/
+# 删除日期文件夹必更新父目录 mtime）或超过 TTL（5s，同 _aliases_cache）时
+# 重扫，避免单次请求内多次调用（/api/days + /api/dates、_collect_known_apps
+# 两次切片）与长历史安装（数百日期文件夹）重复 os.listdir。返回浅拷贝，
+# 避免调用方修改（如 /api/dates 外部消费）污染缓存。
+# ---------------------------------------------------------------------------
+_days_cache: dict[str, dict] = {}  # normcase(abs root) -> {"mtime", "ts", "data"}
+_DAYS_TTL = 5.0  # 秒：mtime 未变化时也强制重扫的最长时间
+
+
+def _days_cache_key(data_root: str) -> str:
+    """规范化数据根目录为缓存键（相对/绝对归一化，Windows 忽略大小写）。"""
+    return os.path.normcase(os.path.abspath(data_root))
+
+
+def _days_mtime(data_root: str) -> float:
+    """取数据根目录 mtime；目录不存在返回 0.0（之后重建 mtime 变化即可感知）。"""
+    try:
+        return os.path.getmtime(data_root)
+    except OSError:
+        return 0.0
+
+
+def invalidate_days_cache(data_root: str | None = None) -> None:
+    """强制丢弃日期列表缓存；data_root 为空时清空全部。供写盘场景与测试调用。"""
+    global _days_cache
+    if data_root is None:
+        _days_cache.clear()
+    else:
+        _days_cache.pop(_days_cache_key(data_root), None)
+
+
 def _available_days(data_root: str) -> list[str]:
-    """列出数据根目录下所有 YYYY-MM-DD 文件夹（升序）。"""
-    if not os.path.isdir(data_root):
-        return []
-    days = []
-    for name in os.listdir(data_root):
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", name):
-            days.append(name)
-    return sorted(days)
+    """列出数据根目录下所有 YYYY-MM-DD 文件夹（升序），带 mtime/TTL 缓存。
+
+    目录 mtime 变化或距上次扫描超过 _DAYS_TTL 秒时重扫；否则返回缓存浅拷贝。
+    新增日期文件夹会更新目录 mtime，因此缓存失效后可感知新数据。
+    """
+    key = _days_cache_key(data_root)
+    now = time.monotonic()
+    entry = _days_cache.get(key)
+    if entry is not None and now - entry["ts"] < _DAYS_TTL:
+        if _days_mtime(data_root) == entry["mtime"]:
+            return list(entry["data"])
+        _days_cache.pop(key, None)  # mtime 变化：丢弃旧缓存，走下方重扫
+
+    days: list[str] = []
+    if os.path.isdir(data_root):
+        for name in os.listdir(data_root):
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", name):
+                days.append(name)
+    days.sort()
+    _days_cache[key] = {"mtime": _days_mtime(data_root), "ts": now, "data": days}
+    return list(days)
 
 
 def _collect_known_apps(data_root: str) -> dict[str, str]:

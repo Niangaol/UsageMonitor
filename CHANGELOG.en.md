@@ -23,6 +23,8 @@ Release flow: `git tag vX.Y.Z` → CI builds and publishes the Release automatic
 - 只读、带超时、无 git / 未配置 / 非仓库路径均优雅降级；阈值可配 `insights.git`（`enabled` / `projects` / `timeout_s` / `top_files`）
 - **AI 成本账本（周/月汇总支出报表）**（Phase 3）：遍历期间每日 AI 会话深度，聚合消息/轮次/Token/成本，并按 模型 / 项目 / 工具 汇总；月报与周报自动追加「AI 成本账本」章节
 - 只读本地、绝不联网，ai_sessions.enabled 且至少有一天数据时输出，否则自动省略
+- **Cost budget warning (v2.6 · P3)**: set a daily/monthly budget for AI costs; after aggregating `ai_sessions` costs, judge ok / warn (≥80%) / exceed; weekly/monthly reports auto-append a budget summary section and the dashboard overview shows a budget banner (red on overrun); new `/api/budget` endpoint (`date` accepts YYYY-MM-DD or YYYY-MM with granularity inference)
+- Off by default: `config.insights.budget` (`enabled`/`daily`/`monthly`) can be turned on anytime; old config.json works without manual edits (deep-merge fallback); zero third-party dependencies; no session titles leaked
 
 ### 测试
 
@@ -36,6 +38,43 @@ Release flow: `git tag vX.Y.Z` → CI builds and publishes the Release automatic
 - **App groups**：prune 「orphan groups」 — `exe_groups` entries pointing to categories that no longer exist (e.g. legacy `AI工具`); these both masquerade as categories and can't be selected/moved in the group manager. Classification, the `/api/groups` list and import now only trust registered categories (built-in ∪ custom), and orphan mappings are ignored/pruned
 - **Dashboard resilience**：`/api/heatmap` failing to aggregate a single day (e.g. invalid encoding in `usage.jsonl`) no longer 500s the whole heatmap/trend — that day falls back to 0 and the timeline stays continuous
 - **Tests**：`test_app_groups` adds assertions for orphan-group pruning / fallback to auto classification / pruning on import
+
+## [2.5.0] - 2026-08-20
+
+> Theme: evolve from "how long you used it" to "understand your AI-coding process, cost and growth". All offline-derived, zero third-party runtime deps, raw `usage.jsonl` never mutated.
+
+### Added (Vibe Coding analytics platform · v2.5/v2.6 main line)
+
+- **AI session quality scoring** (`ai_sessions`): 0–100 weighted score from four factors (question value / rework / stability / context health) with grade (great/good/fair/needs-work); each conversation gets `quality_score`, `quality_factors`, `quality_notice`; daily report "AI session depth" section gains a quality summary and column, dashboard AI panel adds an average-quality card and sorts by quality desc. Pure derivation, not persisted, explicitly labeled as NOT acceptance rate
+- **Vibe Coding timeline replay** (`timeline.py` + `/api/timeline`): merges three sources — foreground sessions in `usage.jsonl`, AI session depth, Git commits — into a time-ordered event stream (`session` / `ai_session` / `git_commit`); new "Timeline" view replays the day's coding narrative with a summary (AI minutes / commits / churn / cost)
+- **Cost budget alerts** (`budget.py` + `/api/budget`): set daily/monthly AI cost budgets, three states ok / warn (≥80%) / exceed; overview banner turns red on overspend, weekly/monthly reports append a budget summary. Off by default (`insights.budget`)
+- **Multi-tool comparison** (`tool_compare.py` + `/api/ai-compare`): compare sessions / rounds / minutes / tokens / cost / chars-per-dollar / avg quality / cost share across AI tools over a 1–90 day window, with project filtering; new "Compare" view
+- **Capability growth curve** (`growth.py` + `/api/trend`): ISO-week aggregation of dependency / efficiency / quality / focus weekly averages with up/flat/down trend; weekly snapshot written atomically (`tmp + os.replace`), idempotent, self-healing on corruption; new "Growth" view
+- **Constrained template query** (`query.py` + `/api/query`): 5 fixed templates (AI cost / cost ranking / focus trend / AI vs Git output / AI activity overview) with period words (today/yesterday/this week/last week/this month/last N days); overview "Quick Ask" panel. **No LLM embedded**, strict regex allow-list matching for injection safety
+
+### Engineering (ROADMAP §9)
+
+- **Externalized page template**: the 2405-line inline `PAGE_TEMPLATE` moved to `assets/dashboard.html`, loaded at runtime with `mtime/size` cache; three-level path fallback (`sys._MEIPASS` → program dir → source dir) plus an inline fallback page so it never goes blank; `dashboard.py` shrinks from 3957 to 1616 lines (-59%)
+- **`_available_days` cache**: date-folder list cached by data-root mtime + 5s TTL, returns a shallow copy, avoids repeated `os.listdir` within a request and on long histories (hundreds of date folders)
+- **`applog.read_recent` streaming tail**: `deque(maxlen=n)` line iteration instead of `readlines()`, memory independent of total log size (verified on a 200k-line log)
+
+### Fixed
+
+- **Missing log section**: externalizing the template dropped the `<section id="view-log">` open tag, breaking the log view DOM (restored, guarded by a wiring test)
+- **Feature without entry**: `/api/ai-compare` and `/api/query` had backends but no nav entry in the main dashboard — views and calls now wired up
+- **Missing config section**: `config.default.json` gains a `query` section (`enabled` / `max_days`), old `config.json` picks it up via deep-merge
+- **Coverage source gap**: `pyproject.toml` coverage source adds the `query` module
+
+### Tests
+
+- **pytest 85 → 290** (unit / integration / api / security / performance), `test_all.py` 334 LEGACY still green; coverage 56% → 59% (`timeline` 89% / `budget` 96% / `tool_compare` 96%)
+- Added `test_ai_quality`, `test_timeline`, `test_budget`, `test_tool_compare`, `test_growth`, `test_query`, `test_adoption`, `test_applog`, `test_days_cache`, `test_dashboard_template`, `test_frontend_wiring`, etc.
+- **Wiring guard**: `test_frontend_wiring` asserts nav ↔ section ↔ loader ↔ TITLES consistency and that every `/api/*` the frontend calls exists in the backend, preventing "backend done, frontend not wired" and this release's section-drop regression
+
+### Known limitations (honest disclosure)
+
+- **Acceptance / retention attribution NOT adopted**: `adoption.py` and `docs/ADOPTION_SPIKE.md` record a heuristic spike based on Git numstat × AI session time windows × file mtime; real-data hit rate was 0% (sessions at dawn, writes at noon, commits in the afternoon), far below the 30% acceptance bar, so it is **not wired into the dashboard**, kept only as documentation of why it's not done
+- Token / cost / time-saved / quality are all **offline estimates**, not official bills or real acceptance rates; UI and reports carry disclaimers
 
 ## [2.4.0] - 2026-08-20
 

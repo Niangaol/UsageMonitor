@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>多工具横向对比 · 最小原型</title>
+<style>
+  :root { --line:#e2e2e2; --hl:#b45309; }
+  body{font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+       margin:24px; color:#222; background:#faf7f2;}
+  h1{font-size:20px;} h2{font-size:14px;color:#666;font-weight:600;}
+  .bar{display:flex;gap:8px;align-items:center;margin:12px 0;flex-wrap:wrap;}
+  input,button{font-size:14px;padding:6px 10px;border-radius:6px;border:1px solid #ccc;}
+  button{background:#b45309;color:#fff;border:none;cursor:pointer;font-weight:600;}
+  button:hover{background:#92400e;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:10px 0;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);}
+  th{color:#777;font-weight:600;white-space:nowrap;}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;}
+  .notice{color:#999;font-size:12px;font-style:italic;}
+  .empty{color:#999;font-style:italic;}
+  .err{color:#c62828;font-weight:600;}
+  canvas{width:100%;max-width:520px;display:block;margin:8px auto;}
+</style>
+</head>
+<body>
+  <h1>多工具横向对比 · 前端最小原型（v2.6 · P6）</h1>
+  <p class="notice">独立预览页（不改 dashboard 核心逻辑）：<code>fetch("/api/ai-compare")</code> 调通 +
+  表格 + 雷达图。实现阶段把此逻辑内联进 <code>PAGE_TEMPLATE</code> 对应视图（nav 新增 compare）。</p>
+
+  <div class="bar">
+    <label>开始</label><input id="start" type="date">
+    <label>结束</label><input id="end" type="date">
+    <label>端口</label><input id="port" type="number" value="8765" style="width:90px">
+    <label>Token(可选)</label><input id="token" type="password" style="width:160px">
+    <button id="load">对比</button>
+  </div>
+
+  <div id="notice" class="card notice"></div>
+  <h2>对比表（按 chars/$ 降序）</h2>
+  <div id="table" class="card empty">数据加载后显示</div>
+  <h2>雷达图（top 5 工具 · 五维归一化）</h2>
+  <div id="radar" class="card"><canvas id="radarCanvas" width="640" height="420"></canvas></div>
+
+<script>
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('end').value = today;
+  const d = new Date(); d.setDate(d.getDate()-13);
+  document.getElementById('start').value = d.toISOString().slice(0,10);
+
+  document.getElementById('load').addEventListener('click', async () => {
+    const start = document.getElementById('start').value;
+    const end   = document.getElementById('end').value;
+    const port  = document.getElementById('port').value || 8765;
+    const token = document.getElementById('token').value.trim();
+    const head  = token ? {'X-Dashboard-Token': token} : {};
+    const url = `/api/ai-compare?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+    const notice = document.getElementById('notice');
+    const tbl = document.getElementById('table');
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}` + url, {headers:head});
+      const d = await r.json();
+      if (!r.ok) { notice.textContent=''; tbl.innerHTML=`<span class="err">HTTP ${r.status}: ${d.error||JSON.stringify(d)}</span>`; return; }
+      notice.textContent = d.notice || '';
+      if (!d.tools || !d.tools.length) { tbl.innerHTML='<span class="empty">无数据（空态 200）</span>'; return; }
+      renderTable(d.tools, d.summary||{});
+      renderRadar(d.tools.slice(0,5));
+    } catch(e) { notice.textContent=''; tbl.innerHTML=`<span class="err">请求失败: ${e}</span>`; }
+  });
+
+  // TODO(P6 实现阶段)：完整渲染逻辑（内联进 PAGE_TEMPLATE 前在此原型完成）。
+  function renderTable(tools, summary) { /* 表格行：工具|会话|分钟|token|成本|chars/$|chars/会话|质量均分|占比 */ }
+  function renderRadar(tools) { /* 手写 canvas 五维雷达：chars_per_dollar / 1-cost_per_1k_tokens / quality_avg / turns密度 / sessions占比；None→0 图例标灰 */ }
+</script>
+</body>
+</html>

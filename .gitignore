@@ -39,3 +39,6 @@ htmlcov/
 .pytest_cache/
 .omo/
 tmp/
+growth_baseline.json
+root/
+x/

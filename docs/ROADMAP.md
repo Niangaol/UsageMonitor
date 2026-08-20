@@ -1,6 +1,6 @@
 # VibeTrace 项目规划文档：AI 编程深度追踪
 
-> **文档版本**：v1.0 | **更新日期**：2026-08-17 | **状态**：规划中
+> **文档版本**：v1.0 | **更新日期**：2026-08-20 | **状态**：规划中
 
 ## 一、项目定位与愿景
 
@@ -163,3 +163,28 @@ A：分阶段推进，每个 Phase 都可以独立交付，不必一次性完成
 - 📦 项目地址：[github.com/Niangaol/VibeTrace](https://github.com/Niangaol/VibeTrace)
 - 🐛 问题反馈：[Issues](https://github.com/Niangaol/VibeTrace/issues)
 - 💡 功能建议：欢迎提交 Feature Request 或直接发起 PR
+
+## 九、工程与代码优化路线图（Code & Structure Optimization）
+
+> 基于对当前代码结构的审视，梳理出一批"低风险、行为不变"的工程优化点，按优先级排列，作为后续维护的路线图。
+
+### 9.1 现状审视（优点）
+
+- 零裸 `except`；无未使用 import（`from __future__ import annotations` 为有意设计）。
+- 已有成熟缓存范式：`report._agg_cache` 按 mtime/size、`classifier.load_config` 按 mtime+TTL、`dashboard._token_cache` 短时 TTL——均为"改配置后数秒生效"的一致性做法。
+- `.gitignore` 完善：运行数据（日期文件夹 / `usage.db`）、构建产物（`build/`、`dist/`）、隐私配置（`aliases.json`、`app_groups.json`、`ai_custom.json`）均忽略。
+- 双测试体系覆盖核心逻辑：`test_all.py`（334 项无头兜底）+ `tests/`（85 项 pytest 金字塔，六层）。
+
+### 9.2 优化项（按优先级）
+
+| # | 优化项 | 改动 | 优先级 | 风险 | 状态 |
+|---|--------|------|--------|------|------|
+| 1 | **前端模板外抽** | `dashboard.py` 内约 2400 行内联 `PAGE_TEMPLATE`（HTML/JS）抽到 `assets/dashboard.html`，运行时加载（兼容 `sys._MEIPASS` 与 `paths.script_dir()`），`VibeTrace.spec` 的 `datas` 增加该文件；`dashboard.py` 由约 3850 行降至约 1450 行 | 中 | 低（沿用既有打包范式） | 已规划 |
+| 2 | **`_available_days` 加 mtime/TTL 缓存** | 仿 `_agg_cache` 范式，单次请求内多次调用（如 `/api/days`+`/api/dates`、`_collect_known_apps` 两次切片）与长历史安装（数百日期文件夹）省去重复 `os.listdir` | 高 | 极低 | 已规划 |
+| 3 | **`applog.read_recent` 流式读尾部** | `collections.deque(maxlen=n)` 逐行迭代替代 `readlines()` 全量读入内存，长日志下显著降低内存占用，行为等价 | 高 | 极低 | 已规划 |
+
+### 9.3 暂不做（记录原因）
+
+- **命名统一 `usagemon`/`usagemonitor` → `vibetrace`**：代码里仍残留（`applog` logger 名、`USAGEMON_*` 环境变量、`usagemon_hist_*` / `usagemonitor-update` 临时目录、备份文件名）。但 `updater` 过渡期仍在用旧资产名 `UsageMonitor.exe`（git 已有"过渡期双名支持"），建议待过渡完成后单独 PR，避免打断更新链路。
+- **合并双测试体系**：`test_all.py` 与 `tests/` 在文档中记为有意设计（兼容兜底 + 新金字塔），合并成本高、收益有限，暂缓。
+- **`timeline.py`**：并非死代码，是生成 `assets/timeline_preview.html` 的独立预览工具，保留。
