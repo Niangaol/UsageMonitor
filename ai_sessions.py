@@ -1215,6 +1215,9 @@ def _conversation_summary(conv_id: str, tool: str, items: list[dict],
     if not items:
         return None
     model_counter: dict[str, int] = {}
+    # 会话级模型：仅统计 assistant 消息的已知模型（用户消息无 model 字段，
+    # 若混入会把「未识别」顶成众数；claude/opencode 等真实模型在 assistant 上）。
+    model_counter_assistant: dict[str, int] = {}
     project_counter: dict[str, int] = {}
     user_n = assistant_n = tokens_out = tokens_total = 0
     cost_in_sum = cost_out_sum = 0.0
@@ -1241,6 +1244,10 @@ def _conversation_summary(conv_id: str, tool: str, items: list[dict],
         cost_in_sum += c_in
         cost_out_sum += c_out
         model_counter[it.get("model") or "未识别"] = model_counter.get(it.get("model") or "未识别", 0) + 1
+        if role in _ASSISTANT_ROLES:
+            _m = it.get("model")
+            if _m and _m != "未识别":
+                model_counter_assistant[_m] = model_counter_assistant.get(_m, 0) + 1
         proj = it.get("project")
         if proj:
             project_counter[proj] = project_counter.get(proj, 0) + 1
@@ -1252,7 +1259,8 @@ def _conversation_summary(conv_id: str, tool: str, items: list[dict],
             last = ts
             last_sec = sec
     project = max(project_counter, key=project_counter.get) if project_counter else "未识别"
-    model = max(model_counter, key=model_counter.get)
+    model = (max(model_counter_assistant, key=model_counter_assistant.get)
+             if model_counter_assistant else max(model_counter, key=model_counter.get))
     rounds = _count_rounds([it["msg"] for it in items])
     span_s = 0.0
     if first_sec is not None and last_sec is not None:

@@ -39,6 +39,14 @@ Release flow: `git tag vX.Y.Z` → CI builds and publishes the Release automatic
 - **Dashboard resilience**：`/api/heatmap` failing to aggregate a single day (e.g. invalid encoding in `usage.jsonl`) no longer 500s the whole heatmap/trend — that day falls back to 0 and the timeline stays continuous
 - **Tests**：`test_app_groups` adds assertions for orphan-group pruning / fallback to auto classification / pruning on import
 
+## [2.5.2] - 2026-08-20
+
+> Theme: refine AI session model recognition — timeline/compare/depth panels no longer drowned by "unrecognized".
+
+### Fixed
+
+- **AI session model still biased toward "unrecognized"**: conversation-level model used to take the most frequent model across ALL messages, but Claude-style user messages carry no model field (recorded as "unrecognized"), and when they outnumber assistant messages they displaced the real model. Now **conversation-level model is computed from assistant messages' known models only** (real models live on assistant turns); unrecognized conversations dropped from 14/20 to 4/20. The `by_model` dimension still keeps the "unrecognized" key for backward compatibility. Cost estimation and multi-tool discovery unaffected (still ~$0.70/day).
+
 ## [2.5.1] - 2026-08-20
 
 > Theme: fix a batch of frontend/data-layer defects found in real use, plus add an "AI model pricing" settings entry. Fully offline-derived, zero third-party runtime dependencies.

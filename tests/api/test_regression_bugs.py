@@ -126,3 +126,25 @@ def test_ai_sessions_multi_tool_discovery(monkeypatch, tmp_path):
     assert isinstance(data.get("tools"), dict)
     assert isinstance(data.get("total"), dict)
     assert "turns" in data["total"]
+
+
+def test_conversation_model_from_assistant_only(tmp_path):
+    """Claude 风格：用户消息无 model 字段，助手消息带 model。
+    会话级模型应取助手模型的真实值，而非被「未识别」淹没。"""
+    oc = tmp_path / "opencode"
+    oc.mkdir()
+    # 3 条用户消息（无 model）+ 1 条助手消息（model=claude-opus-5）
+    msgs = [
+        {"timestamp": "2099-05-05T10:00:00", "role": "user", "content": "hi"},
+        {"timestamp": "2099-05-05T10:01:00", "role": "user", "content": "again"},
+        {"timestamp": "2099-05-05T10:02:00", "role": "user", "content": "once more"},
+        {"timestamp": "2099-05-05T10:03:00", "role": "assistant",
+         "content": "ok", "message": {"model": "claude-opus-5"}},
+    ]
+    (oc / "sessions.jsonl").write_text(
+        "\n".join(json.dumps(m, ensure_ascii=False) for m in msgs), encoding="utf-8")
+    cfg = {"ai_sessions": {"enabled": True, "paths": {"opencode": [str(oc)]}}}
+    data = ai_sessions.collect("2099-05-05", cfg)
+    convs = data["total"]["conversations"]
+    assert convs, "应解析出会话"
+    assert convs[0]["model"] == "claude-opus-5", f"会话模型应为助手模型，实际 {convs[0]['model']}"
