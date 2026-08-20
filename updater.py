@@ -129,7 +129,7 @@ def latest_release(api_base: str | None = None, timeout: float = 8.0) -> dict:
 
     asset = None
     for item in (payload.get("assets") or []):
-        if isinstance(item, dict) and str(item.get("name") or "") == ASSET_NAME:
+        if isinstance(item, dict) and str(item.get("name") or "") in (ASSET_NAME, "UsageMonitor.exe"):
             candidate = {
                 "name": ASSET_NAME,
                 "size": int(item.get("size") or 0),
