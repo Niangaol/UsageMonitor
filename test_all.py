@@ -128,12 +128,55 @@ def run_scenario(name: str, fg_list: list, idle_list=None, seconds: int = 9,
     win32core.idle_seconds = clock.idle_now
     if process_tree is not None:
         win32core.enum_processes = lambda: dict(process_tree)
+    # 确定性时间：用伪时钟替代墙钟，避免 time.sleep 抖动导致 flaky（5000ms）
+    import datetime as _dt_mod
+
+    real_dt_class = monitor.datetime.datetime
+    real_mono = monitor.time.monotonic
+    real_sleep = monitor.time.sleep
+
+    # 检测是否已有外部伪时间（如 test_day_rollover 的跨天伪造）
+    is_custom_fake = hasattr(real_dt_class, "_cur") or getattr(real_dt_class, "__name__", "") == "FakeDT"
+
+    fake_mono = [0.0]
+    fake_dt = [None]
+    _FakeDT = None
+    if not is_custom_fake:
+        start_dt = _dt_mod.datetime.now().replace(microsecond=0)
+        fake_dt[0] = start_dt
+
+        class _FakeDTCls(real_dt_class):  # type: ignore[valid-type]
+            @classmethod
+            def now(cls, tz=None):
+                return fake_dt[0]
+
+        _FakeDT = _FakeDTCls
+        monitor.datetime.datetime = _FakeDT  # type: ignore[attr-defined]
+
+        def _fake_sleep(secs):
+            # 不真睡，推进伪时间
+            fake_dt[0] = fake_dt[0] + _dt_mod.timedelta(seconds=float(secs))
+            fake_mono[0] += float(secs)
+    else:
+        # 已有跨天伪造：sleep 只推进 monotonic，不重复推进日期（避免双倍步进）
+        def _fake_sleep(secs):  # type: ignore[no-redef]
+            fake_mono[0] += float(secs)
+
+    def _fake_mono():
+        return fake_mono[0]
+
+    monitor.time.monotonic = _fake_mono  # type: ignore[attr-defined]
+    monitor.time.sleep = _fake_sleep  # type: ignore[attr-defined]
     try:
         recs = monitor.run_daemon(cfg, test_seconds=seconds, verbose=False)
     finally:
         win32core.get_foreground_info = real_fg
         win32core.idle_seconds = real_idle
         win32core.enum_processes = real_procs
+        if _FakeDT is not None:
+            monitor.datetime.datetime = real_dt_class  # type: ignore[attr-defined]
+        monitor.time.monotonic = real_mono  # type: ignore[attr-defined]
+        monitor.time.sleep = real_sleep  # type: ignore[attr-defined]
     return recs, tmp
 
 
@@ -1073,10 +1116,10 @@ def test_app_groups():
         conn.close()
 
         # 11) 孤儿分组（指向不存在类别的 exe_groups）被剔除，不伪装成类别
-        _clf.save_app_groups(
+        classifier.save_app_groups(
             {"exe_groups": {"steam.exe": "AI工具", "wechat.exe": "我的分组"},
              "custom_categories": ["我的分组"]}, tmp)
-        orphan = _clf.sanitize_groups(cfg, _clf.load_app_groups(tmp))
+        orphan = classifier.sanitize_groups(cfg, classifier.load_app_groups(tmp))
         check("steam.exe" not in orphan["exe_groups"]
               and orphan["exe_groups"].get("wechat.exe") == "我的分组",
               "sanitize_groups 剔除孤儿映射、保留合法映射", str(orphan["exe_groups"]))

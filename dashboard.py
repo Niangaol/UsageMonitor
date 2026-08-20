@@ -471,17 +471,50 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   .page-head h1{font-size:19px;font-weight:600;letter-spacing:.1px}
   .page-head .sub{font-size:12px;color:var(--faint);margin-top:3px}
   .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  select,input[type=text],input[type=month],input[type=password],input[type=file],button.btn{
-    background:var(--surface);border:1px solid var(--border);
-    border-radius:6px;padding:6px 10px;font-size:12.5px;color:var(--text);outline:none;
-    transition:border-color .18s var(--ease),background .18s var(--ease)}
-  input[type=file]{padding:4px 8px;width:220px}
-  select:focus,input:focus,button.btn:focus-visible{border-color:var(--accent)}
-  button.btn{cursor:pointer}
-  button.btn:hover{background:var(--surface-2);border-color:var(--border-strong)}
-  button.btn.primary{background:var(--accent);border-color:var(--accent);color:#141008;font-weight:600}
+  /* ——— 输入框美化：统一圆角/阴影/聚焦环，告别系统默认 ——— */
+  select,input[type=text],input[type=month],input[type=password],input[type=number],input[type=file],textarea,button.btn{
+    font:inherit;color:inherit;outline:none;
+    transition:border-color .18s var(--ease),background .18s var(--ease),box-shadow .18s var(--ease),transform .12s var(--ease)}
+  select,input[type=text],input[type=month],input[type=password],input[type=number],textarea{
+    background:var(--surface-2);border:1px solid var(--border);
+    border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);
+    box-shadow:0 1px 0 rgba(0,0,0,.04) inset, 0 0 0 transparent;
+    min-height:36px}
+  textarea{resize:vertical;min-height:72px;line-height:1.6;padding:10px 12px}
+  input::placeholder,textarea::placeholder{color:var(--faint);opacity:1}
+  select:hover,input:hover,textarea:hover{border-color:var(--border-strong);background:var(--surface)}
+  select:focus,input:focus,textarea:focus{border-color:var(--accent);background:var(--surface);
+    box-shadow:0 0 0 3px var(--accent-soft), 0 1px 0 rgba(0,0,0,.04) inset}
+  select{appearance:none;-webkit-appearance:none;padding-right:30px;cursor:pointer;
+    background-image:
+      linear-gradient(45deg, transparent 50%, var(--faint) 50%),
+      linear-gradient(135deg, var(--faint) 50%, transparent 50%);
+    background-position:calc(100% - 16px) calc(50% - 2px), calc(100% - 11px) calc(50% - 2px);
+    background-size:5px 5px, 5px 5px;background-repeat:no-repeat}
+  select:disabled,input:disabled,textarea:disabled{opacity:.55;cursor:not-allowed}
+  /* 文件选择：原生按钮胶囊化 */
+  input[type=file]{background:var(--surface-2);border:1px dashed var(--border);border-radius:8px;
+    padding:6px 10px;width:260px;font-size:12.5px;cursor:pointer}
+  input[type=file]:hover{border-color:var(--border-strong);background:var(--surface)}
+  input[type=file]::file-selector-button{
+    margin-right:10px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;
+    background:var(--surface-3);color:var(--text);font-size:12px;font-weight:600;
+    cursor:pointer;transition:background .18s var(--ease),border-color .18s var(--ease)}
+  input[type=file]::file-selector-button:hover{background:var(--surface-2);border-color:var(--border-strong)}
+  /* 按钮 */
+  button.btn{background:var(--surface-2);border:1px solid var(--border);
+    border-radius:8px;padding:7px 14px;font-size:13px;font-weight:500;color:var(--text);cursor:pointer;
+    box-shadow:0 1px 0 rgba(0,0,0,.04)}
+  button.btn:hover{background:var(--surface);border-color:var(--border-strong);transform:translateY(-1px);
+    box-shadow:0 2px 8px rgba(0,0,0,.10)}
+  button.btn:active{transform:none;box-shadow:0 1px 0 rgba(0,0,0,.04) inset}
+  button.btn:focus-visible{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  button.btn.primary{background:var(--accent);border-color:var(--accent);color:#141008;font-weight:700;
+    box-shadow:0 1px 10px rgba(224,165,60,.25)}
   html[data-theme="light"] button.btn.primary{color:#fff}
-  button.btn.primary:hover{background:#eab356}
+  button.btn.primary:hover{background:#eab356;box-shadow:0 2px 12px rgba(224,165,60,.32)}
+  /* 小尺寸输入（表格内/分组页） */
+  .tbl input, .tbl select{padding:6px 9px;min-height:32px;font-size:12.5px;border-radius:6px}
 
   /* ---------- 视图切换动画 ---------- */
   .view{display:none}
@@ -662,7 +695,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     </div>
   </aside>
   <div class="backdrop" id="backdrop"></div>
-  <button class="hamburger" id="hamburger" aria-label="菜单">
+  <button class="hamburger" id="hamburger" aria-label="菜单" aria-expanded="false" aria-controls="sidebar">
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
   </button>
 
@@ -690,7 +723,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     <section class="view" id="view-trends">
       <div class="panel"><h2>活跃热力图（24 小时 × 最近 84 天）<span class="hint">行=小时 · 列=日期</span></h2>
         <div id="trHeatmap"></div>
-        <div class="hm-legend">少 <span class="sw" style="background:var(--hm-1)"></span><span class="sw" style="background:var(--hm-2)"></span><span class="sw" style="background:var(--hm-4)"></span><span class="sw" style="background:var(--hm-5)"></span> 多</div>
+        <div class="hm-legend">少 <span class="sw" style="background:var(--hm-1)"></span><span class="sw" style="background:var(--hm-2)"></span><span class="sw" style="background:var(--hm-3)"></span><span class="sw" style="background:var(--hm-4)"></span><span class="sw" style="background:var(--hm-5)"></span> 多</div>
       </div>
       <div class="panel"><h2>日活跃柱状图</h2>
         <div class="controls" style="margin-bottom:12px">
@@ -799,6 +832,10 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       <div class="panel">
         <h2>行为洞察 <span class="hint">专注度评分 · 死循环检测 · 人格 · 离线</span></h2>
         <div id="inBehavior"></div>
+      </div>
+      <div class="panel">
+        <h2>时间节省估算 <span class="hint">AI 编程效率 × 因子 · 离线估算 · Phase 3</span></h2>
+        <div id="inTimeSaved"></div>
       </div>
       <div class="panel">
         <h2>代码产出（Git） <span class="hint">只读本地提交 · 离线 · Phase 2</span></h2>
@@ -983,7 +1020,9 @@ function buildAuthMask(){
     '<button class="btn primary" id="authGo">解锁</button></div>' +
     '<div class="auth-err" id="authErr"></div></div>';
   $("#authGo").onclick = tryUnlock;
-  $("#authInput").onkeydown = e => { if(e.key === "Enter") tryUnlock(); };
+  $("#authInput").onkeydown = e => { if(e.key === "Enter") tryUnlock(); if(e.key === "Escape") { mask.classList.remove("show"); mask.style.display="none"; authShown=false; } };
+  // 遮罩显示后自动聚焦输入框（autofocus在动态innerHTML中不可靠，需显式focus）
+  requestAnimationFrame(()=>{ const inp=$("#authInput"); if(inp) inp.focus(); });
 }
 async function tryUnlock(){
   const val = $("#authInput").value.trim();
@@ -1062,6 +1101,12 @@ function statRows(data, fmt){
 function closeDrawer(){
   $("#sidebar").classList.remove("open");
   $("#backdrop").classList.remove("show");
+  const hb=$("#hamburger"); if(hb) hb.setAttribute("aria-expanded","false");
+}
+function openDrawer(){
+  $("#sidebar").classList.add("open");
+  $("#backdrop").classList.add("show");
+  const hb=$("#hamburger"); if(hb) hb.setAttribute("aria-expanded","true");
 }
 function switchView(v, push){
   state.view = v;
@@ -1096,10 +1141,10 @@ function buildHeadControls(){
 }
 function pickDay(d){
   state.day = d; $("#daySel").value = d;
-  if(state.view === "overview") loadOverview();
-  if(state.view === "report") loadReport();
-  if(state.view === "sessions") loadSessions();
-  if(state.view === "insights") loadInsights();
+  // 换日后所有依赖日期的视图数据失效，切回时按新日期重载（避免仍显示旧日期数据）
+  ["overview","report","sessions","insights"].forEach(v=>{ state.loaded[v] = false; });
+  const reload = {overview:loadOverview, report:loadReport, sessions:loadSessions, insights:loadInsights}[state.view];
+  if(reload){ state.loaded[state.view] = true; reload(); }
 }
 function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 
@@ -1261,7 +1306,7 @@ async function loadTrends(){
     let col = '<div class="grid-col" title="'+day.date+'">';
     for(let hi=0; hi<24; hi++){
       const ms = day.hourly_ms[hi] || 0;
-      const s = ms>0 ? Math.max(1, Math.round(ms/maxH*3)) : 0;
+      const s = ms>0 ? Math.max(1, Math.min(4, Math.round(ms/maxH*4))) : 0;
       const delay = NO_ANIM ? 0 : (di*2+hi*0.3);
       col += '<div class="cell" style="background:'+lvl[s]+';opacity:1;transition-delay:'+delay+'ms" title="'+day.date+' '+String(hi).padStart(2,"0")+':00 — '+fmtMs(ms)+'"></div>';
     }
@@ -1781,6 +1826,7 @@ async function loadInsights(){
     : '<div class="empty">当日暂无规则洞察（数据为空或 insights.enabled=false）</div>';
   renderAiPanel(d);
   renderBehavior(d.behavior, d.persona);
+  renderTimeSaved(d.time_saved);
   renderGit(d.git);
   loadAiModule().catch(() => { /* 模块面板加载失败不影响规则/AI 展示 */ });
 }
@@ -1974,6 +2020,28 @@ function renderGit(g){
     html += '</div>';
   }
   html += '<div class="hint" style="margin-top:2px">数据来自你在 config.json 配置的本地 Git 仓库（insights.git.projects），只读、不上传。修改率 = 删除行 / (新增+删除)，作为「返工」近似指标。</div>';
+  el.innerHTML = html;
+}
+
+function renderTimeSaved(t){
+  const el = $("#inTimeSaved");
+  if(!el) return;
+  t = t || {};
+  if(!t.enabled){
+    el.innerHTML = '<div class="empty">时间节省估算未开启（config.json: insights.time_saved.enabled=false）</div>';
+    return;
+  }
+  if(!t.ai_ms){
+    el.innerHTML = '<div class="empty">' + esc(t.label || "当日无 AI 编程") + '</div>';
+    return;
+  }
+  const fmtH = ms => { const s=Math.round(ms/1000); if(s>=3600) return (s/3600).toFixed(1)+" 小时"; if(s>=60) return Math.round(s/60)+" 分钟"; return s+" 秒"; };
+  let html = '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 8px">'+
+    aiStatCard("AI 活跃", fmtH(t.ai_ms), "今日 AI 编程时长")+
+    aiStatCard("估算手工", fmtH(t.est_manual_ms), "×" + t.factor + " 因子")+
+    aiStatCard("节省时长", fmtH(t.saved_ms), Math.round(t.saved_ratio*100)+"% 估算")+
+    '</div>';
+  html += '<div class="hint" style="margin-top:6px">' + esc(t.label) + ' · 粗估公式：节省 = AI 时长 × (因子-1)，因子可在 config.json → insights.time_saved.factor 调整（1.0-5.0），未来将接入 Git 行数做更可信估算。</div>';
   el.innerHTML = html;
 }
 
@@ -2329,8 +2397,9 @@ function startApp(){
   // 导航
   $$(".nav-item").forEach(a => a.onclick = e => { e.preventDefault(); switchView(a.dataset.view); });
   // 移动端抽屉
-  $("#hamburger").onclick = () => { $("#sidebar").classList.add("open"); $("#backdrop").classList.add("show"); };
+  $("#hamburger").onclick = openDrawer;
   $("#backdrop").onclick = closeDrawer;
+  document.addEventListener("keydown", e=>{ if(e.key==="Escape" && $("#sidebar").classList.contains("open")) closeDrawer(); });
 
   // 加载日期
   $("#pageSub").textContent = "数据目录：" + ROOT_DIR;
@@ -2357,9 +2426,14 @@ function startApp(){
     }
     groupsInit();
     armLogTimer();
+    let resizeTimer = null;
     window.addEventListener("resize", ()=>{
-      if(state.view==="overview") loadOverview();
-      else if(state.view==="trends" && state.loaded.trends) loadTrends();
+      if(resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(()=>{
+        resizeTimer = null;
+        if(state.view==="overview" && state.loaded.overview) loadOverview();
+        else if(state.view==="trends" && state.loaded.trends) loadTrends();
+      }, 250);  // 防抖：拖动窗口时避免每次 resize 事件都整页重拉数据/重绘
     });
     if(target !== "overview") switchView(target, false);
     else { state.loaded.overview = true; loadOverview(); }
@@ -2660,6 +2734,7 @@ class Handler(BaseHTTPRequestHandler):
                     ai["provider"] = str(ai_cfg.get("provider") or "")
                 behavior = insights.behavior_insights(agg, config)
                 persona = insights.persona_insights(agg, config)
+                time_saved = insights.time_saved_insights(agg, config)
                 import git_insights  # noqa: PLC0415 —— 只读本地 Git 分析
                 git = git_insights.git_insights(config, date)
                 self._send_json({
@@ -2667,6 +2742,7 @@ class Handler(BaseHTTPRequestHandler):
                     "ai_enabled": ai_enabled, "ai": ai,
                     "behavior": behavior,
                     "persona": persona,
+                    "time_saved": time_saved,
                     "git": git,
                 })
             except Exception as exc:  # noqa: BLE001 —— 洞察失败不拖垮仪表盘

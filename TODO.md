@@ -1,9 +1,9 @@
 # 交接文档 / 待办清单
 
-> 交接时间：2026-08-14 · 项目：电脑使用情况监控（UsageMonitor）
+> 交接时间：2026-08-20 · 项目：电脑使用情况监控（UsageMonitor）
 > 远程仓库：https://github.com/Niangaol/UsageMonitor（master 分支）
-> 当前版本：v2.3.0（version.py = 2.3.0）
-> 当前提交：53b428f（2026-08-17）
+> 当前版本：v2.4.0（已完成，待发布；version.py = 2.4.0）
+> 当前提交：e62afba（2026-08-18）
 
 ---
 
@@ -21,7 +21,8 @@
 | v2.1.0 | ✅ 已发布 | AI 统计支持更多工具（Cursor/Windsurf/Trae/DeepSeek/Pi Agent/DSH） |
 | v2.1.1 | ✅ 已发布 | SQLite 一致性校验、周聚合快速路径、updater/更新 API 测试、SHA256 资产、覆盖率扩展 |
 | v2.2.0 | ✅ 已发布 | UWP 识别、管理员模式、Firefox 停留时长、更新供应链安全、更多应用适配 |
-| v2.3.0 | ✅ 已提交（发布中） | AI 会话深度（Phase 1）+ 成本与 ROI（Phase 3）+ 概览整合 / AI 洞察独立 |
+| v2.3.0 | ✅ 已发布 | AI 会话深度（Phase 1）+ 成本与 ROI（Phase 3）+ 概览整合 / AI 洞察独立 |
+| v2.4.0 | ✅ 已完成（2026-08-20） | 测试流程金字塔（docs/TEST_WORKFLOW.md + pytest 85项 + CI fast/full + 覆盖率 56%）；Phase 3 时间节省估算（insights.time_saved）落地；前端 6 项细节修补；配置漂移修复；应用白名单补齐 |
 
 ---
 
@@ -62,6 +63,7 @@
 - ✅ 按项目拆分（`by_project`，cwd/project/repo 字段，会话级归口）
 - ✅ 仪表盘「AI 会话详情」面板 + 日报「AI 会话深度」章节 + `ai_sessions --web` CLI
 - ✅ Phase 3 成本与 ROI（按模型计价 / 按项目分摊 / 成本面板与日报成本章节 + 周/月汇总成本账本）
+- ✅ Phase 3 时间节省估算（`insights.time_saved`：AI 时长 × 因子 2.0 离线估算，洞察面板 · v2.4.0）
 - ✅ Phase 4 行为洞察（死循环检测 + 专注度评分 + Vibe 编程人格分析；洞察页面板 + 日报今日建议）
 - ✅ Phase 2 的 Git 集成·代码变更分析（`git_insights.py`：只读本地提交/增删行/改动文件/修改率，洞察面板 + 日报）
 - ⏸️ Phase 2 采纳率/留存率/修改率（需 IDE 插件，尚未做）
@@ -82,7 +84,7 @@
 | 2 | AI 会话解析精度 | 第三方工具格式差异较大，目前 best-effort，可能统计缺失 |
 | 3 | GitHub Pages 只做简单 landing | 如需完整文档站可继续扩展（当前够用） |
 | 4 | 周报/月报多语言 / UI 多语言 | 可选，当前 UI 中文 |
-| 5 | ROADMAP Phase 1 已落地（v2.3.0 规划） | 对话轮次/Token估算/按模型·项目拆分/会话详情面板/报告章节 ☆ 见 [docs/ROADMAP.md](docs/ROADMAP.md)；Phase 3 成本与 ROI、Phase 4 行为洞察（死循环/专注度/人格）已落地；Phase 2 的 Git 代码变更分析已落地，采纳率/留存率仍需 IDE 插件 |
+| 5 | ROADMAP Phase 1 已落地（v2.3.0 规划） | 对话轮次/Token估算/按模型·项目拆分/会话详情面板/报告章节 ☆ 见 [docs/ROADMAP.md](docs/ROADMAP.md)；Phase 3 成本与 ROI、Phase 4 行为洞察（死循环/专注度/人格）已落地；Phase 2 的 Git 代码变更分析已落地，采纳率/留存率仍需 IDE 插件；Phase 3 时间节省估算（time_saved）随 v2.4.0 落地 |
 
 ---
 
@@ -102,7 +104,7 @@
 - **Python**：默认 `python`=3.14；带 PyInstaller 的 3.11 在
   `C:\Users\niangao\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\python.exe`
 - **构建**：`python -m PyInstaller UsageMonitor.spec --noconfirm`（先停守护任务，exe 会被占用）
-- **测试**：`python test_all.py`（268 项全过）；`ruff check .`（0 违规）
+- **测试**：`python -m pytest tests/ -q`（85 项全过，六层金字塔）+ `python test_all.py`（334 项 check 兼容兜底）；`ruff check .`（0 违规）；`coverage run -m pytest tests/`（覆盖率 56%，`fail-under=50%` 门禁）；详见 `docs/TEST_WORKFLOW.md`
   - 若 Windows 临时目录权限导致测试失败，可先清理 `%TEMP%\usagemon_hist_*` / `dsh-*`
 - **发布**：`git tag vX.Y.Z && git push origin vX.Y.Z` → CI 自动测试→构建→冒烟→Release
 - **守护**：计划任务 `UsageMonitor`（exe）/`UsageMonitorReport`（每日 19:30 日报）

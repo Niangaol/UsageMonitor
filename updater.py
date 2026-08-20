@@ -87,6 +87,7 @@ def _is_allowed_asset_url(url: str, api_base: str | None = None) -> bool:
         "github.com",
         "objects.githubusercontent.com",
         "release-assets.githubusercontent.com",
+        "github-releases.githubusercontent.com",
     ):
         return True
     if api_base:

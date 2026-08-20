@@ -1212,6 +1212,11 @@
       "timeout_s": 10,
       "top_files": 5
     },
+    "time_saved": {
+      "enabled": true,
+      "factor": 2.0,
+      "min_ai_min": 10
+    },
     "ai": {
       "enabled": false,
       "provider": "opencodego",

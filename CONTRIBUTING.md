@@ -70,7 +70,8 @@
 | `browser_history.py` | 浏览器 URL 级历史解析（Chromium/Firefox） | ⚠️ 涉及时复制的只读打开，勿改浏览器数据 |
 | `dashboard.py` | 本地网页仪表盘（仅 127.0.0.1） | ⚠️ `/api/*` 必须做 Origin/Token 校验 |
 | `tray.py` | 托盘图标（可选） | — |
-| `test_all.py` | 完整集成测试（无头确定性） | 新增功能必须补测试 |
+| `tests/` | pytest 分层测试（unit/integration/api/frontend/performance/security，85 项） | 新增功能必须补测试，详见「测试规范」与 `docs/TEST_WORKFLOW.md` |
+| `test_all.py` | 旧版单文件集成测试（LEGACY 兼容兜底，334 项 check） | 不再新增 case；新测试一律进 `tests/` |
 | `paths.py` | 统一路径解析 | 新增路径一律加到这里 |
 | `install.ps1` / `uninstall.ps1` | 安装/卸载（计划任务） | — |
 | `UsageMonitor.spec` | PyInstaller 打包配置 | 新增资源/图标需同步 |
@@ -83,18 +84,21 @@
 
 - **必须全量跑通最简命令**：
   ```powershell
-  python test_all.py
+  python -m pytest tests/ -q
   ```
-  全量断言 **152+ 项**（随功能持续增长），全部通过时打印 `ALL TESTS PASSED`，约 1 分钟。
+  pytest **85 项**（六层金字塔：unit / integration / api / frontend / performance / security）全绿，约 1 分钟；
+  旧版单文件 `python test_all.py`（334 项 check，LEGACY）仍可运行作为**兼容兜底**。
   **任何提交前都必须保证全量通过**，不能只跑自己新增的用例。
-- **新增功能必须补测试**：在 `test_all.py` 追加对应用例，遵循现有的 `check()` / `ok()` 断言风格与
-  `run_scenario(...)` 场景编排方式；用**猴子补丁**模拟前台窗口/空闲/进程树，保持无头、确定性、可重复。
-  命名沿现有 `test_xxx` 风格，并在文件顶部/相关段落记录对应需求的 `§` 编号（见《需求文档》§14 测试方案）。
-- 测试里**不要依赖真实前台/网络/浏览器数据**；用 `fresh_tmp(...)` 隔离临时数据目录，用例结束后清理。
+- **新增功能必须补测试**：新用例写入 `tests/` 下对应分层目录（纯函数→`tests/unit/`、跨模块管线→`tests/integration/`、
+  Dashboard 路由→`tests/api/`、安全断言→`tests/security/` 等），复用 `tests/conftest.py` 的 fixtures
+  （临时目录 / mock_win32 / 伪时钟），保持无头、确定性、可重复；命名沿 `test_xxx` 风格。`test_all.py` 已标记
+  LEGACY，**不再新增 case**。分层与迁移详见 `docs/TEST_WORKFLOW.md`。
+- 测试里**不要依赖真实前台/网络/浏览器数据**；用临时目录隔离测试数据，用例结束后清理。
 - 涉及数据写入的改动（monitor / classifier / report 等），务必跑 `python report.py --verify`（及 `--repair`）验证数据完整性路径不被破坏。
 - 打包类改动可用 `python -m PyInstaller UsageMonitor.spec --noconfirm` 顺带验证 exe 冒烟（`--version`）。
+- 覆盖率：`coverage run -m pytest tests/`（当前覆盖率 56%，CI 门禁 `fail-under=50%`）；`ruff check .` 必须 0 违规。
 
-> 本仓库**不在 CI 外强制**第三方测试框架；保持与 `test_all.py` 一致的自定义断言风格即可，避免为测试引入新依赖。
+> CI（`.github/workflows/ci-fast.yml`）：push/PR 触发 ruff + unit/integration/api/security；tag push 触发全量 + 覆盖率门禁 + 构建冒烟（见 `docs/TEST_WORKFLOW.md`）。
 
 ---
 
@@ -126,16 +130,14 @@
 
 1. 从最新的 `master` 拉出**功能分支**，命名风格 `feature/<简述>` 或 `<类型>/<简述>`
    （如 `feature/app-groups`、`fix/report-import`）。
-2. 在功能分支上小步提交（遵循上面的提交规范），**中途与提交前都全量跑 `python test_all.py`**。
+2. 在功能分支上小步提交（遵循上面的提交规范），**中途与提交前都全量跑 `python -m pytest tests/ -q`**（并运行旧版 `python test_all.py` 作为兼容兜底）。
 3. 推送到远程后，打开 **Pull Request**，使用仓库提供的 [PULL_REQUEST_TEMPLATE](./.github/PULL_REQUEST_TEMPLATE.md) 填写：
    变更摘要、关联 Issue、测试情况、截图/验证说明。
 4. 至少 **1 位协作者 Review** 后合并；有修改意见就继续补 commit，直到通过。
-5. **PR 需通过 CI**（`.github/workflows/build.yml` 的 `test` job 会在 tag push 与手动触发时跑全量测试）。
-   CI 未通过前不要自行 merge 到 master。
+5. **PR 需通过 CI**：`.github/workflows/ci-fast.yml` 在 push/PR 时跑 ruff + 分层测试；tag push 时走全量 + 覆盖率门禁 + 构建冒烟（见 `docs/TEST_WORKFLOW.md`）。CI 未通过前不要自行 merge 到 master。
 6. 合并到 `master` 后删掉已合并的功能分支。
 
-> CI 目前由 **打 tag** / `workflow_dispatch` 触发（见下方发布流程）。为使 PR 也能得到 CI 校验，
-> 可在 PR 合入前通过手动触发或本地 `python test_all.py` 保证通过。
+> 涉及数据/管线改动建议在合并前跑一次完整链路：`python -m pytest tests/ -q` + `python test_all.py`，保证两端全绿。
 
 ---
 
@@ -144,7 +146,7 @@
 > 详见 README「打包为 exe」与 `.github/workflows/build.yml`。
 
 1. **版本号递增**：在 `version.py` 递增 `__version__`（遵循 `vX.Y.Z` 语义化），并**同步更新《CHANGELOG.md》**（按 keep-a-changelog 格式记录 `Added / Fixed / Changed`）。
-2. 确保本期所有改动已合并到 `master`，且 `python test_all.py` 全量通过。
+2. 确保本期所有改动已合并到 `master`，且 `python -m pytest tests/ -q`（85 项）与 `python test_all.py`（334 项兼容兜底）均全量通过。
 3. **打 tag 并推送**（触发 CI 自动「测试 → 构建 exe → 冒烟 → 创建 Release」）：
    ```powershell
    git tag vX.Y.Z

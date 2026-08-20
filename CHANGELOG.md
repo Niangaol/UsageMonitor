@@ -37,6 +37,31 @@
 - **仪表盘健壮性**：`/api/heatmap` 单日聚合失败（如 `usage.jsonl` 非法编码）不再让整个热力图/趋势 500，改为该日以 0 兜底、时间轴保持连续
 - **测试**：`test_app_groups` 补充孤儿分组剔除/恢复自动分类/导入剔除断言
 
+## [2.4.0] - 2026-08-20
+
+### 测试
+
+- **测试金字塔 85 项**：测试按 `unit / security / integration / api / frontend / performance / e2e` 分层组织，`pytest tests` 全量 85 项通过
+- **覆盖率 56%**：全量行覆盖率 56%，覆盖 monitor / insights / report / dashboard 合约 / updater / 安全边界等核心路径，作为后续回归基线
+
+### 新增
+
+- **time_saved 离线估算**（`insights.time_saved`，Phase 3）：按当日 AI 编程活跃时长 × 效率因子粗估节省时间（节省 = AI 时长 × (因子-1)），离线计算、不入库不上传；仪表盘概览新增「时间节省估算」卡，因子 1.0–5.0 与最低 AI 活跃分钟数可配（`factor` / `min_ai_min`）
+
+### 前端细节
+
+- 控件统一 hover / focus / active 态与过渡动画（select / input / textarea / file / button，含 `:focus-visible` 焦点环）
+- 热力图「少 → 多」图例提示
+- 移动端侧边栏汉堡菜单与抽屉开合（同步 `aria-expanded`）
+- 鉴权弹层 Enter 解锁 / Esc 关闭，进入自动聚焦
+- 窗口 resize 防抖刷新当前视图
+- 「最近 14 天活跃趋势」单日聚合失败逐日兜底 0、概览趋势 try/catch 降级提示，不再整体 500 / 留白
+
+### 修复
+
+- **配置漂移**：`insights.time_saved` 等新配置键经 `_merge_dict` 合并进默认值，旧 config.json 缺键自动补齐，不再因配置漂移导致行为不一致
+- **更新白名单**：`updater._is_allowed_asset_url` 白名单校验——自定义 api_base 镜像放行、非白名单域名一律拒绝（`test_update_whitelist_rejects_evil` 覆盖）
+
 ## [2.3.0] - 2026-08-18
 
 ### 新增（ROADMAP Phase 1 · AI 编程深度追踪 v1.5）

@@ -37,6 +37,31 @@ Release flow: `git tag vX.Y.Z` → CI builds and publishes the Release automatic
 - **Dashboard resilience**：`/api/heatmap` failing to aggregate a single day (e.g. invalid encoding in `usage.jsonl`) no longer 500s the whole heatmap/trend — that day falls back to 0 and the timeline stays continuous
 - **Tests**：`test_app_groups` adds assertions for orphan-group pruning / fallback to auto classification / pruning on import
 
+## [2.4.0] - 2026-08-20
+
+### Tests
+
+- **Test pyramid, 85 tests**: tests organized in layers `unit / security / integration / api / frontend / performance / e2e`; full `pytest tests` run is green (85 passed)
+- **56% line coverage**: overall line coverage 56% across monitor / insights / report / dashboard contract / updater / security boundaries, serving as the regression baseline
+
+### Added
+
+- **time_saved offline estimate** (`insights.time_saved`, Phase 3): estimates time saved from the day's AI-coding activity × efficiency factor (saved = AI time × (factor−1)); computed offline, never stored or uploaded. New "Time saved estimate" card on the dashboard overview; factor (1.0–5.0) and minimum AI-active minutes configurable via `factor` / `min_ai_min`
+
+### Frontend details
+
+- Unified hover / focus / active states and transitions for form controls (select / input / textarea / file / button, incl. `:focus-visible` ring)
+- Heatmap legend hint (less → more)
+- Mobile hamburger menu with drawer open/close (syncs `aria-expanded`)
+- Auth overlay: Enter to unlock, Esc to close, auto-focus on open
+- Debounced view refresh on window resize
+- "Last 14 days activity trend": per-day aggregation failures fall back to 0; overview trend shows a degraded hint instead of a 500 / blank chart
+
+### Fixed
+
+- **Config drift**: new keys such as `insights.time_saved` are merged into defaults via `_merge_dict`, so old config.json files get missing keys filled in automatically and behavior no longer drifts
+- **Update whitelist**: `updater._is_allowed_asset_url` now allows custom `api_base` mirrors while rejecting any non-whitelisted domain (covered by `test_update_whitelist_rejects_evil`)
+
 ## [2.3.0] - 2026-08-18
 
 ### Added (ROADMAP Phase 1 · AI coding deep tracking v1.5)

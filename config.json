@@ -528,7 +528,17 @@
     "tim.exe": "TIM",
     "dingtalk.exe": "钉钉",
     "telegram.exe": "Telegram",
-    "discord.exe": "Discord"
+    "discord.exe": "Discord",
+    "wecom.exe": "企业微信",
+    "wework.exe": "企业微信",
+    "feishu.exe": "飞书",
+    "lark.exe": "飞书",
+    "slack.exe": "Slack",
+    "teams.exe": "Microsoft Teams",
+    "ms-teams.exe": "Microsoft Teams",
+    "whatsapp.exe": "WhatsApp",
+    "line.exe": "LINE",
+    "skype.exe": "Skype"
   },
   "social_main_titles": [
     "微信",
@@ -538,7 +548,17 @@
     "dingtalk",
     "tim",
     "telegram",
-    "discord"
+    "discord",
+    "企业微信",
+    "wecom",
+    "飞书",
+    "feishu",
+    "lark",
+    "slack",
+    "teams",
+    "whatsapp",
+    "line",
+    "skype"
   ],
   "browser_exes": [
     "chrome.exe",
@@ -548,7 +568,17 @@
     "opera.exe",
     "360se.exe",
     "qqbrowser.exe",
-    "tabbit browser.exe"
+    "tabbit browser.exe",
+    "vivaldi.exe",
+    "yandex.exe",
+    "chromium.exe",
+    "opera gx.exe",
+    "arc.exe",
+    "centbrowser.exe",
+    "2345explorer.exe",
+    "sogouexplorer.exe",
+    "maxthon.exe",
+    "slimjet.exe"
   ],
   "terminal_exes": [
     "windowsterminal.exe",
@@ -571,7 +601,19 @@
     "gemini",
     "aider",
     "copilot",
-    "cline"
+    "cline",
+    "codex",
+    "goose",
+    "amazon-q",
+    "q",
+    "dsh",
+    "pi",
+    "claude-code",
+    "gemini-cli",
+    "continue",
+    "bamboo",
+    "augment",
+    "warp"
   ],
   "ai_title_keywords": [
     "π"
@@ -590,7 +632,19 @@
     "gemini": "gemini",
     "aider": "aider",
     "copilot": "copilot",
-    "cline": "cline"
+    "cline": "cline",
+    "codex": "codex",
+    "goose": "goose",
+    "amazon-q": "amazon q",
+    "q": "amazon q",
+    "dsh": "dsh",
+    "pi": "pi agent",
+    "claude-code": "claude code",
+    "gemini-cli": "gemini cli",
+    "continue": "continue",
+    "bamboo": "bamboo",
+    "augment": "augment",
+    "warp": "warp"
   },
   "browser_categories": {
     "视频": [
@@ -993,6 +1047,9 @@
     },
     "tabbit": {
       "user_data": null
+    },
+    "firefox": {
+      "user_data": null
     }
   },
   "editor_exes": [
@@ -1028,6 +1085,47 @@
       "timeout_s": 60,
       "send_raw_titles": false,
       "language": "zh"
+    },
+    "behavior": {
+      "short_session_s": 60,
+      "switch_gap_s": 45,
+      "death_loop_min_flips": 6,
+      "death_loop_distinct_apps": 3,
+      "death_loop_window_s": 420,
+      "focus_long_min": 45,
+      "focus_switch_per_hour": 40,
+      "focus_coding_categories": [
+        "开发",
+        "代码",
+        "AI编程",
+        "编码",
+        "开发工具",
+        "编写"
+      ]
+    },
+    "persona": {
+      "enabled": true,
+      "min_total_min": 30,
+      "night_start_hour": 23,
+      "coding_categories": [
+        "开发",
+        "代码",
+        "AI编程",
+        "编码",
+        "开发工具",
+        "编写"
+      ]
+    },
+    "git": {
+      "enabled": true,
+      "projects": [],
+      "timeout_s": 10,
+      "top_files": 5
+    },
+    "time_saved": {
+      "enabled": true,
+      "factor": 2.0,
+      "min_ai_min": 10
     }
   }
 }

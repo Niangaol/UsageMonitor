@@ -32,3 +32,10 @@ demo_data/
 # Electron 壳（npm install / electron-builder 产物，可随时重建）
 electron-app/node_modules/
 electron-app/dist/
+# ===== 测试/覆盖率/临时 =====
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.omo/
+tmp/

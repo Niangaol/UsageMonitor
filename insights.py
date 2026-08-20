@@ -68,6 +68,13 @@ _DEFAULT_PERSONA = {
     "coding_categories": _DEFAULT_BEHAVIOR["focus_coding_categories"],
 }
 
+# 时间节省估算（Phase 3 · 自动化省时估算）
+_DEFAULT_TIME_SAVED = {
+    "enabled": True,
+    "factor": 2.0,                # 估算手工耗时 ≈ AI 时长 × factor
+    "min_ai_min": 10,            # AI 活跃低于该分钟数不估算
+}
+
 # Vibe 编程人格（趣味）可选脸谱：label + emoji + 一句话描述
 _PERSONAS: list[dict] = [
     {"label": "AI 驱动工程师", "emoji": "🤖",
@@ -184,6 +191,7 @@ def _insights_config(config: dict) -> dict:
         "behavior": _merge_dict(_DEFAULT_BEHAVIOR, ins.get("behavior") if isinstance(ins.get("behavior"), dict) else None),
         "persona": _merge_dict(_DEFAULT_PERSONA, ins.get("persona") if isinstance(ins.get("persona"), dict) else None),
         "ai": _merge_dict(_DEFAULT_AI, ins.get("ai") if isinstance(ins.get("ai"), dict) else None),
+        "time_saved": _merge_dict(_DEFAULT_TIME_SAVED, ins.get("time_saved") if isinstance(ins.get("time_saved"), dict) else None),
     }
 
 
@@ -674,6 +682,47 @@ def behavior_insights(agg: dict, config: dict | None = None) -> dict:
         "breakdown": breakdown,
         "death_loop": _detect_death_loop(flips, bh),
     }
+
+
+def time_saved_insights(agg: dict, config: dict | None = None) -> dict:
+    """时间节省估算（Phase 3 · 基于 AI 编程时长 × 效率因子）。
+
+    估算手工耗时 ≈ AI 活跃时长 × factor；节省时长 = 估算手工耗时 - AI 活跃时长。
+    仅作参考（离线计算，不入库不上传）。返回：
+    {"enabled": bool, "ai_ms": int, "factor": float, "est_manual_ms": int,
+     "saved_ms": int, "saved_ratio": float, "label": str}
+    """
+    ins = _insights_config(config or {})
+    cfg = ins.get("time_saved", _DEFAULT_TIME_SAVED)
+    empty = {"enabled": False, "ai_ms": 0, "factor": float(cfg.get("factor", 2.0) or 2.0),
+             "est_manual_ms": 0, "saved_ms": 0, "saved_ratio": 0.0, "label": "未开启"}
+    if not ins.get("enabled") or not bool(cfg.get("enabled", True)):
+        return empty
+    by_category = agg.get("by_category") if isinstance(agg.get("by_category"), dict) else {}
+    by_ai = agg.get("by_ai") if isinstance(agg.get("by_ai"), dict) else {}
+    ai_ms = int(by_category.get("AI编程", 0) or 0)
+    if ai_ms <= 0 and by_ai:
+        ai_ms = int(sum(int(v or 0) for v in by_ai.values()))
+    if ai_ms <= 0:
+        return {**empty, "enabled": True, "label": "当日无 AI 编程"}
+    try:
+        factor = float(cfg.get("factor", 2.0) or 2.0)
+    except (TypeError, ValueError):
+        factor = 2.0
+    factor = max(1.0, min(5.0, factor))
+    min_ai_ms = int(float(cfg.get("min_ai_min", 10) or 10) * 60000)
+    if ai_ms < min_ai_ms:
+        return {"enabled": True, "ai_ms": ai_ms, "factor": factor,
+                "est_manual_ms": int(ai_ms * factor), "saved_ms": int(ai_ms * (factor - 1)),
+                "saved_ratio": round((factor - 1) / factor, 2) if factor else 0.0,
+                "label": f"AI 活跃 {ai_ms/60000:.1f} 分钟，数据较少，估算仅作参考"}
+    est = int(ai_ms * factor)
+    saved = int(est - ai_ms)
+    label = f"今日 AI 编程 {ai_ms/60000:.1f} 分钟，粗估节省 {saved/60000:.1f} 分钟（效率 ×{factor:.1f}，仅参考）"
+    return {"enabled": True, "ai_ms": ai_ms, "factor": factor,
+            "est_manual_ms": est, "saved_ms": saved,
+            "saved_ratio": round((factor - 1) / factor, 2) if factor else 0.0,
+            "label": label}
 
 
 def _persona_empty() -> dict:
