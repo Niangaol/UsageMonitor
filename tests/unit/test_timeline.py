@@ -54,8 +54,10 @@ FAKE_CONVS = [
           tok=3000, cost=0.02, lines=40, last="2026-08-20T12:33:00"),
 ]
 FAKE_COMMITS = [
-    _commit("2026-08-20 09:48:30 +0800", added=150, deleted=20),
-    _commit("2026-08-20 11:30:00 +0800", h="ff00aa", added=10, deleted=5),
+    # 单元测试用 naive 时间戳做事件排序/定位（时区转换另有 test_norm_dt_timezone_equivalence 覆盖），
+    # 避免带 +0800 的断言在 UTC CI runner 上因本地时区不同而错位。
+    _commit("2026-08-20 09:48:30", added=150, deleted=20),
+    _commit("2026-08-20 11:30:00", h="ff00aa", added=10, deleted=5),
 ]
 
 
@@ -87,7 +89,9 @@ def test_norm_dt_formats():
     d = datetime.datetime
     assert timeline._norm_dt("2026-08-20T09:12:00") == d(2026, 8, 20, 9, 12, 0)
     assert timeline._norm_dt("2026-08-20 09:12:00") == d(2026, 8, 20, 9, 12, 0)
-    assert timeline._norm_dt("2026-08-20 09:12:00 +0800") == d(2026, 8, 20, 9, 12, 0)
+    # 带时区 -> 本机本地 naive（期望值动态推导，避免硬编码 +0800、跨时区 CI 失败）
+    _tz_expect = datetime.datetime.fromtimestamp(calendar.timegm((2026, 8, 20, 1, 12, 0)))
+    assert timeline._norm_dt("2026-08-20 09:12:00 +0800") == _tz_expect
     assert timeline._norm_dt("2026-08-20") == d(2026, 8, 20)
     assert timeline._norm_dt(d(2026, 8, 20, 9, 12)) == d(2026, 8, 20, 9, 12)
     ep = d(2026, 8, 20, 9, 0, 0).timestamp()
