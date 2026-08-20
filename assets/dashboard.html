@@ -339,7 +339,7 @@
     </nav>
     <div class="side-foot">
       <div class="root" id="rootPath" title="数据目录"></div>
-      <div>v1.0.0 · 仅监听 127.0.0.1 · 纯本地</div>
+      <div>vAPP_VERSION · 仅监听 127.0.0.1 · 纯本地</div>
     </div>
   </aside>
   <div class="backdrop" id="backdrop"></div>
@@ -357,10 +357,10 @@
     <section class="view active" id="view-overview">
       <div class="cards" id="ovCards"></div>
       <div class="budget-banner" id="ovBudget" style="display:none"></div>
-      <div class="panel">
+      <div class="panel" id="qPanel" style="display:none">
         <h2>快速提问 <span class="hint">固定模板·本地计算·不调用大模型</span></h2>
         <div class="controls">
-          <input type="text" id="qInput" placeholder="如：昨天 opencode 花了多少钱 / 本周哪个项目成本最高" style="flex:1;min-width:260px">
+          <input type="text" id="qInput" autocomplete="off" placeholder="如：昨天 opencode 花了多少钱 / 本周哪个项目成本最高" style="flex:1;min-width:260px">
           <button class="btn primary" id="qGo">查询</button>
         </div>
         <div id="qAnswer" style="margin-top:10px"></div>
@@ -644,6 +644,23 @@
         <div class="set-note" id="aiCfgNote" style="margin-top:8px"></div>
       </div>
       <div class="set-group">
+        <h3>💲 AI 模型价格（成本估算）</h3>
+        <div class="desc">成本估算 = Token 数 × 单价 ÷ 1,000,000，单价单位 USD / 百万 Token（输入为 USD，输出通常更贵）。
+          内置常见模型价目表（量级参考，会随厂商调整），可在此<b>覆盖未收录/价格变动</b>的模型——保存后用于时间轴/对比/成本统计。</div>
+        <div id="priceTip" class="hint" style="margin:6px 0 10px"></div>
+        <div id="priceList" style="display:grid;gap:8px;margin-bottom:10px"></div>
+        <div class="controls" style="margin-bottom:12px">
+          <input type="text" id="priceModel" placeholder="模型名（如 claude-opus-5 / muse-spark-1.2）" style="flex:1;min-width:200px">
+          <input type="number" id="priceIn" placeholder="输入 $/M" step="0.01" min="0" style="width:120px">
+          <input type="number" id="priceOut" placeholder="输出 $/M" step="0.01" min="0" style="width:120px">
+          <button class="btn" id="priceAdd">添加 / 更新</button>
+        </div>
+        <div class="controls">
+          <button class="btn primary" id="priceSave">保存价格覆盖</button>
+          <span class="set-note" id="priceNote"></span>
+        </div>
+      </div>
+      <div class="set-group">
         <h3>🔄 软件更新</h3>
         <div class="desc">当前版本 <b id="upCurrent">…</b>。从 GitHub Releases 检测新版本，
           可在应用内下载并安装（替换 exe 后自动重启；开发模式仅支持检测）。</div>
@@ -762,8 +779,16 @@ async function tryUnlock(){
 }
 
 /* ---------- 工具 ---------- */
-async function api(path){
-  const r = await fetch(path, {headers: tokenHeaders()});
+async function api(path, method, body){
+  const opt = {headers: tokenHeaders()};
+  if(method){
+    opt.method = method;
+    if(body !== undefined){
+      opt.headers["Content-Type"] = "application/json";
+      opt.body = JSON.stringify(body);
+    }
+  }
+  const r = await fetch(path, opt);
   if(r.status === 401){ failAuth(); throw new Error("口令未授权"); }
   if(!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
@@ -798,6 +823,11 @@ function countUp(el, value, fmt, dur){
 }
 function skeleton(rows){
   return '<div class="sk" style="height:' + (rows*14) + 'px;width:100%"></div>';
+}
+function loadingBox(text){
+  return '<div class="empty" style="padding:28px 0">' +
+    '<div class="sk" style="height:8px;width:52%;margin:0 auto 14px;border-radius:4px"></div>' +
+    '<div style="color:var(--dim)">' + esc(text) + '</div></div>';
 }
 function statRows(data, fmt){
   const max = Math.max(1, ...Object.values(data));
@@ -1124,7 +1154,7 @@ async function loadReport(){
 
 /* ---------- 周报 / 月报（P1-1） ---------- */
 async function loadWeek(){
-  $("#wkMd").innerHTML = skeleton(14);
+  $("#wkMd").innerHTML = loadingBox("正在聚合近 7 天数据…");
   const r = await api("/api/week");
   if(!r.days || !r.days.length){
     $("#wkMd").innerHTML = '<div class="empty">近 7 天无数据</div>'; return;
@@ -1132,7 +1162,7 @@ async function loadWeek(){
   $("#wkMd").innerHTML = md2html(r.markdown);
 }
 async function loadMonth(){
-  $("#moMd").innerHTML = skeleton(14);
+  $("#moMd").innerHTML = loadingBox("正在聚合本月数据（数据量大时需数秒，请稍候）…");
   if(!state.month) return;
   const r = await api("/api/month?month=" + state.month);
   if(!r.exists){ $("#moMd").innerHTML = '<div class="empty">当月无数据</div>'; return; }
@@ -1166,9 +1196,11 @@ async function downloadToFile(url, filename){
   setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
 }
 let exporting = false;
-async function doExport(scope, type){
+async function doExport(scope, type, btn){
   if(exporting) return;
   exporting = true;
+  const oldText = btn ? btn.textContent : "";
+  if(btn){ btn.textContent = "导出中…"; btn.disabled = true; }
   try{
     let url = "/api/export?type=" + type + "&scope=" + scope;
     let name = "report";
@@ -1181,10 +1213,11 @@ async function doExport(scope, type){
     alert("导出失败：" + e.message);
   }finally{
     exporting = false;
+    if(btn){ btn.textContent = oldText; btn.disabled = false; }
   }
 }
 function wireExportButtons(){
-  $$("[data-export]").forEach(b => b.onclick = () => doExport(b.dataset.export, b.dataset.scope));
+  $$("[data-export]").forEach(b => b.onclick = () => doExport(b.dataset.scope, b.dataset.export, b));
 }
 
 /* ---------- 备份/恢复（P1-4） ---------- */
@@ -1350,6 +1383,63 @@ function wireAiSettings(){
   if(btn) btn.onclick = saveAiSettings;
   const ollamaBtn = $("#aiOllamaFetch");
   if(ollamaBtn) ollamaBtn.onclick = fetchOllamaModels;
+}
+
+function wirePricing(){
+  const list = $("#priceList");
+  const tip = $("#priceTip");
+  const note = $("#priceNote");
+  let current = {};
+  async function refresh(){
+    try{
+      const d = await api("/api/pricing");
+      tip.textContent = "内置 " + (d.builtin_count||0) + " 个模型价目；下方为你覆盖的 "
+        + Object.keys(d.custom||{}).length + " 个自定义价格（优先级更高）。";
+      current = d.custom || {};
+      render();
+    }catch(e){ tip.textContent = "价格加载失败：" + e.message; }
+  }
+  function render(){
+    const keys = Object.keys(current);
+    if(!keys.length){ list.innerHTML = '<div class="empty">（暂无自定义；新增空行后可批量保存）</div>'; return; }
+    list.innerHTML = keys.map((k,i) => {
+      const v = current[k];
+      const inp = Array.isArray(v) ? v : [v.input, v.output];
+      return '<div class="price-row" style="display:grid;grid-template-columns:1fr 120px 120px auto;gap:8px;align-items:center">'
+        + '<input class="pm" data-i="'+i+'" value="'+esc(k)+'" style="min-width:0">'
+        + '<input class="pi" type="number" step="0.01" min="0" data-i="'+i+'" value="'+esc(String(inp[0]??0))+'" style="min-width:0">'
+        + '<input class="po" type="number" step="0.01" min="0" data-i="'+i+'" value="'+esc(String(inp[1]??0))+'" style="min-width:0">'
+        + '<button class="btn" data-del="'+i+'">删除</button></div>';
+    }).join("");
+  }
+  function commit(){
+    const rows = [...list.querySelectorAll(".price-row")];
+    current = {};
+    for(const r of rows){
+      const k = r.querySelector(".pm").value.trim();
+      if(!k) continue;
+      current[k] = [Number(r.querySelector(".pi").value||0), Number(r.querySelector(".po").value||0)];
+    }
+    return current;
+  }
+  $("#priceAdd").onclick = () => {
+    const m = $("#priceModel").value.trim();
+    if(!m){ note.textContent = "请先输入模型名"; note.style.color = "var(--danger)"; return; }
+    current[m] = [Number($("#priceIn").value||0), Number($("#priceOut").value||0)];
+    $("#priceModel").value = ""; $("#priceIn").value = ""; $("#priceOut").value = "";
+    note.textContent = ""; render();
+  };
+  list.onclick = e => { const b = e.target.closest("[data-del]"); if(!b) return;
+    const i = Number(b.dataset.del); const k = Object.keys(current)[i]; if(k) delete current[k]; render(); };
+  $("#priceSave").onclick = async () => {
+    const data = commit();
+    try{
+      await api("/api/pricing", "POST", {pricing: data});
+      note.textContent = "已保存 " + Object.keys(data).length + " 个价格覆盖 ✓"; note.style.color = "var(--ok)";
+      await refresh();
+    }catch(e){ note.textContent = "保存失败：" + e.message; note.style.color = "var(--danger)"; }
+  };
+  refresh();
 }
 
 /* ---------- 会话 ---------- */
@@ -1575,11 +1665,14 @@ function drawGrowthChart(weeks, trend){
   requestAnimationFrame(frame);
 }
 function bindGrowthControls(){
-  $$(".controls [data-gw]").forEach(b => { b.onclick = () => {
+  document.addEventListener("click", e => {
+    const b = e.target.closest("#view-growth [data-gw]");
+    if(!b) return;
     growW = Number(b.dataset.gw) || 8;
+    $$("#view-growth [data-gw]").forEach(x => x.classList.toggle("primary", x === b));
     state.loaded.growth = false;
     switchView("growth");
-  }; });
+  });
   const rb = $("#grReload");
   if(rb) rb.onclick = () => { state.loaded.growth = false; switchView("growth"); };
 }
@@ -1629,12 +1722,14 @@ function renderCompare(d){
   }).join("");
 }
 function bindCompareControls(){
-  $$(".controls [data-cmp]").forEach(b => { b.onclick = () => {
+  document.addEventListener("click", e => {
+    const b = e.target.closest("#view-compare [data-cmp]");
+    if(!b) return;
     cmpDays = Number(b.dataset.cmp) || 14;
-    $$(".controls [data-cmp]").forEach(x => x.classList.toggle("primary", x === b));
+    $$("#view-compare [data-cmp]").forEach(x => x.classList.toggle("primary", x === b));
     state.loaded.compare = false;
     switchView("compare");
-  }; });
+  });
   const rb = $("#cmpReload");
   if(rb) rb.onclick = () => { state.loaded.compare = false; switchView("compare"); };
 }
@@ -2429,6 +2524,7 @@ function startApp(){
   wireExportButtons();
   wireInsights();
   wireAiSettings();
+  wirePricing();
   wireAiModule();
   wireUpdate();
   monthInit();
@@ -2472,6 +2568,9 @@ function startApp(){
       const ni = document.getElementById("navInsights");
       if(ni) ni.style.display = "none";
       if(target === "insights") target = "overview";
+    } else {
+      const qp = document.getElementById("qPanel");
+      if(qp) qp.style.display = "";
     }
     groupsInit();
     armLogTimer();

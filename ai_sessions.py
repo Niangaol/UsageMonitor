@@ -79,6 +79,7 @@ _DEFAULT_PATHS: dict[str, list[str]] = {
         "~/.deepseek",
     ],
     "pi_agent": [
+        "~/.pi/agent/sessions",
         "~/.pi-agent",
         "~/.local/share/pi-agent",
         "%APPDATA%/pi-agent",
@@ -855,6 +856,172 @@ def parse_file(path: str) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# 工具专用解析器（model 多为会话级，需上下文回填，否则每条消息 model 均“未识别”）
+# 返回与 parse_file 同构的 [{role, content, timestamp, model, conv_id?, project?}]。
+# 均 best-effort：任何异常/缺失 → 空列表，绝不抛。
+# ---------------------------------------------------------------------------
+def _norm_pi_model(provider: str, model_id: str) -> str:
+    """pi/opencode 的 provider+modelId → 统一模型名（去 provider 前缀，保留型号）。"""
+    m = (model_id or "").strip()
+    return _clean_model(m) if m else "未识别"
+
+
+def _parse_pi_file(path: str) -> list[dict]:
+    """解析 pi agent 会话 jsonl（~/.pi/agent/sessions/<proj>/*.jsonl）。
+
+    pi 格式：逐行 JSON，type ∈ {session, model_change, message, ...}。
+    - model_change 行携 modelId/provider → 作为当前会话 model 上下文回填
+    - message 行：message.role / message.content[].text / timestamp
+    - cwd（session 行）→ project
+    每条消息回填当时生效的 model。
+    """
+    out: list[dict] = []
+    cur_model = "未识别"
+    project = None
+    conv_id = os.path.splitext(os.path.basename(path))[0][:48]
+    try:
+        with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                typ = obj.get("type")
+                if typ == "session":
+                    cwd = obj.get("cwd") or obj.get("directory")
+                    if cwd:
+                        project = os.path.basename(str(cwd).rstrip("/\\")) or None
+                elif typ == "model_change":
+                    cur_model = _norm_pi_model(obj.get("provider", ""), obj.get("modelId", ""))
+                elif typ == "message":
+                    inner = obj.get("message")
+                    if not isinstance(inner, dict):
+                        continue
+                    role = inner.get("role")
+                    if role not in _USER_ROLES and role not in _ASSISTANT_ROLES:
+                        continue
+                    content = inner.get("content")
+                    text = ""
+                    if isinstance(content, str):
+                        text = content
+                    elif isinstance(content, list):
+                        parts = []
+                        for p in content:
+                            if isinstance(p, dict) and p.get("type") in ("text", None) and p.get("text"):
+                                parts.append(str(p["text"]))
+                            elif isinstance(p, str):
+                                parts.append(p)
+                        text = "\n".join(parts)
+                    out.append({
+                        "role": role, "content": text,
+                        "timestamp": obj.get("timestamp") or inner.get("timestamp"),
+                        "model": cur_model, "project": project, "conv_id": conv_id,
+                    })
+    except Exception:  # noqa: BLE001
+        return out
+    return out
+
+
+def _parse_opencode_db(db_path: str, date_str: str) -> list[dict]:
+    """读 opencode.db（SQLite）当日消息：message 表含 role/modelID/time，part 表含 text。
+
+    只读、immutable 打开（不与守护竞争锁）；modelID 为会话级真实模型名。
+    时间戳 time_created 为毫秒 epoch。任何异常 → 空列表。
+    """
+    import sqlite3  # noqa: PLC0415
+    out: list[dict] = []
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True, timeout=2.0)
+    except Exception:  # noqa: BLE001
+        return out
+    try:
+        conn.row_factory = sqlite3.Row
+        # part text 按 message_id 聚合
+        texts: dict[str, list[str]] = {}
+        try:
+            for r in conn.execute("SELECT message_id, data FROM part"):
+                try:
+                    pd = json.loads(r["data"])
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if isinstance(pd, dict) and pd.get("type") == "text" and pd.get("text"):
+                    texts.setdefault(r["message_id"], []).append(str(pd["text"]))
+        except sqlite3.Error:
+            pass
+        # session -> project（directory 末段）
+        proj: dict[str, str] = {}
+        try:
+            for r in conn.execute("SELECT id, directory FROM session"):
+                d = r["directory"]
+                if d:
+                    proj[r["id"]] = os.path.basename(str(d).rstrip("/\\")) or ""
+        except sqlite3.Error:
+            pass
+        for r in conn.execute("SELECT id, session_id, time_created, data FROM message"):
+            try:
+                md = json.loads(r["data"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(md, dict):
+                continue
+            role = md.get("role")
+            if role not in _USER_ROLES and role not in _ASSISTANT_ROLES:
+                continue
+            try:
+                ts = datetime.datetime.fromtimestamp(int(r["time_created"]) / 1000.0).isoformat()
+            except (OSError, ValueError, OverflowError, TypeError):
+                continue
+            if not ts.startswith(date_str):
+                continue
+            out.append({
+                "role": role,
+                "content": "\n".join(texts.get(r["id"], [])),
+                "timestamp": ts,
+                "model": _clean_model(str(md.get("modelID") or "")) or "未识别",
+                "project": proj.get(r["session_id"]) or None,
+                "conv_id": r["session_id"],
+            })
+    except sqlite3.Error:
+        return out
+    finally:
+        conn.close()
+    return out
+
+
+def _iter_tool_messages(tool: str, dirs: list[str], date_str: str,
+                        parsed_paths: set) -> list[tuple[str, list[dict]]]:
+    """按工具选择解析器，产出 (标识, messages) 列表。
+
+    - opencode：先读 opencode.db（SQLite，真实 model/成本），再傅 json/jsonl 文件（向后兼容）
+    - pi_agent：jsonl 用 pi 专用解析（model_change 上下文回填）
+    - 其他：parse_file
+    """
+    out: list[tuple[str, list[dict]]] = []
+    if tool == "opencode":
+        for d in dirs:
+            db = os.path.join(d, "opencode.db")
+            key = os.path.normcase(os.path.abspath(db))
+            if os.path.isfile(db) and key not in parsed_paths:
+                parsed_paths.add(key)
+                out.append((db, _parse_opencode_db(db, date_str)))
+    is_pi = tool == "pi_agent" or tool.startswith("pi")
+    for path in _walk_files(dirs):
+        real = os.path.normcase(os.path.abspath(path))
+        if real in parsed_paths:
+            continue
+        parsed_paths.add(real)
+        msgs = _parse_pi_file(path) if is_pi else parse_file(path)
+        if is_pi and not msgs:  # pi 解析空时回退通用解析
+            msgs = parse_file(path)
+        out.append((path, msgs))
+    return out
+
+
+
 def _generated_lines(text: str) -> int:
     """生成行数：按换行符拆分，空内容返回 0。"""
     text = text or ""
@@ -897,12 +1064,7 @@ def collect(date_str: str, config: dict, web_visits: list[dict] | None = None) -
     for tool, dirs in tool_paths.items():
         stats = _empty_tool_stats()
         conv_buckets: dict[str, list[dict]] = {}
-        for path in _walk_files(dirs):
-            real = os.path.normcase(os.path.abspath(path))
-            if real in parsed_paths:
-                continue
-            parsed_paths.add(real)
-            messages = parse_file(path)
+        for path, messages in _iter_tool_messages(tool, dirs, date_str, parsed_paths):
             hit_file = False
             for msg in messages:
                 ts = _message_time(msg)

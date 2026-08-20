@@ -39,6 +39,28 @@ Release flow: `git tag vX.Y.Z` → CI builds and publishes the Release automatic
 - **Dashboard resilience**：`/api/heatmap` failing to aggregate a single day (e.g. invalid encoding in `usage.jsonl`) no longer 500s the whole heatmap/trend — that day falls back to 0 and the timeline stays continuous
 - **Tests**：`test_app_groups` adds assertions for orphan-group pruning / fallback to auto classification / pruning on import
 
+## [2.5.1] - 2026-08-20
+
+> Theme: fix a batch of frontend/data-layer defects found in real use, plus add an "AI model pricing" settings entry. Fully offline-derived, zero third-party runtime dependencies.
+
+### Fixed
+
+- **Export button always returned 400**: the frontend `doExport` argument order was reversed versus the backend contract (`scope`/`type` swapped), so `type` was rejected as invalid. Corrected the argument order and added a loading state; the backend now strictly validates `type`/`scope` and returns 400 on mismatch (no more silent empty files).
+- **Growth/Compare 4/8/12/24-week buttons dead**: the old `$$('.controls [data-gw]')` selector couldn't bind buttons outside the view container. Switched to event delegation (`#view-growth [data-gw]`) with a `primary` highlight.
+- **AI sessions only saw claude, models all "unrecognized", cost all 0**: `ai_sessions` discovery previously only covered claude. Added **opencode (SQLite, real modelID/cost)** and **pi agent (`~/.pi/agent/sessions` dedicated parser with model_change context backfill)** parsers — `model` is mostly session-level and must be backfilled, otherwise every message reads "unrecognized". After the fix, tools cover `claude / opencode / pi_agent`, and model recognition + cost estimation recover.
+- **Quick-ask input couldn't be typed + should show only after AI is wired**: the panel now defaults to hidden and appears only when AI insights are enabled; confirmed no overlay/`readonly`/`preventDefault` blocks input.
+- **Week/Month report "never generates"**: month aggregation takes ~12s on real data with no feedback. Added an explicit loading state ("Aggregating this month's data… please wait") to avoid appearing frozen.
+- **Bottom-left version hardcoded v1.0.0**: now injected from backend `version.VERSION` to match the release version.
+- **Contact identification empty**: verified by-design — only recorded when WeChat/QQ/DingTalk foreground window titles contain a contact; the user had no such windows recently, so empty is expected, not a bug. The AI-tool part recovered with the data-layer fix above.
+
+### Added
+
+- **AI model pricing settings UI** (Settings → "💲 AI model pricing"): built-in common model price table (USD per million tokens, magnitude reference); override unlisted/changed models here; saved to `<data root>/ai_pricing.json` and immediately used by timeline/compare/cost stats. New `/api/pricing` GET/POST endpoints.
+
+### Tests
+
+- Added `tests/api/test_regression_bugs.py`: locks the export param contract (correct order 200, wrong order 400), `/api/pricing` read/write round-trip, and multi-tool discovery structure.
+
 ## [2.5.0] - 2026-08-20
 
 > Theme: evolve from "how long you used it" to "understand your AI-coding process, cost and growth". All offline-derived, zero third-party runtime deps, raw `usage.jsonl` never mutated.

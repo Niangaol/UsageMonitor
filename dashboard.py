@@ -437,10 +437,11 @@ def load_page_template() -> str:
 
 
 def _page_html(root: str, auth_enabled: bool) -> str:
-    """把数据根目录与鉴权标记注入模板（与原内联替换逻辑等价）。"""
+    """把数据根目录 / 鉴权标记 / 版本号注入模板（与原内联替换逻辑等价）。"""
     return (load_page_template()
             .replace("DATA_ROOT", json.dumps(root).replace("$", "\\$"))
-            .replace("AUTH_FLAG", "true" if auth_enabled else "false"))
+            .replace("AUTH_FLAG", "true" if auth_enabled else "false")
+            .replace("APP_VERSION", version.VERSION))
 
 
 
@@ -944,6 +945,30 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"ai module export failed: {exc}"}, 500)
             return
 
+        if path == "/api/pricing":
+            # AI 模型定价：内置默认计数 + 用户 <root>/ai_pricing.json 覆盖（USD/百万 Token）
+            try:
+                import ai_sessions  # noqa: PLC0415
+                builtin = dict(ai_sessions._DEFAULT_PRICING)
+                custom: dict = {}
+                fp = os.path.join(root, "ai_pricing.json")
+                if os.path.isfile(fp):
+                    try:
+                        with open(fp, "r", encoding="utf-8-sig") as fh:
+                            loaded = json.load(fh)
+                        if isinstance(loaded, dict):
+                            custom = loaded
+                    except Exception:  # noqa: BLE001
+                        custom = {}
+                self._send_json({
+                    "builtin_count": len(builtin),
+                    "builtin": {k: list(v) for k, v in sorted(builtin.items())},
+                    "custom": custom,
+                })
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": f"pricing read failed: {exc}"}, 500)
+            return
+
         if path == "/api/update/check":
             # 新版本检测（GitHub Releases API，结果缓存 5 分钟）
             config = _load_config_for_root(root, self.server.config_path)
@@ -1247,6 +1272,32 @@ class Handler(BaseHTTPRequestHandler):
                 })
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": f"save failed: {exc}"}, 400)
+            return
+
+        if path == "/api/pricing":
+            # 保存用户模型定价覆盖到 <root>/ai_pricing.json（{model:[in,out]} 或 {model:{input,output}}）
+            data = body.get("pricing") if isinstance(body.get("pricing"), dict) else body
+            clean: dict = {}
+            for k, v in (data or {}).items():
+                if isinstance(v, (list, tuple)) and len(v) >= 2:
+                    try:
+                        clean[str(k)] = [float(v[0]), float(v[1])]
+                    except (TypeError, ValueError):
+                        pass
+                elif isinstance(v, dict) and "input" in v and "output" in v:
+                    try:
+                        clean[str(k)] = {"input": float(v["input"]), "output": float(v["output"])}
+                    except (TypeError, ValueError):
+                        pass
+            try:
+                fp = os.path.join(root, "ai_pricing.json")
+                tmp = fp + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    json.dump(clean, fh, ensure_ascii=False, indent=2)
+                os.replace(tmp, fp)
+                self._send_json({"ok": True, "count": len(clean)})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": f"pricing save failed: {exc}"}, 400)
             return
 
         if path == "/api/ai/module":
