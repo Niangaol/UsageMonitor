@@ -111,7 +111,9 @@ python monitor.py --admin   # auto UAC elevation when not running as admin
 
 - Offline rule engine: study / game / health / efficiency / balance / trend advice
 - Optional AI insights: OpenAI-compatible endpoint, privacy-filtered aggregates, off by default
-- AI session deep stats: reads local session files from opencode / ChatGPT / Claude / Cursor / Windsurf / Trae / DeepSeek / Pi Agent / DSH
+- AI session deep stats: reads local session files from opencode / ChatGPT / Claude / Cursor / Windsurf / Trae / DeepSeek / Pi Agent / DSH (per-tool support matrix and extension guide: [docs/HARNESSES.md](docs/HARNESSES.md), Chinese)
+- Alert loop (v2.7): AI cost budget warn/exceed + continuous-work rest reminders via tray balloon, configurable thresholds/cooldown
+- Daily goals (v2.7 · optional): total active / coding time targets with streak counter, overview progress panel, off by default
 
 ### Adaptation
 
@@ -229,6 +231,7 @@ CI: tests → coverage (incl. insights/updater/sqlite_store/ai_sessions) → PyI
 
 - [CHANGELOG.md](CHANGELOG.md)（[English](CHANGELOG.en.md)）
 - [简体中文 README](README.md)
+- [HARNESSES.md](docs/HARNESSES.md)（AI harness support matrix: which tools get timing / session deep-stats / web tracking, and how to extend — Chinese）
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [TODO.md](TODO.md)（handover / todo list）
 - [ROADMAP.md](docs/ROADMAP.md)（AI coding deep-tracking plan, Chinese）

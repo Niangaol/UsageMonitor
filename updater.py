@@ -183,13 +183,18 @@ def check_for_update(current: str | None = None, api_base: str | None = None,
 # ---------------------------------------------------------------------------
 def download(url: str, dest: str, expected_size: int | None = None,
              expected_digest: str | None = None, progress=None,
-             timeout: float = 120.0, chunk: int = 65536) -> str:
+             timeout: float = 120.0, chunk: int = 65536,
+             api_base: str | None = None) -> str:
     """流式下载到 dest（先写 .part 再原子替换），可选校验大小与 SHA256。
 
     progress(got, total) 回调（total 可能为 None）；失败抛 UpdateError 并清理残留。
+    下载前复核 URL 白名单（纵深防御：不依赖调用方先经 latest_release 过滤），
+    api_base 与 latest_release 的语义一致（config.json 的 update.api_base）。
     """
     if not url:
         raise UpdateError("下载地址为空")
+    if not _is_allowed_asset_url(url, api_base):
+        raise UpdateError("下载地址不在允许的域名白名单内，已中止更新")
     os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
     part = dest + ".part"
     request = urllib.request.Request(url, headers={"User-Agent": _UA})

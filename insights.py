@@ -765,6 +765,49 @@ def conversation_quality_insights(ai_data: dict | None = None) -> list[dict]:
              "title": f"AI 会话质量 {avg} 分 · {grade}", "detail": "；".join(parts)}]
 
 
+def baseline_insights(root: str, date: str, agg: dict, config: dict | None = None) -> list[dict]:
+    """个性化基线洞察（v2.7「简单学习」）：当日指标 vs 个人历史基线。
+
+    learn.py 用 Welford 递推维护每个用户的运行均值/方差（越用越准），
+    当日值偏离 |z|≥z_warn 时生成规则卡片（type="trend"，复用现有前端标签）。
+    打分先于更新（当日不污染自身基线）；样本 < min_days 时只累计不打扰。
+    任何异常静默降级为空列表，不拖垮洞察主流程。
+    """
+    try:
+        import learn  # noqa: PLC0415 —— 惰性导入
+        cfg = learn.baseline_config(config)
+        if not cfg["enabled"]:
+            return []
+        result = learn.record_and_score_agg(root, date, agg)
+        n = int(result.get("n") or 0)
+        if n < cfg["min_days"]:
+            return []  # 基线还在预热期，不打扰
+        out: list[dict] = []
+        for key, sc in (result.get("scores") or {}).items():
+            z = float(sc.get("z") or 0.0)
+            level = sc.get("level")
+            if level not in ("unusual", "anomaly"):
+                continue
+            label = learn.METRIC_LABELS.get(key, key)
+            mean = sc.get("mean", 0.0)
+            unit = " 分钟" if key.endswith("_min") else " 个"
+            direction = "高于" if z > 0 else "低于"
+            severity = "alert" if level == "anomaly" else "warn"
+            detail = (f"今日 {label} {abs(z):.1f}σ {direction}你的常态"
+                      f"（近 {n} 天均值约 {mean:g}{unit}）。"
+                      + ("波动相当显著，建议留意节奏" if level == "anomaly"
+                         else "略有起伏，属正常范围边缘"))
+            out.append({
+                "type": "trend",
+                "severity": severity,
+                "title": f"{label}较常态{'明显偏高' if z > 0 else '明显偏低'}",
+                "detail": detail,
+            })
+        return out
+    except Exception:  # noqa: BLE001 —— 基线失败不影响其他洞察
+        return []
+
+
 def _persona_empty() -> dict:
     """无数据 / 关闭时的空人格（避免前端因缺字段而报错）。"""
     return {

@@ -92,3 +92,23 @@ def test_download_rejects_empty_url(tmp_path):
     except updater.UpdateError as exc:
         assert "为空" in str(exc)
     print("  [PASS] download_rejects_empty")
+
+
+def test_download_rejects_disallowed_url(tmp_path):
+    """download 本体复核白名单（纵深防御，不依赖调用方先经 latest_release 过滤）。"""
+    # 白名单外域名直接拒绝（校验发生在任何网络请求之前）
+    try:
+        updater.download("https://evil.com/file.exe", str(tmp_path / "out.exe"))
+        assert False, "should raise"
+    except updater.UpdateError as exc:
+        assert "白名单" in str(exc)
+    assert not (tmp_path / "out.exe").exists()
+    assert not (tmp_path / "out.exe.part").exists()
+    # api_base 指定域名放行、其余仍拒绝
+    try:
+        updater.download("https://other.com/file.exe", str(tmp_path / "out2.exe"),
+                         api_base="https://mirror.example")
+        assert False, "should raise"
+    except updater.UpdateError:
+        pass
+    print("  [PASS] download_rejects_disallowed")

@@ -18,6 +18,7 @@ CLI：
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import json
 import os
@@ -135,16 +136,75 @@ def insert_record(conn: sqlite3.Connection, day: str, rec: dict) -> bool:
 
 
 def append_record(data_root: str, day: str, rec: dict) -> bool:
-    """best-effort 追加一条记录到 SQLite；失败返回 False（不抛异常）。"""
+    """best-effort 追加一条记录到 SQLite；失败返回 False（不抛异常）。
+
+    性能：连接按 data_root 进程内复用（_CONN_CACHE），init_db 每连接只跑一次——
+    避免每条记录都 connect + executescript 的开销（monitor 状态变化才写一条，
+    单次不大，但报表回填/长驻守护累计可观）。测试/退出用 close_connections() 释放。
+    """
     try:
-        conn = connect(data_root)
-        try:
-            init_db(conn)
-            return insert_record(conn, day, rec)
-        finally:
-            conn.close()
+        conn = _shared_conn(data_root)
+        return insert_record(conn, day, rec)
     except Exception:  # noqa: BLE001 —— SQLite 只是额外镜像，失败不影响监控
         return False
+
+
+_CONN_CACHE: dict[str, "sqlite3.Connection"] = {}
+_INITED_KEYS: set[str] = set()
+
+
+def _conn_key(data_root: str) -> str:
+    return os.path.normcase(os.path.abspath(data_root or "."))
+
+
+def _shared_conn(data_root: str) -> "sqlite3.Connection":
+    """取（或创建）data_root 对应的进程内共享连接。
+
+    镜像库放宽持久化：WAL + synchronous=NORMAL——commit 不再逐条 fsync
+    （JSONL 才是事实源，镜像可由 --rebuild 重建，断电最多丢最近几条镜像，
+    且 verify/backfill 可自愈）。实测写入吞吐提升约一个数量级。
+    """
+    key = _conn_key(data_root)
+    conn = _CONN_CACHE.get(key)
+    if conn is None:
+        conn = connect(data_root)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+        except Exception:  # noqa: BLE001 —— PRAGMA 失败不影响可用性
+            pass
+        _CONN_CACHE[key] = conn
+    if key not in _INITED_KEYS:
+        init_db(conn)
+        _INITED_KEYS.add(key)
+    return conn
+
+
+def close_connection(data_root: str) -> None:
+    """关闭单个 data_root 的共享连接（删除/重建 usage.db 前必须调用，
+    否则旧句柄指向已删除文件，后续写入进孤儿文件）。"""
+    key = _conn_key(data_root)
+    conn = _CONN_CACHE.pop(key, None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+    _INITED_KEYS.discard(key)
+
+
+def close_connections() -> None:
+    """关闭并清空全部共享连接（测试隔离 / 进程退出前调用，释放 Windows 文件句柄）。"""
+    for conn in list(_CONN_CACHE.values()):
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+    _CONN_CACHE.clear()
+    _INITED_KEYS.clear()
+
+
+atexit.register(close_connections)
 
 
 def _iter_jsonl(data_root: str, day: str):
@@ -204,6 +264,7 @@ def backfill(data_root: str, days: list[str] | None = None, verbose: bool = Fals
 
 def rebuild(data_root: str, verbose: bool = False) -> dict:
     """删除并重建 usage.db，然后全量回填。"""
+    close_connection(data_root)  # 先释放共享句柄，否则删的是孤儿文件
     path = db_path(data_root)
     try:
         if os.path.isfile(path):

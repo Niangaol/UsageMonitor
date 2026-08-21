@@ -8,36 +8,80 @@
 
 > 🌐 English version: [CHANGELOG.en.md](CHANGELOG.en.md)
 
-## [Unreleased]
+## [2.7.0] - 2026-08-21
 
-### 新增（ROADMAP Phase 4 · 行为洞察）
+> 主题：告警闭环 + 每日目标 + 全局性能优化（AI 会话 / 浏览器历史 / SQLite 指纹缓存）+ Token 真实用量优先与加权估算。
 
-- **专注度评分**（离线规则）：基于最长专注段、编码/开发占比、每小时切换频率综合打分 0–100 并按高中低分级
-- **死循环检测**：识别时间窗内密集短会话高频反复切换（如多应用快速往返）并告警
-- **集成**：洞察页新增「行为洞察」面板（专注度卡 + 死循环告警）；日报「今日建议」加入专注度与死循环提示；`/api/insights` 返回 `behavior`
-- **Vibe 编程人格分析**（趣味 · 离线）：基于当日活动分布按加权打分挑出人格脸谱（AI 驱动工程师 / 深度专注者 / 多线程快切王 / 节点循环受害者 / 夜行动物 / 终身学习者 / 社交达人 / 游戏玩家 / 全能六边形选手 / 自由探索者）
-- **集成**：行为洞察面板顶部的人格卡 + 日报「今日建议」的人格提示；`/api/insights` 返回 `persona`
-- 阈值可配置：`insights.behavior`（`short_session_s` / `switch_gap_s` / `death_loop_*` / `focus_*` 等）+ `insights.persona`（`enabled` / `min_total_min` / `night_start_hour` / `coding_categories`）
-- **Git 代码变更分析**（Phase 2 · 只读本地提交）：配置 `insights.git.projects` 后，用 `git log --numstat` 统计指定日期的提交 / 新增 / 删除行 / 改动文件；以「修改率」（删除行 / 变更行）作返工近似指标
-- **集成**：洞察页新增「代码产出（Git）」面板 + 日报「今日建议」的产出提示；`/api/insights` 返回 `git`；`python git_insights.py --day` CLI
-- 只读、带超时、无 git / 未配置 / 非仓库路径均优雅降级；阈值可配 `insights.git`（`enabled` / `projects` / `timeout_s` / `top_files`）
-- **AI 成本账本（周/月汇总支出报表）**（Phase 3）：遍历期间每日 AI 会话深度，聚合消息/轮次/Token/成本，并按 模型 / 项目 / 工具 汇总；月报与周报自动追加「AI 成本账本」章节
-- 只读本地、绝不联网，ai_sessions.enabled 且至少有一天数据时输出，否则自动省略
-- **成本预算告警（v2.6 · P3）**：给 AI 成本设每日/每月预算，聚合 `ai_sessions` 成本后判定 正常(ok) / 接近(warn≥80%) / 超支(exceed) 三态；月报/周报自动追加预算小结章节，仪表盘概览新增预算 banner（超支变红），新增 `/api/budget` 端点（`date` 支持 YYYY-MM-DD 或 YYYY-MM 粒度推断）
-- 默认关闭不打扰：`config.insights.budget`（`enabled`/`daily`/`monthly`）可随时开启，老用户 config.json 无需手动加段（深合并增量生效）；零第三方依赖，预算详情不泄漏会话标题
+### 性能（v2.7.0 · 全局优化）
+
+- **AI 会话解析指纹缓存**（`ai_sessions.collect`）：按各工具目录会话文件的 (path, mtime_ns, size) 指纹缓存 tools/total 结果——只 stat 不读内容，文件新增/追加自动失效。实测合成负载（45 文件 × 40 消息）冷 76.9ms → 暖 **0.37ms（208x）**；仪表盘多端点、报表逐日成本账本、成长/对比/预算等所有调用方自动受益。`tools/total` 为共享只读对象（同 `report.aggregate` 约定），web_ai 部分不缓存随入参现算
+- **浏览器历史库指纹缓存**（`browser_history.collect`）：Chrome History 库可达数十至上百 MB，此前每次调用都整库拷贝+解析且无缓存；现按 (day, 各库 mtime_ns+size) 缓存，实测暖调用 **274x**，浏览器写入历史（mtime 变化）自动失效
+- **SQLite 镜像写入提速 ~66x**：连接按 data_root 进程内复用 + init_db 每连接仅一次 + WAL/synchronous=NORMAL 放宽持久化（JSONL 才是事实源，镜像可 rebuild 自愈）。实测 9.9ms/条 → **0.15ms/条**；`rebuild()` 前自动释放共享句柄（防删到孤儿文件）；新增 `close_connection(s)()` 供测试与退出释放句柄
+- **goals 日期列表 TTL 缓存**：streak 回推不再每次请求重复 os.listdir（mtime+5s TTL 范式，同 dashboard/classifier）
+
+### 变更（v2.7.0 · 算法精进）
+
+- **Token 估算双口径**（`ai_sessions.token_estimation_mode`）：新增 `weighted`（默认）按字符类别加权——CJK 1 Token/字、字母 4 字符/Token、数字 ~3 字符/Token、标点符号 2 字符/Token、空白 8 字符/Token，对代码/JSON 等符号密集文本显著修正 simple 口径的低估；`simple` 回退历史口径
+- **真实用量优先**：解析消息内 API 返回的 `usage` 字段（`input_tokens/output_tokens`、`prompt_tokens/completion_tokens` 及平铺变体），命中时 token 与成本按**真实值**计算，不再估算；新增 `tokens_from_usage` 统计实际覆盖消息数。Claude Code / OpenAI 风格会话文件直接受益
+- **「简单学习」个性化基线（`learn.py` + `insights.baseline_insights`）**
+  - 纯标准库在线统计学习：滑动窗口样本环（180 天）+ z-score 异常检测，Welford 精神的无依赖实现；深度学习因零依赖约束与样本量现实不采用（模块 docstring 附决策理由）
+  - 对 总活跃 / 编码 / 会话数 三个指标维护"你的常态"，当日偏离 ≥2σ 出 warn 卡片、≥3σ 出 alert 卡片（type=trend，复用现有前端渲染）
+  - 语义：打分先于记录（当日不污染自身基线）；同日重复调用覆盖重写（日报 19:30 与仪表盘多次打开安全收敛到当日最终值）；坏档自愈；习惯漂移自动跟随窗口
+  - 配置段 `insights.baseline`（`enabled` / `min_days`=7 / `z_warn`=2.0 / `z_alert`=3.0）；接入 `/api/insights` 与日报「今日建议」
+
+### 性能（v2.7.0 · 全局瘦身）
+
+- **AI 会话统计指纹缓存**（`ai_sessions.collect`）：按 (日期, 工具目录下会话文件 mtime+size 指纹) 缓存，命中时跳过全部文件读取与解析——实测 76.9ms → 0.37ms（**约 208×**）；文件新增/追加自动失效；web_ai 部分不缓存随入参现算；新增 `invalidate_collect_cache()`
+- **浏览器历史指纹缓存**（`browser_history.collect`）：按 (日期, 各 History 库 mtime+size) 缓存，消除重复整库拷贝+解析（Chrome 库可达上百 MB）——实测 6.9ms → 0.05ms（**约 144×**）；浏览器写入历史自动失效；新增 `invalidate_visits_cache()`
+- **SQLite 镜像写入提速**：进程内按 data_root 复用连接（`_CONN_CACHE`）+ `init_db` 每连接仅一次 + **WAL / synchronous=NORMAL**（JSONL 才是事实源，镜像可重建，放宽持久化合理）——实测 9.9ms → 0.15ms/条（**约 66×**）；`rebuild` 前自动释放共享句柄（`close_connection`），新增 `close_connections()` 供测试/退出清理
+- **goals 日期列表 TTL 缓存**：与 dashboard/classifier 同范式（mtime+5s），消除 streak 回推的重复 listdir
+- 以上均为**行为不变**的缓存加速：缓存对象共享但只读（沿用 report.aggregate 的"调用方不得修改"约定），指纹变化即自动失效，无需手动清理
 
 ### 测试
 
-- 新增 `test_insights_behavior`：专注日高评分 / 高频往返命中死循环 / 空数据与关闭安全
-- 新增 `test_insights_persona`：AI 编程日 / 死循环日 / 夜间学习日 / 空数据与开关安全
-- 新增 `test_git_insights`：临时 git 仓库两次提交 / 汇总 found / 未配置与关闭 / 非仓库跳过
-- 新增 `test_ai_cost_ledger`：临时 AI 会话账本生成 / 含模型拆分 / 空数据 None 降级
+- 新增 `test_learn`：配置夹取 / 指标提取 / 预热期 / z-score 偏离检测 / 当日排除自身 / 同日覆盖幂等 / 坏档自愈 / 窗口裁剪
+- 新增 `test_ai_sessions_refined`：加权估算器分桶 / usage 嵌套与平铺提取 / collect 真实用量优先（混合语义）/ simple 模式回退 / 符号密集文本两口径对比
+- 新增 `test_baseline_api`：异常日经 `/api/insights` 透出 trend 卡片 / 预热期不打扰
+- 新增 `test_perf_caches`：AI collect 对象复用与追加失效、浏览器历史对象复用与 touch 失效、SQLite 共享连接与 rebuild 句柄释放（缓存语义回归，防优化退化）
+
+### 新增（v2.7.0 · 行动与目标）
+
+- **告警闭环（`alerts.py`）**：预算接近/超支与连续工作休息提醒，经托盘气泡主动通知（Win10/11 自动转 Toast）
+  - 预算告警复用 `budget_status` 三态判定，warn/exceed 各自「每日至多一次」，跨天自动重新武装
+  - 连续工作提醒：持续活跃 ≥ `rest_after_min` 分钟且期间无足够空闲即提醒；空闲 ≥ `idle_reset_s` 视为已休息、累计清零；`cooldown_min` 冷却防打扰
+  - 预算检查限频（默认 15 分钟，内部扫描 AI 会话文件较重）；暂停监控时不累计不评估
+  - 配置段 `alerts`（`enabled` / `check_interval_s` / `budget_warn` / `budget_exceed` / `rest_reminder` / `rest_after_min` / `idle_reset_s` / `cooldown_min`），支持热重载
+- **每日目标与连续达成（`goals.py`，可选功能 · 默认关闭）**
+  - 两类目标：总活跃时长 + 编码时长（口径 = 开发工具 + AI编程 合计）
+  - 概览页新增目标进度面板（进度条 + 连续达成天数）；设置页新增开关组（`/api/goals` GET + `/api/goals/settings` POST）
+  - streak 纯派生即时回推（不落状态文件）：当日未达成不断签（从昨天起算）、缺数据自然日断签、回看上限 90 天；修改目标后按新目标重算
+  - 配置段 `goals`（`enabled` 默认 false / `daily_active_min` / `daily_coding_min`）
+
+### 测试
+
+- 新增 `test_alerts`：配置归一化夹取 / 工作累计与空闲清零 / rest 阈值与冷却 / 预算 warn→exceed 升级与每日去重 / 开关与暂停短路
+- 新增 `test_goals`：配置归一化 / 全 0 目标不构成 streak / 进度达标与未达标 / 连续达成与缺日断签 / 当日未达成保持昨日 streak
+- 新增 `test_goals_api`：默认关闭空态 / 设置保存落盘与进度反映 / 越界输入夹取 / 非法 date 回退今天
+
+### 文档
+
+- **新增 [docs/HARNESSES.md](docs/HARNESSES.md)（AI 工具监控支持矩阵）**：按 计时（进程树识别）/ 会话深度统计（本地文件解析）/ Web AI 会话（浏览器历史）三个维度，逐一列明当前支持的 harness 及覆盖程度；说明各维度工作原理、扫描路径、自定义扩展方法（`ai_sessions.paths` / `ai_tool_names` / `ai_pricing.json`）与已知限制（含 WSL 场景的 UNC 路径临时方案）；README 双语版已链接
+
+### 修复（v2.7.0）
+
+- **备份恢复端点**：`/api/backup/restore` 在请求体超限直接拒绝时未读取 body，keep-alive 会把残留字节当新请求解析、客户端读到连接重置；现拒绝前有界排空请求体并关闭连接，返回干净的 400（新测试 `test_restore_reject_bad_bodies` 覆盖）
+
+## [2.5.3] - 2026-08-21
+
+> 主题：AI 价格设置可用 + 导出进度反馈。
+
+### 新增
+
+- **AI 模型价格设置页可直接改内置价目**：设置页「💲 AI 模型价格」现在把内置 60 个模型价目也渲染成可编辑行，改单价即写入覆盖文件（<数据根>/ai_pricing.json，纯 diff 层；未改的内置不写入），点「重置」恢复默认。无需再手填模型名。新增后端断言：内置价目完整返回（数量与代码内置一致）。
 
 ### 修复
 
-- **应用分组**：剔除指向未知类别的「孤儿分组」（如历史遗留 `AI工具`）——这类映射既伪装成类别、又无法在分组管理里选择/移动；现在分类、`/api/groups` 列表与导入时全部只信任已登记类别（内置 ∪ 自定义），孤儿映射一律忽略/剔除
-- **仪表盘健壮性**：`/api/heatmap` 单日聚合失败（如 `usage.jsonl` 非法编码）不再让整个热力图/趋势 500，改为该日以 0 兜底、时间轴保持连续
-- **测试**：`test_app_groups` 补充孤儿分组剔除/恢复自动分类/导入剔除断言
+- **月报导出点下变「导出中…」后卡住无下文**：根因为月报聚合在后端较慢（首次未缓存约十余秒）且前端 `fetch` 无超时，一旦被 SQLite 锁竞争阻塞就永久挂起。导出改为**流式读取**：生成期显示不确定滑动进度条（「正在生成报表…」），响应开始后用 `Content-Length` 定量进度（「正在下载…」）；并加 **120s 客户端超时**兜底——后端卡死时弹「导出超时」提示并复位按钮，不再永久卡在「导出中」。
 
 ## [2.5.2] - 2026-08-20
 
@@ -130,6 +174,16 @@
 
 - **配置漂移**：`insights.time_saved` 等新配置键经 `_merge_dict` 合并进默认值，旧 config.json 缺键自动补齐，不再因配置漂移导致行为不一致
 - **更新白名单**：`updater._is_allowed_asset_url` 白名单校验——自定义 api_base 镜像放行、非白名单域名一律拒绝（`test_update_whitelist_rejects_evil` 覆盖）
+
+### 补充归档（v2.7.0 整理）
+
+> 以下能力实际随 v2.4.0 发布，但当时未写入发布说明，现补记。
+
+- **专注度评分**（离线规则）：基于最长专注段、编码/开发占比、每小时切换频率综合打分 0–100 并按高中低分级；**死循环检测**识别时间窗内密集短会话高频反复切换并告警；洞察页「行为洞察」面板 + 日报「今日建议」；`/api/insights` 返回 `behavior`；阈值可配 `insights.behavior`
+- **Vibe 编程人格分析**（趣味 · 离线）：按当日活动分布加权打分挑出人格脸谱；行为洞察面板顶部人格卡 + 日报提示；`/api/insights` 返回 `persona`；阈值可配 `insights.persona`
+- **Git 代码变更分析**（Phase 2 · 只读本地提交）：`git log --numstat` 统计指定日期提交/增删行/改动文件，「修改率」作返工近似；洞察页「代码产出（Git）」面板 + 日报；`/api/insights` 返回 `git`；只读带超时、无 git/未配置/非仓库优雅降级；阈值可配 `insights.git`
+- **AI 成本账本**（Phase 3 · 周/月汇总支出报表）：遍历期间每日 AI 会话深度，聚合消息/轮次/Token/成本并按 模型/项目/工具 汇总；周报月报自动追加「AI 成本账本」章节；只读本地不联网，无数据自动省略
+- **修复**：剔除指向未知类别的「孤儿分组」（分类/列表/导入只信任已登记类别，内置 ∪ 自定义）；`/api/heatmap` 单日聚合失败以 0 兜底不再整体 500
 
 ## [2.3.0] - 2026-08-18
 
@@ -396,6 +450,7 @@
 - 测试：test_all 新增 11 项 dashboard API 测试（端点 / 403 / 安全头 / 错误码 / 路径穿越），
   构建后 `UsageMonitor.exe --version` 冒烟，全量 125 项门禁通过。
 
+[2.7.0]: https://github.com/Niangaol/VibeTrace/releases/tag/v2.7.0
 [2.2.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.2.0
 [2.1.1]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.1
 [2.1.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.0

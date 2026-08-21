@@ -37,6 +37,7 @@ import os
 import re
 import sys
 import urllib.parse
+from collections import OrderedDict
 
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_FILE_SIZE = 20 * 1024 * 1024  # 单文件最大 20MB，避免误扫大文件卡顿
@@ -425,10 +426,11 @@ def _message_time(msg: dict) -> str | None:
 
 
 def estimate_tokens(text: str) -> int:
-    """Token 量粗略估算（零依赖启发式）。
+    """Token 量粗略估算（零依赖启发式，simple 口径）。
 
     CJK 字符按 1 Token/字，其余字符按 4 字符/Token（进一法）；空文本返回 0。
-    仅用于“量级”参考，非精确计费。
+    仅用于“量级”参考，非精确计费。此函数为历史口径，测试钉值；
+    新代码默认走 estimate_tokens_weighted（见 token_estimation_mode 配置）。
     """
     text = text or ""
     if not text.strip():
@@ -436,6 +438,73 @@ def estimate_tokens(text: str) -> int:
     cjk = len(_CJK_RE.findall(text))
     other = max(0, len(text) - cjk)
     return cjk + (other + 3) // 4
+
+
+# 加权估算：按字符类别近似 BPE 分词器行为（cl100k/o200k 量级校准）。
+# 代码/JSON 文本里符号密度高，simple 口径会明显低估——加权版对此修正。
+_TOKEN_WEIGHTS = {
+    "cjk": 1.0,        # 中日韩字：约 1 Token/字
+    "latin": 0.25,     # 字母：4 字符 ≈ 1 Token（英文单词级）
+    "digit": 0.35,     # 数字：约 3 字符/Token
+    "space": 0.125,    # 空白：8 字符 ≈ 1 Token（连续空格常被合并）
+    "punct": 0.5,      # 标点/符号：2 字符 ≈ 1 Token（代码主场景）
+}
+_RE_DIGIT = re.compile(r"[0-9]")
+_RE_SPACE = re.compile(r"\s")
+_RE_LATIN = re.compile(r"[A-Za-z]")
+
+
+def estimate_tokens_weighted(text: str) -> int:
+    """Token 估算（weighted 口径）：按字符类别加权求和后进一。
+
+    比 simple 口径更贴近真实分词器：对符号密集的代码/JSON 上修、
+    对空白密集文本下修。仍为零依赖启发式，非精确计费。
+    """
+    text = text or ""
+    if not text.strip():
+        return 0
+    total = 0.0
+    cjk = len(_CJK_RE.findall(text))
+    if cjk:
+        total += cjk * _TOKEN_WEIGHTS["cjk"]
+    rest = _CJK_RE.sub("", text)
+    for ch in rest:
+        if _RE_SPACE.match(ch):
+            total += _TOKEN_WEIGHTS["space"]
+        elif _RE_DIGIT.match(ch):
+            total += _TOKEN_WEIGHTS["digit"]
+        elif _RE_LATIN.match(ch):
+            total += _TOKEN_WEIGHTS["latin"]
+        else:
+            total += _TOKEN_WEIGHTS["punct"]
+    return int(total + 0.999)  # 进一
+
+
+def _message_usage(msg: dict) -> tuple[int, int] | None:
+    """提取消息里的**真实** token 用量（许多 harness 会记录 API 返回的 usage）。
+
+    候选位置：
+    - msg["usage"] = {input_tokens/output_tokens | prompt_tokens/completion_tokens}
+    - msg 顶层平铺：input_tokens / output_tokens / prompt_tokens /
+      completion_tokens / tokens_in / tokens_out
+    任一输入或输出侧有效（非负 int）即返回 (in, out)；缺失侧记 0；
+    完全不存在返回 None（调用方回退内容估算）。
+    """
+    def _num(v) -> int | None:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return None
+        return int(v) if v >= 0 else None
+
+    usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else {}
+    in_vals = [usage.get(k) for k in ("input_tokens", "prompt_tokens")] + \
+              [msg.get(k) for k in ("input_tokens", "prompt_tokens", "tokens_in")]
+    out_vals = [usage.get(k) for k in ("output_tokens", "completion_tokens")] + \
+               [msg.get(k) for k in ("output_tokens", "completion_tokens", "tokens_out")]
+    n_in = next((_num(v) for v in in_vals if _num(v) is not None), None)
+    n_out = next((_num(v) for v in out_vals if _num(v) is not None), None)
+    if n_in is None and n_out is None:
+        return None
+    return (n_in or 0, n_out or 0)
 
 
 def _cost_section(config: dict) -> dict:
@@ -1030,35 +1099,77 @@ def _generated_lines(text: str) -> int:
     return len(text.splitlines())
 
 
-def collect(date_str: str, config: dict, web_visits: list[dict] | None = None) -> dict:
-    """统计某天 AI 会话深度指标（ROADMAP Phase 1）。
+# ---------------------------------------------------------------------------
+# collect 结果缓存（v2.7 性能）：指纹 = 各工具目录下会话文件的 (path, mtime_ns,
+# size) 串接。只 stat 不读内容，比解析便宜一个数量级以上；文件新增/追加/变化
+# 自动失效。调用方**不得修改**返回的 tools/total（跨请求共享，同 report.aggregate
+# 约定）。web_ai 部分不缓存（随 web_visits 入参变化），每次现算。
+# ---------------------------------------------------------------------------
+_COLLECT_CACHE: "OrderedDict[tuple, tuple[str, dict]]" = OrderedDict()
+_COLLECT_CACHE_MAX = 8
 
-    返回结构（向后兼容旧的 tools/total 标量字段，新增维度）：
-    {
-      "date": "YYYY-MM-DD",
-      "enabled": bool,
-      "found": bool,
-      "tools": {tool: {"files", "turns", "rounds", "user_messages",
-                        "assistant_messages", "generated_lines", "generated_chars",
-                        "tokens_in", "tokens_out", "tokens_total",
-                        "by_model": {model: {...}}, "by_project": {project: {...}},
-                        "conversations": [ {...} ]}},
-      "total": {同上但聚合全部工具，另含 by_model / by_project / conversations 汇总},
-      "web_ai": web_ai_sessions(web_visits)（web_visits 为空或 web_ai.enabled=false 时 found=false）
-    }
-    """
-    section = config.get("ai_sessions") if isinstance(config.get("ai_sessions"), dict) else {}
-    enabled = bool(section.get("enabled", True))
-    token_est = bool(section.get("token_estimation", True))
-    costs_enabled = bool(_cost_section(config).get("enabled", True))
-    pricing = _pricing_table(config) if costs_enabled else {}
-    empty_web = {"found": False, "turns": 0, "conversations": 0, "browsing_visits": 0,
-                 "by_tool": {}, "sessions": []}
-    if not enabled:
-        return {"date": date_str, "enabled": False, "found": False,
-                "tools": {}, "total": _attach_quality(_empty_total()), "web_ai": empty_web}
 
+def invalidate_collect_cache() -> None:
+    """清空 collect 结果缓存（测试用；正常运行靠文件指纹自动失效）。"""
+    _COLLECT_CACHE.clear()
+
+
+def _paths_fingerprint(tool_paths: dict[str, list[str]]) -> str:
+    """轻量指纹：遍历各工具目录 stat 会话文件（含 opencode.db），不读内容。"""
+    parts: list[str] = []
+    for tool in sorted(tool_paths):
+        parts.append(tool)
+        for d in tool_paths[tool]:
+            if not os.path.isdir(d):
+                continue
+            parts.append(d)
+            for root, _dirs, files in os.walk(d):
+                for name in files:
+                    low = name.lower()
+                    is_db = (tool == "opencode" and root == os.path.dirname(
+                        os.path.join(d, "opencode.db")) and low == "opencode.db")
+                    if not low.endswith((".json", ".jsonl", ".ndjson")) and not is_db:
+                        continue
+                    p = os.path.join(root, name)
+                    try:
+                        st = os.stat(p)
+                    except OSError:
+                        continue
+                    if st.st_size > _MAX_FILE_SIZE:
+                        continue
+                    parts.append(f"{p}|{st.st_mtime_ns}|{st.st_size}")
+    return "\n".join(parts)
+
+
+def _collect_cached(date_str: str, config: dict, section: dict,
+                    token_est: bool, mode: str,
+                    costs_enabled: bool, pricing: dict) -> dict:
+    """本地工具部分（tools/total）的带缓存收集；返回共享对象（只读约定）。"""
     tool_paths = _config_paths(config)
+    cfg_sig = json.dumps(
+        {"e": bool(section.get("enabled", True)), "te": token_est, "m": mode,
+         "c": costs_enabled, "p": {k: list(v) for k, v in sorted(pricing.items())}},
+        sort_keys=True, ensure_ascii=False)
+    key = (date_str, cfg_sig)
+    fp = _paths_fingerprint(tool_paths)
+    hit = _COLLECT_CACHE.get(key)
+    if hit is not None and hit[0] == fp:
+        _COLLECT_CACHE.move_to_end(key)
+        return hit[1]
+    result = _collect_local(date_str, config, section, token_est, mode,
+                            costs_enabled, pricing, tool_paths)
+    _COLLECT_CACHE[key] = (fp, result)
+    while len(_COLLECT_CACHE) > _COLLECT_CACHE_MAX:
+        _COLLECT_CACHE.popitem(last=False)
+    return result
+
+
+def _collect_local(date_str: str, config: dict, section: dict,
+                   token_est: bool, mode: str,
+                   costs_enabled: bool, pricing: dict,
+                   tool_paths: dict[str, list[str]]) -> dict:
+    """原 collect() 的本地工具扫描主体（无缓存版，供 _collect_cached 调用）。"""
+    estimator = estimate_tokens if mode == "simple" else estimate_tokens_weighted
     tools: dict[str, dict] = {}
     parsed_paths: set[str] = set()
     for tool, dirs in tool_paths.items():
@@ -1083,29 +1194,37 @@ def collect(date_str: str, config: dict, web_visits: list[dict] | None = None) -
                     stats["generated_lines"] += _generated_lines(content)
                     stats["generated_chars"] += len(content or "")
                 model = _message_model(msg)
-                tokens = estimate_tokens(content) if token_est else 0
-                if is_assistant:
-                    stats["tokens_out"] += tokens
+                # Token 口径：优先消息内真实 usage 字段（许多 harness 记录 API 返回值），
+                # 缺失时按配置估算（weighted/simple），估算按角色拆分 in/out
+                usage = _message_usage(msg)
+                if usage is not None:
+                    eff_in, eff_out = usage
+                    stats["tokens_from_usage"] += 1
+                elif token_est:
+                    est = estimator(content)
+                    eff_in, eff_out = (0, est) if is_assistant else (est, 0)
                 else:
-                    stats["tokens_in"] += tokens
+                    eff_in = eff_out = 0
+                tokens = eff_in + eff_out
+                stats["tokens_in"] += eff_in
+                stats["tokens_out"] += eff_out
                 stats["tokens_total"] += tokens
-                # 成本估算（按角色 × 模型单价；未识模型/未开启时为 0）
+                # 成本估算（真实/估算 token × 模型单价；未识模型/未开启时为 0）
                 c_in = c_out = 0.0
                 if costs_enabled:
                     p_in, p_out = _model_price(pricing, model)
-                    if is_assistant:
-                        c_out = tokens * p_out / 1e6
-                        stats["cost_out"] += c_out
-                    else:
-                        c_in = tokens * p_in / 1e6
-                        stats["cost_in"] += c_in
+                    c_in = eff_in * p_in / 1e6
+                    c_out = eff_out * p_out / 1e6
+                    stats["cost_in"] += c_in
+                    stats["cost_out"] += c_out
                 stats["cost_total"] += c_in + c_out
                 # 模型维度（按消息归属）
-                _add_dim(stats["by_model"], model, is_user, is_assistant, tokens, c_in, c_out)
+                _add_dim(stats["by_model"], model, eff_in, eff_out, c_in, c_out)
                 # 会话分组（轮次 / 详情 / 项目以此为准）
                 conv_id = _message_conv_id(msg, path)
                 conv_buckets.setdefault(conv_id, []).append({
                     "msg": msg, "role": role, "tokens": tokens,
+                    "t_in": eff_in, "t_out": eff_out,
                     "model": model, "project": _message_project(msg),
                     "cost_in": c_in, "cost_out": c_out,
                 })
@@ -1139,7 +1258,7 @@ def collect(date_str: str, config: dict, web_visits: list[dict] | None = None) -
     for stats in tools.values():
         for key in ("files", "turns", "rounds", "user_messages", "assistant_messages",
                     "generated_lines", "generated_chars", "tokens_in", "tokens_out",
-                    "tokens_total", "cost_in", "cost_out", "cost_total"):
+                    "tokens_total", "tokens_from_usage", "cost_in", "cost_out", "cost_total"):
             total[key] += stats[key]
         _merge_dim(total["by_model"], stats["by_model"])
         _merge_dim(total["by_project"], stats["by_project"])
@@ -1147,6 +1266,40 @@ def collect(date_str: str, config: dict, web_visits: list[dict] | None = None) -
     total["conversations"].sort(key=lambda c: c["turns"], reverse=True)
     total["conversations"] = total["conversations"][:20]
     total = _attach_quality(total)
+    return {"tools": tools, "total": total}
+
+
+def collect(date_str: str, config: dict, web_visits: list[dict] | None = None) -> dict:
+    """统计某天 AI 会话深度指标（ROADMAP Phase 1）。
+
+    返回结构（向后兼容旧的 tools/total 标量字段，新增维度）：
+    {
+      "date": "YYYY-MM-DD",
+      "enabled": bool,
+      "found": bool,
+      "tools": {tool: {...}},   # 共享缓存对象，调用方不得修改
+      "total": {...},           # 同上
+      "web_ai": web_ai_sessions(web_visits)（web_visits 为空或 web_ai.enabled=false 时 found=false）
+    }
+    性能：本地工具部分带指纹缓存（文件 mtime/size 变化自动失效），
+    重复调用（仪表盘多端点 / 报表逐日成本账本）只做一次解析。
+    """
+    section = config.get("ai_sessions") if isinstance(config.get("ai_sessions"), dict) else {}
+    enabled = bool(section.get("enabled", True))
+    token_est = bool(section.get("token_estimation", True))
+    # 估算口径：weighted（默认，按字符类别加权）| simple（历史口径）
+    mode = str(section.get("token_estimation_mode") or "weighted").strip().lower()
+    costs_enabled = bool(_cost_section(config).get("enabled", True))
+    pricing = _pricing_table(config) if costs_enabled else {}
+    empty_web = {"found": False, "turns": 0, "conversations": 0, "browsing_visits": 0,
+                 "by_tool": {}, "sessions": []}
+    if not enabled:
+        return {"date": date_str, "enabled": False, "found": False,
+                "tools": {}, "total": _attach_quality(_empty_total()), "web_ai": empty_web}
+
+    core = _collect_cached(date_str, config, section, token_est, mode,
+                           costs_enabled, pricing)
+    tools, total = core["tools"], core["total"]
 
     # Web AI 会话（浏览器历史深度解析）
     web_ai = empty_web
@@ -1166,23 +1319,20 @@ def _empty_tool_stats() -> dict:
     return {"files": 0, "turns": 0, "rounds": 0, "user_messages": 0,
             "assistant_messages": 0, "generated_lines": 0, "generated_chars": 0,
             "tokens_in": 0, "tokens_out": 0, "tokens_total": 0,
+            "tokens_from_usage": 0,
             "cost_in": 0.0, "cost_out": 0.0, "cost_total": 0.0,
             "by_model": {}, "by_project": {}, "conversations": []}
 
 
-def _add_dim(dim: dict, key: str, is_user: bool, is_assistant: bool, tokens: int,
-                c_in: float = 0.0, c_out: float = 0.0) -> None:
-    """累计 by_model 维度（tokens 与成本 c_in/c_out 已在调用方按角色算好）。"""
+def _add_dim(dim: dict, key: str, t_in: int, t_out: int,
+             c_in: float = 0.0, c_out: float = 0.0) -> None:
+    """累计 by_model 维度（t_in/t_out 为该消息的输入/输出 token，调用方算好）。"""
     e = dim.setdefault(key, {"turns": 0, "tokens_in": 0, "tokens_out": 0, "tokens_total": 0,
                              "cost_in": 0.0, "cost_out": 0.0, "cost_total": 0.0})
     e["turns"] += 1
-    if is_user:
-        e["tokens_in"] += tokens
-    elif is_assistant:
-        e["tokens_out"] += tokens
-    else:
-        e["tokens_in"] += tokens
-    e["tokens_total"] += tokens
+    e["tokens_in"] += t_in
+    e["tokens_out"] += t_out
+    e["tokens_total"] += t_in + t_out
     e["cost_in"] += c_in
     e["cost_out"] += c_out
     e["cost_total"] += c_in + c_out
@@ -1230,6 +1380,14 @@ def _conversation_summary(conv_id: str, tool: str, items: list[dict],
         ts = _message_time(it["msg"]) or ""
         content = _message_content(it["msg"])
         tokens = it.get("tokens") or 0
+        t_in = it.get("t_in")
+        t_out = it.get("t_out")
+        if t_in is None or t_out is None:
+            # 兼容旧调用方（items 无 t_in/t_out 键）：按角色拆分
+            if role in _ASSISTANT_ROLES:
+                t_in, t_out = 0, tokens
+            else:
+                t_in, t_out = tokens, 0
         c_in = it.get("cost_in") or 0.0
         c_out = it.get("cost_out") or 0.0
         if role in _USER_ROLES:
@@ -1238,9 +1396,9 @@ def _conversation_summary(conv_id: str, tool: str, items: list[dict],
             user_tokens.append(estimate_tokens(content))
         elif role in _ASSISTANT_ROLES:
             assistant_n += 1
-            tokens_out += tokens
             generated_chars += len(content)
-        tokens_total += tokens
+        tokens_out += t_out
+        tokens_total += t_in + t_out
         cost_in_sum += c_in
         cost_out_sum += c_out
         model_counter[it.get("model") or "未识别"] = model_counter.get(it.get("model") or "未识别", 0) + 1
@@ -1305,6 +1463,7 @@ def _empty_total() -> dict:
     return {"files": 0, "turns": 0, "rounds": 0, "user_messages": 0,
             "assistant_messages": 0, "generated_lines": 0, "generated_chars": 0,
             "tokens_in": 0, "tokens_out": 0, "tokens_total": 0,
+            "tokens_from_usage": 0,
             "cost_in": 0.0, "cost_out": 0.0, "cost_total": 0.0,
             "by_model": {}, "by_project": {}, "conversations": []}
 

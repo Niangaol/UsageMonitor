@@ -269,6 +269,13 @@
   @media(prefers-reduced-motion:reduce){
     *,*::before,*::after{animation:none!important;transition:none!important}
   }
+  /* 导出进度条：生成期（后端未回字节）用不确定滑动动画，下载期按 Content-Length 定量 */
+  .exp-bar{margin-top:10px}
+  .exp-track{height:8px;border-radius:4px;background:rgba(128,128,128,.18);overflow:hidden;max-width:440px}
+  .exp-fill{display:block;height:100%;width:0%;background:var(--accent);transition:width .15s ease}
+  .exp-fill.busy{width:35%!important;animation:expSlide 1.1s infinite ease-in-out;
+    background:linear-gradient(90deg,var(--accent),var(--surface-2),var(--accent));background-size:200% 100%}
+  @keyframes expSlide{0%{background-position:200% 0}100%{background-position:-200% 0}}
 
 </style>
 </head>
@@ -357,6 +364,10 @@
     <section class="view active" id="view-overview">
       <div class="cards" id="ovCards"></div>
       <div class="budget-banner" id="ovBudget" style="display:none"></div>
+      <div class="panel" id="ovGoals" style="display:none">
+        <h2>每日目标 <span class="hint" id="ovGoalsStreak"></span></h2>
+        <div id="ovGoalsBody"></div>
+      </div>
       <div class="panel" id="qPanel" style="display:none">
         <h2>快速提问 <span class="hint">固定模板·本地计算·不调用大模型</span></h2>
         <div class="controls">
@@ -398,6 +409,7 @@
           <button class="btn" data-export="csv" data-scope="day">导出 CSV</button>
           <button class="btn" data-export="json" data-scope="day">导出 JSON</button>
         </div>
+        <div class="exp-bar" style="display:none"><div class="exp-track"><i class="exp-fill"></i></div><span class="exp-text hint"></span></div>
         <div class="md" id="rpMd"></div>
       </div>
     </section>
@@ -409,6 +421,7 @@
           <button class="btn" data-export="csv" data-scope="week">导出 CSV</button>
           <button class="btn" data-export="json" data-scope="week">导出 JSON</button>
         </div>
+        <div class="exp-bar" style="display:none"><div class="exp-track"><i class="exp-fill"></i></div><span class="exp-text hint"></span></div>
         <div class="md" id="wkMd"></div>
       </div>
     </section>
@@ -422,6 +435,7 @@
           <button class="btn" data-export="csv" data-scope="month">导出 CSV</button>
           <button class="btn" data-export="json" data-scope="month">导出 JSON</button>
         </div>
+        <div class="exp-bar" style="display:none"><div class="exp-track"><i class="exp-fill"></i></div><span class="exp-text hint"></span></div>
         <div class="md" id="moMd"></div>
       </div>
     </section>
@@ -603,6 +617,30 @@
     <!-- 设置（备份/恢复/口令/主题） -->
     <section class="view" id="view-settings">
       <div class="set-group">
+        <h3>🎯 每日目标（可选功能）</h3>
+        <div class="desc">开启后，概览页显示当日目标进度与连续达成天数。编码口径 = 开发工具 + AI编程 两类合计。
+          目标与连续达成均为即时计算、不落盘；修改目标后，连续达成按新目标重算。</div>
+        <div class="controls" style="margin:10px 0 8px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="goalEnabled" style="width:auto">
+            <b>启用每日目标</b>
+          </label>
+        </div>
+        <div class="ai-fields">
+          <label style="display:block;margin:8px 0">总活跃目标（分钟/天）
+            <input type="number" id="goalActiveMin" min="0" max="1440" step="15" value="0" style="width:min(180px,100%);margin-top:4px">
+          </label>
+          <label style="display:block;margin:8px 0">编码目标（分钟/天）
+            <input type="number" id="goalCodingMin" min="0" max="1440" step="15" value="0" style="width:min(180px,100%);margin-top:4px">
+          </label>
+          <div class="hint">两项都为 0 = 无生效目标（连续达成不计数）。</div>
+        </div>
+        <div class="controls" style="margin-top:12px">
+          <button class="btn primary" id="btnSaveGoals">保存目标设置</button>
+          <span class="set-note" id="goalSaveNote"></span>
+        </div>
+      </div>
+      <div class="set-group">
         <h3>✨ AI 洞察（可选功能）</h3>
         <div class="desc">AI 洞察默认关闭（隐私优先）。开启后，聚合统计会发送到你选择的 API 端点；
           规则洞察始终离线。可选用内置 provider 预设，或选「自定义」填写任意 OpenAI 兼容端点。</div>
@@ -713,7 +751,7 @@
   </main>
 </div>
 
-<script>
+<script nonce="__CSP_NONCE__">
 "use strict";
 const ROOT_DIR = DATA_ROOT;
 const AUTH_REQUIRED = AUTH_FLAG;
@@ -1022,6 +1060,11 @@ async function loadOverview(){
     const bd = await api("/api/budget?date=" + state.day);
     renderBudgetBanner(bd);
   }catch(e){ /* 预算接口失败则不显示 banner */ }
+  // v2.7：每日目标进度（可选功能，未开启不显示面板）
+  try{
+    const gd = await api("/api/goals?date=" + state.day);
+    renderGoalsPanel(gd);
+  }catch(e){ /* 目标接口失败则不显示面板 */ }
   // 最近 14 天活跃趋势（单日数据失败/接口异常时降级显示，不影响其它面板）
   try{
     const days = await api("/api/days?n=14");
@@ -1033,6 +1076,30 @@ async function loadOverview(){
       tcv.parentElement.insertAdjacentHTML("beforeend", '<div class="empty">趋势加载失败：' + esc(err.message || err) + '</div>');
     }
   }
+}
+
+/* ---------- 每日目标面板（v2.7，可选功能；未开启隐藏） ---------- */
+function renderGoalsPanel(g){
+  const el = $("#ovGoals");
+  if(!el) return;
+  if(!g || !g.enabled || !(g.goals || []).length){ el.style.display = "none"; return; }
+  const streak = (g.streak && g.streak.current) || 0;
+  const todayMet = g.streak && g.streak.today_met;
+  $("#ovGoalsStreak").textContent = "连续达成 " + streak + " 天" +
+    (todayMet ? " · 今日已达成 ✓" : " · 今日进行中");
+  const fmtMin = m => m >= 60 ? (m/60).toFixed(1).replace(/\.0$/,"") + "h" : m + "m";
+  $("#ovGoalsBody").innerHTML = (g.goals || []).map(x=>{
+    const pct = Math.round((x.ratio||0)*100);
+    const col = x.met ? "var(--ok)" : pct >= 75 ? "var(--warn)" : "var(--accent)";
+    return '<div style="margin:10px 0">' +
+      '<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--dim)">' +
+      '<span>' + esc(x.name) + (x.met ? ' <b style="color:var(--ok)">✓</b>' : '') + '</span>' +
+      '<span>' + fmtMin(x.actual_min) + ' / ' + fmtMin(x.target_min) + '（' + pct + '%）</span></div>' +
+      '<div class="exp-bar" style="display:block;margin-top:5px"><div class="exp-track">' +
+      '<i class="exp-fill" style="width:' + Math.min(100, pct) + '%;background:' + col + '"></i>' +
+      '</div></div></div>';
+  }).join("");
+  el.style.display = "";
 }
 
 /* ---------- 成本预算 banner（v2.6 P3，默认关闭；超支变红） ---------- */
@@ -1108,6 +1175,14 @@ async function loadTrends(){
 }
 
 /* ---------- Markdown 渲染（日报/周报/月报 通用） ---------- */
+// 链接地址白名单：http(s)/mailto/tel + 锚点/相对路径；其余 scheme（javascript:/data: 等）
+// 返回 null（调用方降级为纯文本）。先剥离控制字符/空白再判 scheme，防 java\tscript: 绕过。
+function safeHref(u){
+  const t = String(u||"").replace(/[\u0000-\u0020\u007f]/g, "");
+  if(/^(https?:|mailto:|tel:)/i.test(t)) return esc(String(u).trim());
+  if(/^[#\/.]/.test(t)) return esc(String(u).trim());
+  return null;
+}
 function md2html(src){
   const lines = (src||"").split("\n"); let out = [], inT = false;
   for(const line of lines){
@@ -1139,7 +1214,13 @@ function md2html(src){
   return out.join("\n");
   function inline(s){
     let t = esc(s);
-    t = t.replace(/\[([^\]]*)\]\(([^)]*)\)/g, (m,a,b)=>{ const u=b.split("?")[0]; return '<a href="'+esc(b)+'">'+esc(a)+'</a><span class="url-cell">'+esc(u.slice(0,80))+'</span>'; });
+    t = t.replace(/\[([^\]]*)\]\(([^)]*)\)/g, (m,a,b)=>{
+      const u=b.split("?")[0];
+      const href=safeHref(b);
+      const inner=esc(a)+'<span class="url-cell">'+esc(u.slice(0,80))+'</span>';
+      // 仅白名单 scheme 渲染为链接，javascript:/data:/vbscript: 等降级为纯文本（防存储型 XSS）
+      return href ? '<a href="'+href+'">'+inner+'</a>' : '<span>'+inner+'</span>';
+    });
     t = t.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
     if(/[█▇▆▅▄▃▂▁]/.test(t)) t = t.replace(/([█▇▆▅▄▃▂▁]+)/g, '<span style="color:var(--md-h2);letter-spacing:1px">$1</span>');
     return t;
@@ -1201,6 +1282,14 @@ async function doExport(scope, type, btn){
   exporting = true;
   const oldText = btn ? btn.textContent : "";
   if(btn){ btn.textContent = "导出中…"; btn.disabled = true; }
+  // 进度条在本节 .panel 内（与 .controls 兄弟）
+  const wrap = btn ? btn.closest(".panel") && btn.closest(".panel").querySelector(".exp-bar") : null;
+  const fill = wrap ? wrap.querySelector(".exp-fill") : null;
+  const text = wrap ? wrap.querySelector(".exp-text") : null;
+  if(wrap){ wrap.style.display = ""; fill.classList.add("busy"); fill.style.width = ""; text.textContent = "正在生成报表…（月报数据量大时可能需十余秒，请稍候）"; }
+  // 客户端超时：后端若被 SQLite 锁阻塞导致长时间无响应，避免界面永久卡在「导出中」
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 120000);
   try{
     let url = "/api/export?type=" + type + "&scope=" + scope;
     let name = "report";
@@ -1208,16 +1297,39 @@ async function doExport(scope, type, btn){
     else if(scope === "week"){ name = "week_" + (state.dates.length ? state.dates[state.dates.length-1] : todayStr()); }
     else if(scope === "month"){ const m = state.month || todayStr().slice(0,7); url += "&month=" + m; name = "month_" + m; }
     name += (type === "csv" ? ".csv" : ".json");
-    await downloadToFile(url, name);
+    const r = await fetch(url, {headers: tokenHeaders(), signal: ctrl.signal});
+    if(r.status === 401){ failAuth(); throw new Error("口令未授权"); }
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    const total = Number(r.headers.get("Content-Length")) || 0;
+    if(wrap){ fill.classList.remove("busy"); text.textContent = "正在下载…"; }
+    const reader = r.body.getReader();
+    const chunks = [];
+    let received = 0;
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      chunks.push(value);
+      received += value.length;
+      if(wrap && total) fill.style.width = Math.min(100, Math.round(received / total * 100)) + "%";
+    }
+    triggerDownload(new Blob(chunks), name);
+    if(wrap) text.textContent = "已完成，开始下载 ✓";
   }catch(e){
-    alert("导出失败：" + e.message);
+    if(ctrl.signal.aborted) alert("导出超时：后端生成报表过久或被占用，请稍后重试。");
+    else alert("导出失败：" + e.message);
   }finally{
+    clearTimeout(timer);
     exporting = false;
     if(btn){ btn.textContent = oldText; btn.disabled = false; }
+    if(wrap){ fill.classList.remove("busy"); fill.style.width = "100%"; setTimeout(() => { wrap.style.display = "none"; fill.style.width = "0%"; if(text) text.textContent = ""; }, 700); }
   }
 }
-function wireExportButtons(){
-  $$("[data-export]").forEach(b => b.onclick = () => doExport(b.dataset.scope, b.dataset.export, b));
+function triggerDownload(blob, name){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 /* ---------- 备份/恢复（P1-4） ---------- */
@@ -1301,6 +1413,38 @@ async function loadSettings(){
       note.textContent = "读取 AI 设置失败：" + e.message;
       note.style.color = "var(--danger)";
     }
+  }
+  loadGoalsSettings();
+}
+/* ---------- 每日目标设置（v2.7，可选功能） ---------- */
+async function loadGoalsSettings(){
+  try{
+    const d = await api("/api/goals");
+    if(!d || d.enabled === undefined) return;
+    $("#goalEnabled").checked = !!d.enabled;
+    const g = (id)=>(d.goals||[]).find(x=>x.id===id);
+    $("#goalActiveMin").value = g("active") ? g("active").target_min : 0;
+    $("#goalCodingMin").value = g("coding") ? g("coding").target_min : 0;
+  }catch(e){ /* 目标接口失败不打扰设置页 */ }
+}
+async function saveGoalsSettings(){
+  const note = $("#goalSaveNote");
+  if(!note) return;
+  note.textContent = "保存中…";
+  note.style.color = "var(--dim)";
+  const payload = {
+    enabled: $("#goalEnabled").checked,
+    daily_active_min: parseInt($("#goalActiveMin").value || "0", 10),
+    daily_coding_min: parseInt($("#goalCodingMin").value || "0", 10)
+  };
+  try{
+    await postJson("/api/goals/settings", payload);
+    note.textContent = "已保存。";
+    note.style.color = "var(--ok)";
+    if(state.loaded.overview){ state.loaded.overview = false; }
+  }catch(e){
+    note.textContent = "保存失败：" + e.message;
+    note.style.color = "var(--danger)";
   }
 }
 async function saveAiSettings(){
@@ -1389,53 +1533,84 @@ function wirePricing(){
   const list = $("#priceList");
   const tip = $("#priceTip");
   const note = $("#priceNote");
-  let current = {};
+  let builtin = {};   // 内置价目（只读基准）
+  let custom = {};    // 用户覆盖（ai_pricing.json）
+  function mergedKeys(){
+    return [...new Set([...Object.keys(builtin), ...Object.keys(custom)])].sort((a,b)=>a.localeCompare(b));
+  }
+  function disp(k){
+    const v = (custom[k] !== undefined) ? custom[k] : builtin[k];
+    if(Array.isArray(v)) return v;
+    if(v && typeof v === "object") return [v.input != null ? v.input : 0, v.output != null ? v.output : 0];
+    return [0, 0];
+  }
   async function refresh(){
     try{
       const d = await api("/api/pricing");
-      tip.textContent = "内置 " + (d.builtin_count||0) + " 个模型价目；下方为你覆盖的 "
-        + Object.keys(d.custom||{}).length + " 个自定义价格（优先级更高）。";
-      current = d.custom || {};
+      builtin = d.builtin || {};
+      custom = d.custom || {};
+      tip.innerHTML = "内置 <b>" + (d.builtin_count||0) + "</b> 个模型价目（USD/百万 Token，量级参考；价格随厂商变动，请以官网为准）。"
+        + "下列可直接修改任意模型单价——改动的会写入覆盖文件（<code>ai_pricing.json</code>），优先级高于内置；"
+        + "点「重置」恢复内置默认值。";
       render();
     }catch(e){ tip.textContent = "价格加载失败：" + e.message; }
   }
   function render(){
-    const keys = Object.keys(current);
-    if(!keys.length){ list.innerHTML = '<div class="empty">（暂无自定义；新增空行后可批量保存）</div>'; return; }
-    list.innerHTML = keys.map((k,i) => {
-      const v = current[k];
-      const inp = Array.isArray(v) ? v : [v.input, v.output];
+    const keys = mergedKeys();
+    if(!keys.length){ list.innerHTML = '<div class="empty">（无内置价目）</div>'; return; }
+    list.innerHTML = keys.map(k => {
+      const isC = Object.prototype.hasOwnProperty.call(custom, k);
+      const v = disp(k);
+      const inV = (v[0] != null ? v[0] : 0), outV = (v[1] != null ? v[1] : 0);
+      const nameCell = (isC || !builtin[k])
+        ? '<input class="pm" data-key="'+esc(k)+'" value="'+esc(k)+'" style="min-width:0">'  // 已覆盖/新增：模型名可编辑
+        : '<span class="pm-name" data-key="'+esc(k)+'">'+esc(k)+'</span>';            // 内置：模型名只读
+      const act = (isC || !builtin[k])
+        ? '<button class="btn" data-del="'+esc(k)+'">删除</button>'
+        : '<button class="btn" data-reset="'+esc(k)+'">重置</button>';
+      const tag = isC ? '<span style="color:var(--accent)" title="已覆盖">●</span> '
+                      : (builtin[k] ? '' : '<span style="color:var(--ok)" title="新增">＋</span> ');
       return '<div class="price-row" style="display:grid;grid-template-columns:1fr 120px 120px auto;gap:8px;align-items:center">'
-        + '<input class="pm" data-i="'+i+'" value="'+esc(k)+'" style="min-width:0">'
-        + '<input class="pi" type="number" step="0.01" min="0" data-i="'+i+'" value="'+esc(String(inp[0]??0))+'" style="min-width:0">'
-        + '<input class="po" type="number" step="0.01" min="0" data-i="'+i+'" value="'+esc(String(inp[1]??0))+'" style="min-width:0">'
-        + '<button class="btn" data-del="'+i+'">删除</button></div>';
+        + '<div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+tag+nameCell+'</div>'
+        + '<input class="pi" type="number" step="0.01" min="0" data-key="'+esc(k)+'" value="'+esc(String(inV))+'" style="min-width:0">'  // 输入价 $/M
+        + '<input class="po" type="number" step="0.01" min="0" data-key="'+esc(k)+'" value="'+esc(String(outV))+'" style="min-width:0">' // 输出价 $/M
+        + act + '</div>';
     }).join("");
   }
-  function commit(){
-    const rows = [...list.querySelectorAll(".price-row")];
-    current = {};
-    for(const r of rows){
-      const k = r.querySelector(".pm").value.trim();
+  // 收集覆盖：仅写与内置不同的项（保持 ai_pricing.json 为纯 diff 层）
+  function collectOverrides(){
+    const ov = {};
+    for(const r of list.querySelectorAll(".price-row")){
+      const el = r.querySelector(".pm, .pm-name");
+      const k = el && el.dataset.key;
       if(!k) continue;
-      current[k] = [Number(r.querySelector(".pi").value||0), Number(r.querySelector(".po").value||0)];
+      const pi = Number(r.querySelector(".pi").value || 0);
+      const po = Number(r.querySelector(".po").value || 0);
+      const base = builtin[k];
+      const same = Array.isArray(base) && Math.abs(base[0]-pi) < 1e-9 && Math.abs(base[1]-po) < 1e-9;
+      if(builtin[k] && same) continue;   // 未改动的内置 → 不写覆盖
+      ov[k] = [pi, po];
     }
-    return current;
+    return ov;
   }
   $("#priceAdd").onclick = () => {
     const m = $("#priceModel").value.trim();
     if(!m){ note.textContent = "请先输入模型名"; note.style.color = "var(--danger)"; return; }
-    current[m] = [Number($("#priceIn").value||0), Number($("#priceOut").value||0)];
+    custom[m] = [Number($("#priceIn").value||0), Number($("#priceOut").value||0)];
     $("#priceModel").value = ""; $("#priceIn").value = ""; $("#priceOut").value = "";
     note.textContent = ""; render();
   };
-  list.onclick = e => { const b = e.target.closest("[data-del]"); if(!b) return;
-    const i = Number(b.dataset.del); const k = Object.keys(current)[i]; if(k) delete current[k]; render(); };
+  list.onclick = e => {
+    const del = e.target.closest("[data-del]");
+    if(del){ delete custom[del.dataset.del]; render(); return; }
+    const rs = e.target.closest("[data-reset]");
+    if(rs){ delete custom[rs.dataset.reset]; render(); return; }
+  };
   $("#priceSave").onclick = async () => {
-    const data = commit();
+    const ov = collectOverrides();
     try{
-      await api("/api/pricing", "POST", {pricing: data});
-      note.textContent = "已保存 " + Object.keys(data).length + " 个价格覆盖 ✓"; note.style.color = "var(--ok)";
+      await api("/api/pricing", "POST", {pricing: ov});
+      note.textContent = "已保存 " + Object.keys(ov).length + " 个价格覆盖 ✓（未改的内置不写入）"; note.style.color = "var(--ok)";
       await refresh();
     }catch(e){ note.textContent = "保存失败：" + e.message; note.style.color = "var(--danger)"; }
   };
@@ -2226,7 +2401,7 @@ function wireInsights(){
     btn.textContent = "生成中…（可能需数十秒）";
     $("#inAiError").style.display = "none";
     try{
-      const d = await api("/api/insights/ai?date=" + state.day + "&refresh=1");
+      const d = await api("/api/insights/ai?date=" + state.day, "POST", {refresh: true});
       renderAiPanel(d);
     }catch(err){
       $("#inAiError").style.display = "block";
@@ -2524,6 +2699,8 @@ function startApp(){
   wireExportButtons();
   wireInsights();
   wireAiSettings();
+  const btnGoals = $("#btnSaveGoals");
+  if(btnGoals) btnGoals.onclick = saveGoalsSettings;
   wirePricing();
   wireAiModule();
   wireUpdate();

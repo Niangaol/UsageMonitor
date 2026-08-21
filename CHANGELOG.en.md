@@ -8,36 +8,64 @@ Release flow: `git tag vX.Y.Z` → CI builds and publishes the Release automatic
 
 > 简体中文版: [CHANGELOG.md](CHANGELOG.md)
 
-## [Unreleased]
+## [2.7.0] - 2026-08-21
 
-### 新增（ROADMAP Phase 4 · 行为洞察）
+> Theme: alert loop + daily goals + global performance optimization (fingerprint caches for AI sessions / browser history / SQLite) + real-usage-first tokens with weighted estimation.
 
-- **专注度评分**（离线规则）：基于最长专注段、编码/开发占比、每小时切换频率综合打分 0–100 并按高中低分级
-- **死循环检测**：识别时间窗内密集短会话高频反复切换（如多应用快速往返）并告警
-- **集成**：洞察页新增「行为洞察」面板（专注度卡 + 死循环告警）；日报「今日建议」加入专注度与死循环提示；`/api/insights` 返回 `behavior`
-- **Vibe 编程人格分析**（趣味 · 离线）：基于当日活动分布按加权打分挑出人格脸谱（AI 驱动工程师 / 深度专注者 / 多线程快切王 / 节点循环受害者 / 夜行动物 / 终身学习者 / 社交达人 / 游戏玩家 / 全能六边形选手 / 自由探索者）
-- **集成**：行为洞察面板顶部的人格卡 + 日报「今日建议」的人格提示；`/api/insights` 返回 `persona`
-- 阈值可配置：`insights.behavior`（`short_session_s` / `switch_gap_s` / `death_loop_*` / `focus_*` 等）+ `insights.persona`（`enabled` / `min_total_min` / `night_start_hour` / `coding_categories`）
-- **Git 代码变更分析**（Phase 2 · 只读本地提交）：配置 `insights.git.projects` 后，用 `git log --numstat` 统计指定日期的提交 / 新增 / 删除行 / 改动文件；以「修改率」（删除行 / 变更行）作返工近似指标
-- **集成**：洞察页新增「代码产出（Git）」面板 + 日报「今日建议」的产出提示；`/api/insights` 返回 `git`；`python git_insights.py --day` CLI
-- 只读、带超时、无 git / 未配置 / 非仓库路径均优雅降级；阈值可配 `insights.git`（`enabled` / `projects` / `timeout_s` / `top_files`）
-- **AI 成本账本（周/月汇总支出报表）**（Phase 3）：遍历期间每日 AI 会话深度，聚合消息/轮次/Token/成本，并按 模型 / 项目 / 工具 汇总；月报与周报自动追加「AI 成本账本」章节
-- 只读本地、绝不联网，ai_sessions.enabled 且至少有一天数据时输出，否则自动省略
-- **Cost budget warning (v2.6 · P3)**: set a daily/monthly budget for AI costs; after aggregating `ai_sessions` costs, judge ok / warn (≥80%) / exceed; weekly/monthly reports auto-append a budget summary section and the dashboard overview shows a budget banner (red on overrun); new `/api/budget` endpoint (`date` accepts YYYY-MM-DD or YYYY-MM with granularity inference)
-- Off by default: `config.insights.budget` (`enabled`/`daily`/`monthly`) can be turned on anytime; old config.json works without manual edits (deep-merge fallback); zero third-party dependencies; no session titles leaked
+### Changed (v2.7.0 · Algorithm refinements)
 
-### 测试
+- **Dual-mode token estimation** (`ai_sessions.token_estimation_mode`): new `weighted` (default) weights by character class — CJK 1 token/char, letters 4 chars/token, digits ~3, punctuation 2, whitespace 8 — fixing underestimation on code/JSON; `simple` keeps the legacy formula
+- **Real usage fields first**: parses API-returned `usage` in messages (`input_tokens/output_tokens`, `prompt_tokens/completion_tokens`, flat variants); when present, tokens & cost use **actual values** instead of estimation; new `tokens_from_usage` counter
+- **"Simple learning" personal baseline (`learn.py` + `insights.baseline_insights`)**
+  - Pure-stdlib online statistical learning: sliding-window sample ring (180 days) + z-score anomaly detection; deep learning rejected due to the zero-dependency constraint and tiny per-user sample sizes (rationale in module docstring)
+  - Maintains your personal norm for active/coding/sessions; ≥2σ → warn card, ≥3σ → alert (type=trend, reuses existing frontend rendering)
+  - Scores before recording (today never pollutes its own baseline); same-day re-calls overwrite; corrupt state self-heals
+  - Config `insights.baseline`; wired into `/api/insights` and the daily report
 
-- 新增 `test_insights_behavior`：专注日高评分 / 高频往返命中死循环 / 空数据与关闭安全
-- 新增 `test_insights_persona`：AI 编程日 / 死循环日 / 夜间学习日 / 空数据与开关安全
-- 新增 `test_git_insights`：临时 git 仓库两次提交 / 汇总 found / 未配置与关闭 / 非仓库跳过
-- 新增 `test_ai_cost_ledger`：临时 AI 会话账本生成 / 含模型拆分 / 空数据 None 降级
+### Performance (v2.7.0 · global slimming)
 
-### 修复
+- **AI session stats fingerprint cache** (`ai_sessions.collect`): keyed by (date, session-file mtime+size fingerprint); hits skip all file reading/parsing — measured 76.9ms → 0.37ms (~208×); new/appended files auto-invalidate; web_ai never cached (varies with args); added `invalidate_collect_cache()`
+- **Browser history fingerprint cache** (`browser_history.collect`): keyed by (date, History DB mtime+size), eliminating repeated full-DB copies+parsing (Chrome DBs can exceed 100MB) — measured 6.9ms → 0.05ms (~144×); browser writes auto-invalidate; added `invalidate_visits_cache()`
+- **SQLite mirror writes**: per-root shared connections (`_CONN_CACHE`), `init_db` once per connection, **WAL + synchronous=NORMAL** (JSONL is the source of truth; the mirror is rebuildable) — measured 9.9ms → 0.15ms/row (~66×); `rebuild` releases the shared handle first; added `close_connections()`
+- **goals day-list TTL cache**: same mtime+5s pattern as dashboard/classifier
+- All are behavior-preserving cache speedups: shared read-only objects (per report.aggregate convention), auto-invalidation on fingerprint change
 
-- **App groups**：prune 「orphan groups」 — `exe_groups` entries pointing to categories that no longer exist (e.g. legacy `AI工具`); these both masquerade as categories and can't be selected/moved in the group manager. Classification, the `/api/groups` list and import now only trust registered categories (built-in ∪ custom), and orphan mappings are ignored/pruned
-- **Dashboard resilience**：`/api/heatmap` failing to aggregate a single day (e.g. invalid encoding in `usage.jsonl`) no longer 500s the whole heatmap/trend — that day falls back to 0 and the timeline stays continuous
-- **Tests**：`test_app_groups` adds assertions for orphan-group pruning / fallback to auto classification / pruning on import
+### Tests
+
+- Added `test_learn`, `test_ai_sessions_refined`, `test_baseline_api`, `test_perf_caches`
+
+### Added (v2.7.0 · Action & Goals)
+
+- **Alert loop (`alerts.py`)**: budget warn/exceed and continuous-work rest reminders via tray balloon (auto-converted to Toast on Win10/11)
+  - Budget alerts reuse `budget_status` tri-state; warn/exceed fire at most once per day each, re-armed automatically across days
+  - Rest reminder: fires after `rest_after_min` minutes of continuous activity without enough idle; idle ≥ `idle_reset_s` counts as a break and resets the accumulator; `cooldown_min` prevents nagging
+  - Budget checks are throttled (default 15 min — AI session scanning is expensive); no accumulation/evaluation while monitoring is paused
+  - Config section `alerts` with hot reload
+- **Daily goals & streak (`goals.py`, optional · off by default)**
+  - Two goal types: total active time + coding time (开发工具 + AI编程 categories combined)
+  - Overview panel with progress bars and streak counter; settings toggle group (`GET /api/goals` + `POST /api/goals/settings`)
+  - Streak is purely derived (no state file): an unmet today doesn't break the chain (counts from yesterday), missing calendar days break it, lookback capped at 90 days; changing goals recomputes against the new targets
+  - Config section `goals` (`enabled` default false / `daily_active_min` / `daily_coding_min`)
+
+### Tests
+
+- Added `test_alerts`, `test_goals`, `test_goals_api`
+
+### Fixed (v2.7.0)
+
+- **Backup restore endpoint**: `/api/backup/restore` rejected an oversized body without reading it, so keep-alive parsed the leftover bytes as a new request and the client saw a connection reset; it now drains a bounded prefix and closes the connection before returning a clean 400 (covered by new `test_restore_reject_bad_bodies`)
+
+## [2.5.3] - 2026-08-21
+
+> Theme: AI pricing settings usable + export progress feedback.
+
+### Added
+
+- **AI model pricing settings page can now edit built-in prices directly**: the Settings → "💲 AI model pricing" panel now renders all 60 built-in model prices as editable rows; changing a unit price writes an override to `<data root>/ai_pricing.json` (pure diff layer; unmodified built-ins aren't written), and "重置" restores the default. No need to retype the model name. Added a backend assertion that the full built-in price table is returned (count matches the in-code table).
+
+### Fixed
+
+- **Month report export stuck on "导出中…" with no follow-up**: root cause was slow server-side month aggregation (uncached first run ~10s+) and a frontend `fetch` with no timeout, so any SQLite-lock contention blocked it forever. Export now **streams the response**: an indeterminate sliding progress bar during generation ("正在生成报表…"), then a determinate `Content-Length`-based bar during download ("正在下载…"); plus a **120s client timeout** that surfaces a "导出超时" alert and resets the button instead of hanging.
 
 ## [2.5.2] - 2026-08-20
 
@@ -130,6 +158,16 @@ Release flow: `git tag vX.Y.Z` → CI builds and publishes the Release automatic
 
 - **Config drift**: new keys such as `insights.time_saved` are merged into defaults via `_merge_dict`, so old config.json files get missing keys filled in automatically and behavior no longer drifts
 - **Update whitelist**: `updater._is_allowed_asset_url` now allows custom `api_base` mirrors while rejecting any non-whitelisted domain (covered by `test_update_whitelist_rejects_evil`)
+
+### Backfilled (v2.7.0 housekeeping)
+
+> These capabilities actually shipped with v2.4.0 but were omitted from its release notes; recorded here for accuracy.
+
+- **Focus score** (offline rule engine): 0–100 score from longest focus segment, coding/dev share and hourly switch frequency, graded high/mid/low; **death-loop detection** flags dense short-session rapid switching; behavior panel + daily report; `/api/insights` returns `behavior`; thresholds via `insights.behavior`
+- **Vibe coding persona analysis** (fun · offline): weighted scoring over the day's activity distribution picks a persona; persona card on the behavior panel + daily hint; `/api/insights` returns `persona`; configurable via `insights.persona`
+- **Git code-change analysis** (Phase 2 · read-only local commits): `git log --numstat` per-day commits/added/deleted/changed files, `modify_ratio` as a rework proxy; Git output panel + daily report; `/api/insights` returns `git`; read-only with timeout, graceful degrade without git / not configured / not a repo; thresholds via `insights.git`
+- **AI cost ledger** (Phase 3 · weekly/monthly spend reports): per-day AI session depth aggregated to messages/rounds/tokens/cost by model/project/tool; auto-appended to weekly/monthly reports; read-only, offline, omitted when no data
+- **Fixes**: prune orphan app groups pointing to unknown categories (classification/list/import only trust registered categories, built-in ∪ custom); `/api/heatmap` falls back to 0 per-day instead of 500ing the whole chart
 
 ## [2.3.0] - 2026-08-18
 
@@ -394,6 +432,7 @@ Pure standard library with zero third-party dependencies; static CPU < 0.1%, mem
 - Tests: test_all adds 11 dashboard API tests (endpoints / 403 / security headers / error codes / path traversal);
   post-build `UsageMonitor.exe --version` smoke test; all 125 assertions pass the gate.
 
+[2.7.0]: https://github.com/Niangaol/VibeTrace/releases/tag/v2.7.0
 [2.2.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.2.0
 [2.1.1]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.1
 [2.1.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.0

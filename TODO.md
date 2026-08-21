@@ -23,6 +23,7 @@
 | v2.2.0 | ✅ 已发布 | UWP 识别、管理员模式、Firefox 停留时长、更新供应链安全、更多应用适配 |
 | v2.3.0 | ✅ 已发布 | AI 会话深度（Phase 1）+ 成本与 ROI（Phase 3）+ 概览整合 / AI 洞察独立 |
 | v2.4.0 | ✅ 已完成（2026-08-20） | 测试流程金字塔（docs/TEST_WORKFLOW.md + pytest 85项 + CI fast/full + 覆盖率 56%）；Phase 3 时间节省估算（insights.time_saved）落地；前端 6 项细节修补；配置漂移修复；应用白名单补齐 |
+| v2.7.0 | ✅ 已完成（待发布） | 行动与目标：告警闭环（alerts.py · 预算 warn/exceed + 连续工作休息提醒，托盘气泡）；每日目标与 streak（goals.py · 可选默认关闭，/api/goals + 概览进度面板 + 设置开关组） |
 
 ---
 
@@ -95,6 +96,7 @@
 - 后台标签页不计时（前台注意力口径）
 - 打包 exe 未代码签名，可能有杀软误报
 - Firefox 停留时长是估算值（相邻访问间隔，上限可配）
+- WSL 内运行的 CLI 工具会话文件不被自动扫描（可在 `ai_sessions.paths` 显式配 `\\wsl.localhost\...` UNC 路径）；各工具监控支持矩阵见 [docs/HARNESSES.md](docs/HARNESSES.md)
 
 ---
 

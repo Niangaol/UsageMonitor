@@ -20,7 +20,7 @@ import threading
 import time
 import types
 
-sys.path.insert(0, r"D:\电脑使用情况监控")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # 原地调整控制台编码（不要用 TextIOWrapper 换包装——旧包装被 GC 会关闭底层 buffer）
 try:
@@ -1884,15 +1884,24 @@ def test_updater():
     updater.urllib.request.urlopen = lambda req, timeout=None: FakeDLResp()
     try:
         dest = os.path.join(tmp, "UsageMonitor.exe")
+        # api_base 指定 example.com 域，使该 URL 通过下载白名单（与 latest_release 口径一致）
         updater.download("https://example.com/exe", dest,
-                         expected_size=len(content), expected_digest="sha256:" + sha)
+                         expected_size=len(content), expected_digest="sha256:" + sha,
+                         api_base="https://example.com")
         check(open(dest, "rb").read() == content, "download 内容正确")
         try:
             updater.download("https://example.com/exe", os.path.join(tmp, "bad.exe"),
-                             expected_size=999)
+                             expected_size=999, api_base="https://example.com")
             fail("错误大小未抛异常", "expected UpdateError")
         except updater.UpdateError:
             ok("错误大小抛 UpdateError")
+        # 白名单外域名直接拒绝（纵深防御：download 不依赖调用方先经 latest_release 过滤）
+        try:
+            updater.download("https://evil.example/exe", os.path.join(tmp, "evil.exe"))
+            fail("白名单外域名未拒绝", "expected UpdateError")
+        except updater.UpdateError as exc:
+            ok("白名单外域名拒绝下载")
+            check("白名单" in str(exc), "拒绝信息包含白名单说明")
     finally:
         updater.urllib.request.urlopen = orig
     shutil.rmtree(tmp, ignore_errors=True)

@@ -1182,6 +1182,12 @@
   "insights": {
     "enabled": true,
     "in_report": true,
+    "baseline": {
+      "enabled": true,
+      "min_days": 7,
+      "z_warn": 2.0,
+      "z_alert": 3.0
+    },
     "rules": {
       "long_session_min": 90,
       "late_night_hour": 23,
@@ -1257,6 +1263,7 @@
     "enabled": true,
     "paths": {},
     "token_estimation": true,
+    "token_estimation_mode": "weighted",
     "web_ai": {
       "enabled": true
     },
@@ -1281,6 +1288,22 @@
   "query": {
     "enabled": true,
     "max_days": 92
+  },
+  "alerts": {
+    "enabled": true,
+    "check_interval_s": 60,
+    "budget_check_min": 15,
+    "budget_warn": true,
+    "budget_exceed": true,
+    "rest_reminder": true,
+    "rest_after_min": 120,
+    "idle_reset_s": 300,
+    "cooldown_min": 60
+  },
+  "goals": {
+    "enabled": false,
+    "daily_active_min": 480,
+    "daily_coding_min": 240
   },
   "_comment": "分类与阈值规则，可编辑；修改后重启 monitor 生效"
 }

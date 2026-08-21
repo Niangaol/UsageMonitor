@@ -591,6 +591,11 @@ def _insights_section(agg: dict, date_str: str, data_root: str) -> str | None:
                     - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
         prev_agg = aggregate(prev_day, data_root)
         rules = insights.rule_insights(agg, config, prev_agg)
+        # v2.7「简单学习」：个性化基线异常（Welford/z-score）
+        try:
+            rules.extend(insights.baseline_insights(data_root, date_str, agg, config))
+        except Exception:  # noqa: BLE001
+            pass
         # 行为洞察（Phase 4 · 离线）：专注度评分 + 死循环检测
         behavior = insights.behavior_insights(agg, config)
         behavior_lines: list[str] = []

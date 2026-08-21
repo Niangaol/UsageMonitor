@@ -27,6 +27,7 @@ import sys
 import tempfile
 import time
 import urllib.parse
+from collections import OrderedDict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -338,6 +339,9 @@ def collect(day_str: str, data_root: str, config: dict | None = None,
     """收集某天所有可用浏览器的访问明细。
 
     db_paths 提供时跳过自动发现（测试用）。
+    性能：结果按 (day, 各库 mtime_ns+size 指纹) 缓存——浏览器 History 库可达
+    数十至上百 MB，逐次调用重复拷贝+解析代价高；指纹变化（浏览器写入历史）
+    自动失效。返回共享对象，调用方不得修改。
     """
     if config is None:
         config = classifier.load_config()
@@ -349,6 +353,44 @@ def collect(day_str: str, data_root: str, config: dict | None = None,
     else:
         dbs = find_history_dbs(config)
 
+    fp = _dbs_fingerprint(dbs)
+    key = (day_str, fp)
+    hit = _VISITS_CACHE.get(key)
+    if hit is not None:
+        _VISITS_CACHE.move_to_end(key)
+        return hit
+
+    result = _collect_uncached(day_str, dbs, config)
+    _VISITS_CACHE[key] = result
+    while len(_VISITS_CACHE) > _VISITS_CACHE_MAX:
+        _VISITS_CACHE.popitem(last=False)
+    return result
+
+
+_VISITS_CACHE: "OrderedDict[tuple, dict]" = OrderedDict()
+_VISITS_CACHE_MAX = 6
+
+
+def invalidate_visits_cache() -> None:
+    """清空访问明细缓存（测试用；正常运行靠库文件指纹自动失效）。"""
+    _VISITS_CACHE.clear()
+
+
+def _dbs_fingerprint(dbs: list[dict]) -> str:
+    """各历史库的 (path, mtime_ns, size) 串接；文件消失也产生确定指纹。"""
+    parts: list[str] = []
+    for item in dbs:
+        db = item.get("db") or ""
+        try:
+            st = os.stat(db)
+            parts.append(f"{db}|{st.st_mtime_ns}|{st.st_size}")
+        except OSError:
+            parts.append(f"{db}|missing")
+    return "\n".join(parts)
+
+
+def _collect_uncached(day_str: str, dbs: list[dict], config: dict) -> dict:
+    """原 collect 主体（无缓存版）。"""
     visits: list[dict] = []
     errors: list[str] = []
     with tempfile.TemporaryDirectory(prefix="usagemon_hist_") as tmpdir:

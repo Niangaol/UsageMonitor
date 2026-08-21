@@ -36,6 +36,7 @@ import io
 import json
 import os
 import re
+import secrets
 import shutil
 import sys
 import tempfile
@@ -44,6 +45,7 @@ import time
 import urllib.parse
 import webbrowser
 import zipfile
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -61,6 +63,7 @@ _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 _URL_MAX_ROWS = 200  # 浏览器明细最多回传条数
+_RESTORE_MAX_BYTES = 200 * 1024 * 1024  # 恢复上传体积上限
 
 # 备份 zip 允许包含的顶层条目：日期目录 或 已知数据文件（其余一律拒绝，防解压注入）
 _ALLOWED_ROOT_FILES = {
@@ -69,6 +72,18 @@ _ALLOWED_ROOT_FILES = {
 }
 # 备份 zip 打包时排除的大日志/临时/备份文件
 _EXCLUDED_FILE_SUFFIXES = (".log", ".bak", ".bak_verify", ".tmp", ".pyc")
+
+# 默认 CSP（API 响应）；页面响应改用带 per-request nonce 的策略（见 _page_csp）
+_DEFAULT_CSP = ("default-src 'self'; style-src 'self' 'unsafe-inline'; "
+                "script-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                "connect-src 'self'; frame-ancestors 'none'")
+
+
+def _page_csp(nonce: str) -> str:
+    """页面 CSP：脚本仅允许带本次请求 nonce 的内联块，移除 unsafe-inline。"""
+    return ("default-src 'self'; style-src 'self' 'unsafe-inline'; "
+            f"script-src 'self' 'nonce-{nonce}'; img-src 'self' data:; "
+            "connect-src 'self'; frame-ancestors 'none'")
 
 
 def _load_dashboard_token(data_root: str | None = None, config_path: str | None = None) -> str:
@@ -215,6 +230,38 @@ def _save_ai_settings(root: str, config_path: str | None, payload: dict) -> dict
     return _ai_settings_view(cfg)
 
 
+def _save_goals_settings(root: str, config_path: str | None, payload: dict) -> dict:
+    """保存每日目标设置到 config.json（原子写），返回归一化后的配置段。
+
+    归一化复用 goals.goals_config（非法数值回退/夹取口径一致）。
+    """
+    import classifier  # noqa: PLC0415
+    import goals  # noqa: PLC0415 —— 惰性导入
+    path = _config_file_for_root(root, config_path)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        if not isinstance(cfg, dict):
+            cfg = {}
+    except FileNotFoundError:
+        cfg = {}
+    except json.JSONDecodeError:
+        cfg = {}
+    norm = goals.goals_config({"goals": payload})
+    cfg["goals"] = {
+        "enabled": norm["enabled"],
+        "daily_active_min": norm["daily_active_min"],
+        "daily_coding_min": norm["daily_coding_min"],
+    }
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+    classifier.invalidate_config_cache(path)
+    return dict(cfg["goals"])
+
+
 # ---------------------------------------------------------------------------
 # 软件更新（updater.py 的仪表盘侧状态与辅助）
 # ---------------------------------------------------------------------------
@@ -242,7 +289,7 @@ def _update_progress(got: int, total: int | None) -> None:
         _UPDATE_STATE["total"] = int(total or 0)
 
 
-def _run_download(asset: dict, dest: str) -> None:
+def _run_download(asset: dict, dest: str, api_base: str | None = None) -> None:
     try:
         import updater  # noqa: PLC0415 —— 惰性导入
         updater.download(
@@ -250,6 +297,7 @@ def _run_download(asset: dict, dest: str) -> None:
             expected_size=int(asset.get("size") or 0) or None,
             expected_digest=str(asset.get("digest") or "") or None,
             progress=_update_progress,
+            api_base=api_base,
         )
         with _UPDATE_LOCK:
             _UPDATE_STATE.update(state="ready", path=dest, error=None)
@@ -356,6 +404,43 @@ def _safe_extract_zip(data_root: str, zip_bytes: bytes) -> str:
     return tmp
 
 
+def _sanitize_restored_config(src_path: str, local_path: str) -> str | None:
+    """恢复 config.json 前的安全净化：update.api_base 永远以本机现值为准。
+
+    备份包视为不可信输入：若允许其覆写 update.api_base，恶意备份可把应用内
+    更新源改指攻击者域名，构成更新供应链攻击链。本机无该键时直接删除。
+    返回净化后的临时文件路径（位于同一临时目录，随恢复流程清理）；
+    JSON 解析失败返回 None（调用方跳过恢复该文件，不因坏配置拖垮整个恢复）。
+    """
+    try:
+        with open(src_path, "r", encoding="utf-8-sig") as fh:
+            cfg = json.load(fh)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(cfg, dict):
+        return None
+    local_api_base = None
+    try:
+        with open(local_path, "r", encoding="utf-8-sig") as fh:
+            local_cfg = json.load(fh)
+        if isinstance(local_cfg, dict) and isinstance(local_cfg.get("update"), dict):
+            local_api_base = local_cfg["update"].get("api_base")
+    except (OSError, ValueError, UnicodeDecodeError):
+        pass
+    if isinstance(cfg.get("update"), dict):
+        if local_api_base:
+            cfg["update"]["api_base"] = str(local_api_base)
+        else:
+            cfg["update"].pop("api_base", None)
+    tmp = src_path + ".sanitized"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, ensure_ascii=False, indent=2)
+    except OSError:
+        return None
+    return tmp
+
+
 def _merge_restore(data_root: str, tmp: str) -> dict:
     """把临时解压目录合并覆盖到 data_root（逐日期目录 + 配置文件）。"""
     restored_days: list[str] = []
@@ -374,6 +459,11 @@ def _merge_restore(data_root: str, tmp: str) -> dict:
                     restored_files.append(f"{name}/{fn}")
             restored_days.append(name)
         elif name in _ALLOWED_ROOT_FILES and os.path.isfile(src):
+            if name == "config.json":
+                sanitized = _sanitize_restored_config(src, os.path.join(data_root, name))
+                if sanitized is None:
+                    continue  # 坏配置不恢复，其余数据照常
+                src = sanitized
             shutil.copy2(src, os.path.join(data_root, name))
             restored_files.append(name)
     return {"days": restored_days, "files": restored_files}
@@ -436,12 +526,13 @@ def load_page_template() -> str:
     return _FALLBACK_TEMPLATE
 
 
-def _page_html(root: str, auth_enabled: bool) -> str:
-    """把数据根目录 / 鉴权标记 / 版本号注入模板（与原内联替换逻辑等价）。"""
+def _page_html(root: str, auth_enabled: bool, nonce: str = "") -> str:
+    """把数据根目录 / 鉴权标记 / 版本号 / CSP nonce 注入模板（与原内联替换逻辑等价）。"""
     return (load_page_template()
             .replace("DATA_ROOT", json.dumps(root).replace("$", "\\$"))
             .replace("AUTH_FLAG", "true" if auth_enabled else "false")
-            .replace("APP_VERSION", version.VERSION))
+            .replace("APP_VERSION", version.VERSION)
+            .replace("__CSP_NONCE__", nonce))
 
 
 
@@ -452,14 +543,11 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # 静默，减少刷屏
         pass
 
-    def _send_security_headers(self, extra: dict | None = None) -> None:
-        """统一的隐私/安全响应头（CSP / X-Frame-Options 等）。"""
+    def _send_security_headers(self, extra: dict | None = None, csp: str | None = None) -> None:
+        """统一的隐私/安全响应头（CSP / X-Frame-Options 等）；csp 可覆盖默认策略。"""
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Frame-Options", "DENY")
-        self.send_header("Content-Security-Policy",
-                         "default-src 'self'; style-src 'self' 'unsafe-inline'; "
-                         "script-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-                         "connect-src 'self'; frame-ancestors 'none'")
+        self.send_header("Content-Security-Policy", csp or _DEFAULT_CSP)
         for k, v in (extra or {}).items():
             self.send_header(k, v)
 
@@ -598,6 +686,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send_blob(csv.encode("utf-8-sig"), "text/csv; charset=utf-8", f"{filename}.csv")
 
     def do_GET(self):  # noqa: N802
+        """GET 分发：同源校验 → 口令校验 → 页面 / 路由表派发。
+
+        各端点实现拆分为 _api_* 方法（见模块底部 _GET_ROUTES 路由表），
+        本方法只保留横切关注点（同源 / 鉴权）与分发，不再承载端点逻辑。
+        """
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
@@ -614,588 +707,622 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "unauthorized"}, 401)
             return
 
-        if path == "/" or path == "/index.html":
-            html = _page_html(root, auth_enabled)
-            body = html.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self._send_security_headers()
-            self.end_headers()
-            self.wfile.write(body)
+        if path in ("/", "/index.html"):
+            self._send_page(root, auth_enabled)
             return
 
-        if path == "/api/dates":
-            days = _available_days(root)
-            self._send_json({"dates": days})
+        handler = _GET_ROUTES.get(path)
+        if handler is None:
+            self._send_json({"error": "not found"}, 404)
             return
+        handler(self, query, root)
 
-        if path == "/api/days":
-            n = max(1, min(90, int(query.get("n", ["14"])[0])))
-            days = _available_days(root)[-n:]
-            out = []
-            for d in days:
-                # 单日聚合失败不拖垮整个趋势（返回 0，时间轴保持连续）
-                try:
-                    agg = report.aggregate(d, root)
-                    out.append({"date": d, "total_ms": agg["total_active_ms"], "count": agg["session_count"]})
-                except Exception:  # noqa: BLE001
-                    out.append({"date": d, "total_ms": 0, "count": 0})
-            self._send_json({"days": out})
-            return
+    # ------------------------------------------------------------------
+    # 页面与静态
+    # ------------------------------------------------------------------
+    def _send_page(self, root: str, auth_enabled: bool) -> None:
+        """/ ：注入数据根目录 / 鉴权标记 / 版本号 / per-request CSP nonce 的单页模板。"""
+        nonce = secrets.token_urlsafe(16)
+        html = _page_html(root, auth_enabled, nonce=nonce)
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self._send_security_headers(csp=_page_csp(nonce))
+        self.end_headers()
+        self.wfile.write(body)
 
-        if path == "/api/day":
-            date = self._valid_date(query)
-            if not date:
-                self._send_json({"error": "invalid date"}, 400)
-                return
-            self._send_json({"date": date, "aggregate": report.aggregate(date, root)})
-            return
+    def _api_favicon(self, query: dict, root: str) -> None:
+        """/favicon.ico：无图标，204 空响应。"""
+        self.send_response(204)
+        self.end_headers()
 
-        if path == "/api/ai-sessions":
-            # AI 会话深度（默认开启，数据源为本地 AI 会话文件 + 浏览器 Web AI 会话）
-            date = self._valid_date(query)
-            if not date:
-                self._send_json({"error": "invalid date"}, 400)
-                return
-            config = _load_config_for_root(root, self.server.config_path)
+    # ------------------------------------------------------------------
+    # 基础数据（概览 / 趋势）
+    # ------------------------------------------------------------------
+    def _api_dates(self, query: dict, root: str) -> None:
+        """/api/dates：全部有数据的日期列表。"""
+        self._send_json({"dates": _available_days(root)})
+
+    def _api_days(self, query: dict, root: str) -> None:
+        """/api/days?n=14：最近 N 天总活跃与会话数（趋势图）。"""
+        n = max(1, min(90, int(query.get("n", ["14"])[0])))
+        days = _available_days(root)[-n:]
+        out = []
+        for d in days:
+            # 单日聚合失败不拖垮整个趋势（返回 0，时间轴保持连续）
             try:
-                import ai_sessions  # noqa: PLC0415
+                agg = report.aggregate(d, root)
+                out.append({"date": d, "total_ms": agg["total_active_ms"], "count": agg["session_count"]})
+            except Exception:  # noqa: BLE001
+                out.append({"date": d, "total_ms": 0, "count": 0})
+        self._send_json({"days": out})
+
+    def _api_day(self, query: dict, root: str) -> None:
+        """/api/day?date=：单日聚合。"""
+        date = self._valid_date(query)
+        if not date:
+            self._send_json({"error": "invalid date"}, 400)
+            return
+        self._send_json({"date": date, "aggregate": report.aggregate(date, root)})
+
+    def _api_hourly(self, query: dict, root: str) -> None:
+        """/api/hourly?date=：单日 24 小时活跃分布。"""
+        date = self._valid_date(query)
+        if not date:
+            self._send_json({"error": "invalid date"}, 400)
+            return
+        agg = report.aggregate(date, root)
+        self._send_json({"date": date, "hourly_ms": agg.get("hourly_ms", [0] * 24)})
+
+    def _api_heatmap(self, query: dict, root: str) -> None:
+        """/api/heatmap?days=84：最近 N 天每日总活跃 + 24 小时分布。"""
+        try:
+            n = max(7, min(90, int(query.get("days", ["84"])[0])))
+        except ValueError:
+            n = 84
+        days = _available_days(root)[-n:]
+        out = []
+        for d in days:
+            # 单日聚合失败不拖垮热力图/总活跃（以 0 兜底，时间轴保持连续）
+            try:
+                agg = report.aggregate(d, root)
+                out.append({
+                    "date": d,
+                    "total_ms": agg["total_active_ms"],
+                    "hourly_ms": agg.get("hourly_ms", [0] * 24),
+                })
+            except Exception:  # noqa: BLE001
+                out.append({"date": d, "total_ms": 0, "hourly_ms": [0] * 24})
+        self._send_json({"days": out})
+
+    # ------------------------------------------------------------------
+    # 报表（日报 / 周报 / 月报 / 导出 / 备份）
+    # ------------------------------------------------------------------
+    def _api_report(self, query: dict, root: str) -> None:
+        """/api/report?date=：当日 report.md 原文。"""
+        date = self._valid_date(query)
+        if not date:
+            self._send_json({"error": "invalid date"}, 400)
+            return
+        md_path = os.path.join(root, date, "report.md")
+        if os.path.isfile(md_path):
+            try:
+                with open(md_path, "r", encoding="utf-8-sig") as fh:
+                    self._send_json({"date": date, "exists": True, "markdown": fh.read()})
+                    return
+            except OSError:
+                pass
+        self._send_json({"date": date, "exists": False, "markdown": ""})
+
+    def _api_week(self, query: dict, root: str) -> None:
+        """/api/week：最近 7 个有数据日聚合（复用 report 聚合）。"""
+        a, days = self._week_aggregate(root)
+        payload = {
+            "days": days,
+            "total_ms": a["total_active_ms"],
+            "count": a["session_count"],
+            "aggregate": a,
+            "markdown": self._render_week_md(a),
+        }
+        self._send_json(payload)
+
+    def _api_month(self, query: dict, root: str) -> None:
+        """/api/month?month=YYYY-MM：自然月聚合。"""
+        month = self._valid_month(query)
+        if not month:
+            self._send_json({"error": "invalid month"}, 400)
+            return
+        a = self._month_aggregate(root, month)
+        if a is None:
+            self._send_json({"month": month, "exists": False,
+                             "markdown": "", "aggregate": None})
+            return
+        self._send_json({
+            "month": month, "exists": True,
+            "total_ms": a["total_active_ms"],
+            "active_days": len(a.get("per_day", [])),
+            "count": a["session_count"],
+            "aggregate": a,
+            "markdown": self._render_month_md(a),
+        })
+
+    def _api_export(self, query: dict, root: str) -> None:
+        """/api/export：CSV/JSON 一键下载（day/week/month）。"""
+        self._handle_export(query, root)
+
+    def _api_backup(self, query: dict, root: str) -> None:
+        """/api/backup：数据备份 zip 附件下载。"""
+        if not os.path.isdir(root):
+            self._send_json({"error": "no data"}, 404)
+            return
+        try:
+            data = _backup_zip(root)
+            stamp = datetime.date.today().isoformat()
+            self._send_blob(data, "application/zip", f"usagemonitor_backup_{stamp}.zip")
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"backup failed: {exc}"}, 500)
+
+    # ------------------------------------------------------------------
+    # AI 会话深度 / 时间轴 / 成长 / 对比 / 查询 / 预算
+    # ------------------------------------------------------------------
+    def _api_ai_sessions(self, query: dict, root: str) -> None:
+        """/api/ai-sessions?date=：AI 会话深度统计（本地会话文件 + Web AI 会话）。"""
+        date = self._valid_date(query)
+        if not date:
+            self._send_json({"error": "invalid date"}, 400)
+            return
+        config = _load_config_for_root(root, self.server.config_path)
+        try:
+            import ai_sessions  # noqa: PLC0415
+            web_visits = None
+            try:
+                import browser_history  # noqa: PLC0415
+                bh = browser_history.collect(date, root, config)
+                web_visits = bh.get("visits") or []
+            except Exception:  # noqa: BLE001 —— Web 解析失败不影响本地统计
                 web_visits = None
-                try:
-                    import browser_history  # noqa: PLC0415
-                    bh = browser_history.collect(date, root, config)
-                    web_visits = bh.get("visits") or []
-                except Exception:  # noqa: BLE001 —— Web 解析失败不影响本地统计
-                    web_visits = None
-                data = ai_sessions.collect(date, config, web_visits=web_visits)
-                self._send_json({"date": date, "ai_sessions": data})
-            except Exception as exc:  # noqa: BLE001 —— 会话深度失败不拖垮概览
-                self._send_json({"error": f"ai-sessions unavailable: {exc}"}, 500)
-            return
+            data = ai_sessions.collect(date, config, web_visits=web_visits)
+            self._send_json({"date": date, "ai_sessions": data})
+        except Exception as exc:  # noqa: BLE001 —— 会话深度失败不拖垮概览
+            self._send_json({"error": f"ai-sessions unavailable: {exc}"}, 500)
 
-        if path == "/api/timeline":
-            # Vibe 时间轴回放（v2.5）：三源合并（前台 AI 会话 + AI 会话深度 + Git 提交）
-            # 纯派生、best-effort：无数据返回 200 空态；缓存复用 report._agg_cache（usage.jsonl mtime/size 失效）。
-            date = self._valid_date(query)
-            if not date:
+    def _api_timeline(self, query: dict, root: str) -> None:
+        """/api/timeline?date=：Vibe 时间轴回放（v2.5）三源合并。
+
+        纯派生、best-effort：无数据返回 200 空态；缓存复用 report._agg_cache。
+        """
+        date = self._valid_date(query)
+        if not date:
+            self._send_json({"error": "invalid date"}, 400)
+            return
+        project = (query.get("project") or [None])[0] or None
+        config = _load_config_for_root(root, self.server.config_path)
+        try:
+            import timeline  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
+            data = timeline.build_timeline(date, root, config, project=project)
+            self._send_json({"date": date, "events": data.get("events") or [],
+                             "summary": data.get("summary") or {}})
+        except Exception as exc:  # noqa: BLE001 —— 时间轴失败不拖垮仪表盘
+            self._send_json({"error": f"timeline unavailable: {exc}"}, 500)
+
+    def _api_trend(self, query: dict, root: str) -> None:
+        """/api/trend、/api/growth：能力成长曲线（周均值快照，v2.6 P7）。
+
+        纯派生 + 持久化快照（growth_baseline.json）：首次/坏档全量现算（自愈），
+        此后增量跳过重算；weeks 为最近 N 周（默认 8，1..52）。
+        """
+        try:
+            weeks = int((query.get("weeks") or ["8"])[0])
+        except (TypeError, ValueError):
+            weeks = 8
+        if not (1 <= weeks <= 52):
+            self._send_json({"error": "invalid weeks"}, 400)
+            return
+        config = _load_config_for_root(root, self.server.config_path)
+        try:
+            import growth  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
+            data = growth.growth_snapshot(root, config)
+            data["weeks"] = data.get("weeks") or []
+            if weeks < len(data["weeks"]):
+                data["weeks"] = data["weeks"][-weeks:]
+            self._send_json(data)
+        except Exception as exc:  # noqa: BLE001 —— 成长曲线失败不拖垮仪表盘
+            self._send_json({"error": f"trend unavailable: {exc}"}, 500)
+
+    def _api_ai_compare(self, query: dict, root: str) -> None:
+        """/api/ai-compare、/api/tool-compare：多工具横向对比（v2.6 P6，纯派生）。
+
+        start/end 必填且全匹配 YYYY-MM-DD；end<start 或范围非 1..90 天 → 400；
+        project 可选模糊过滤；无数据 → 200 空态；内部异常降级 500 不拖垮仪表盘。
+        """
+        start = (query.get("start") or [""])[0]
+        end = (query.get("end") or [""])[0]
+        if not _DAY_RE.fullmatch(start) or not _DAY_RE.fullmatch(end):
+            self._send_json({"error": "invalid date"}, 400)
+            return
+        try:
+            d0 = datetime.date.fromisoformat(start)
+            d1 = datetime.date.fromisoformat(end)
+        except ValueError:
+            self._send_json({"error": "invalid date"}, 400)
+            return
+        if d1 < d0 or (d1 - d0).days + 1 > 90:
+            self._send_json({"error": "invalid range"}, 400)
+            return
+        project = (query.get("project") or [None])[0] or None
+        config = _load_config_for_root(root, self.server.config_path)
+        try:
+            import tool_compare  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
+            days = [(d0 + datetime.timedelta(days=i)).isoformat()
+                    for i in range((d1 - d0).days + 1)]
+            data = tool_compare.compare_tools(days, root, config, project=project)
+            self._send_json(data)
+        except ValueError:
+            self._send_json({"error": "invalid range"}, 400)
+        except Exception as exc:  # noqa: BLE001 —— 对比失败不拖垮仪表盘
+            self._send_json({"error": f"ai-compare unavailable: {exc}"}, 500)
+
+    def _api_query(self, query: dict, root: str) -> None:
+        """/api/query：受限模板查询（非 LLM，docs/VIBECODING_IMPLEMENTATION_GUIDE.md §6.2）。
+
+        两种入口：?q=<自然语言模板> 或指南兼容的 ?tpl=q1&start=...&end=...；
+        只做固定模板匹配，参数白名单校验；未命中/非法 → 400；异常降级 500。
+        """
+        q_text = (query.get("q") or [""])[0].strip()
+        config = _load_config_for_root(root, self.server.config_path)
+        try:
+            import query as _qmod  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
+            if q_text:
+                result = _qmod.run_query(q_text, root, config)
+            else:
+                tpl_id = (query.get("tpl") or [""])[0].strip()
+                if not tpl_id:
+                    self._send_json({"error": "missing q or tpl"}, 400)
+                    return
+                result = _qmod.run_template(tpl_id, query, root, config)
+        except Exception as exc:  # noqa: BLE001 —— 查询解析/执行失败不拖垮仪表盘
+            self._send_json({"error": f"query unavailable: {exc}"}, 500)
+            return
+        if not result.get("ok"):
+            self._send_json({"error": result.get("error") or "bad query"}, 400)
+            return
+        self._send_json(result)
+
+    def _api_budget(self, query: dict, root: str) -> None:
+        """/api/budget：成本预算状态（默认关闭，v2.6 P3，纯派生 best-effort）。
+
+        period=daily|monthly；缺省按日期粒度推断；配置未开启/无效/异常 → 200 空态。
+        """
+        period = (query.get("period") or [""])[0].strip().lower()
+        if period not in ("", "daily", "monthly"):
+            self._send_json({"error": "invalid period"}, 400)
+            return
+        config = _load_config_for_root(root, self.server.config_path)
+        if period == "monthly":
+            m = self._valid_month({"month": query.get("date", [""])})
+            if not m:
                 self._send_json({"error": "invalid date"}, 400)
                 return
-            project = (query.get("project") or [None])[0] or None
-            config = _load_config_for_root(root, self.server.config_path)
-            try:
-                import timeline  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
-                data = timeline.build_timeline(date, root, config, project=project)
-                self._send_json({"date": date, "events": data.get("events") or [],
-                                 "summary": data.get("summary") or {}})
-            except Exception as exc:  # noqa: BLE001 —— 时间轴失败不拖垮仪表盘
-                self._send_json({"error": f"timeline unavailable: {exc}"}, 500)
-            return
-
-        if path in ("/api/trend", "/api/growth"):
-            # v2.6 P7：能力成长曲线（周均值快照）。纯派生 + 持久化快照（growth_baseline.json）：
-            # 首次/坏档全量现算（自愈），此后增量跳过重算；weeks 为最近 N 周（默认 8，1..52）。
-            try:
-                weeks = int((query.get("weeks") or ["8"])[0])
-            except (TypeError, ValueError):
-                weeks = 8
-            if not (1 <= weeks <= 52):
-                self._send_json({"error": "invalid weeks"}, 400)
-                return
-            config = _load_config_for_root(root, self.server.config_path)
-            try:
-                import growth  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
-                data = growth.growth_snapshot(root, config)
-                data["weeks"] = data.get("weeks") or []
-                if weeks < len(data["weeks"]):
-                    data["weeks"] = data["weeks"][-weeks:]
-                self._send_json(data)
-            except Exception as exc:  # noqa: BLE001 —— 成长曲线失败不拖垮仪表盘
-                self._send_json({"error": f"trend unavailable: {exc}"}, 500)
-            return
-
-        if path in ("/api/ai-compare", "/api/tool-compare"):
-            # v2.6 P6：多工具横向对比（纯派生、best-effort）。
-            # start/end 必填且全匹配 YYYY-MM-DD；end<start 或范围非 1..90 天 → 400；
-            # project 可选模糊过滤；无数据 → 200 空态；内部异常降级 500 不拖垮仪表盘。
-            start = (query.get("start") or [""])[0]
-            end = (query.get("end") or [""])[0]
-            if not _DAY_RE.fullmatch(start) or not _DAY_RE.fullmatch(end):
+            date = m
+        elif period == "daily":
+            d = self._valid_date(query)
+            if not d:
                 self._send_json({"error": "invalid date"}, 400)
                 return
-            try:
-                d0 = datetime.date.fromisoformat(start)
-                d1 = datetime.date.fromisoformat(end)
-            except ValueError:
-                self._send_json({"error": "invalid date"}, 400)
-                return
-            if d1 < d0 or (d1 - d0).days + 1 > 90:
-                self._send_json({"error": "invalid range"}, 400)
-                return
-            project = (query.get("project") or [None])[0] or None
-            config = _load_config_for_root(root, self.server.config_path)
-            try:
-                import tool_compare  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
-                days = [(d0 + datetime.timedelta(days=i)).isoformat()
-                        for i in range((d1 - d0).days + 1)]
-                data = tool_compare.compare_tools(days, root, config, project=project)
-                self._send_json(data)
-            except ValueError:
-                self._send_json({"error": "invalid range"}, 400)
-            except Exception as exc:  # noqa: BLE001 —— 对比失败不拖垮仪表盘
-                self._send_json({"error": f"ai-compare unavailable: {exc}"}, 500)
-            return
-
-        if path == "/api/query":
-            # v2.6 P7：受限模板查询（非 LLM，docs/VIBECODING_IMPLEMENTATION_GUIDE.md §6.2）。
-            # 两种入口：?q=<自然语言模板>（如「昨天 opencode 花了多少钱」「本周哪个项目成本最高」）
-            # 或指南兼容的 ?tpl=q1&start=...&end=...（显式模板 ID + 日期参数）。
-            # 只做固定模板匹配，不接受任意自由文本；参数白名单校验（周期词表 + YYYY-MM-DD），
-            # 未命中/非法参数 → 400；内部异常降级 500 不拖垮仪表盘；无数据 → 200 空态 + 文案。
-            q_text = (query.get("q") or [""])[0].strip()
-            config = _load_config_for_root(root, self.server.config_path)
-            try:
-                import query as _qmod  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
-                if q_text:
-                    result = _qmod.run_query(q_text, root, config)
-                else:
-                    tpl_id = (query.get("tpl") or [""])[0].strip()
-                    if not tpl_id:
-                        self._send_json({"error": "missing q or tpl"}, 400)
-                        return
-                    result = _qmod.run_template(tpl_id, query, root, config)
-            except Exception as exc:  # noqa: BLE001 —— 查询解析/执行失败不拖垮仪表盘
-                self._send_json({"error": f"query unavailable: {exc}"}, 500)
-                return
-            if not result.get("ok"):
-                self._send_json({"error": result.get("error") or "bad query"}, 400)
-                return
-            self._send_json(result)
-            return
-
-        if path == "/api/budget":
-            # v2.6 P3：成本预算状态（默认关闭）。纯派生、best-effort：
-            # period=daily|monthly；date 用 YYYY-MM-DD（daily）或 YYYY-MM（monthly），
-            # 缺省按日期粒度推断；配置未开启/无效/异常 → 200 空态，不拖垮概览。
-            period = (query.get("period") or [""])[0].strip().lower()
-            if period not in ("", "daily", "monthly"):
-                self._send_json({"error": "invalid period"}, 400)
-                return
-            config = _load_config_for_root(root, self.server.config_path)
-            if period == "monthly":
+            date = d
+        else:
+            d = self._valid_date(query)
+            if d:
+                date, period = d, "daily"
+            else:
                 m = self._valid_month({"month": query.get("date", [""])})
                 if not m:
                     self._send_json({"error": "invalid date"}, 400)
                     return
-                date = m
-            elif period == "daily":
-                d = self._valid_date(query)
-                if not d:
-                    self._send_json({"error": "invalid date"}, 400)
-                    return
-                date = d
-            else:
-                d = self._valid_date(query)
-                if d:
-                    date, period = d, "daily"
-                else:
-                    m = self._valid_month({"month": query.get("date", [""])})
-                    if not m:
-                        self._send_json({"error": "invalid date"}, 400)
-                        return
-                    date, period = m, "monthly"
-            try:
-                import budget  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
-                self._send_json(budget.budget_status(date, root, config, period=period))
-            except Exception as exc:  # noqa: BLE001 —— 预算异常降级为关闭态，不 500 拖垮概览
-                self._send_json({"error": f"budget unavailable: {exc}"}, 500)
-            return
+                date, period = m, "monthly"
+        try:
+            import budget  # noqa: PLC0415 —— 惰性导入，失败只影响本端点
+            self._send_json(budget.budget_status(date, root, config, period=period))
+        except Exception as exc:  # noqa: BLE001 —— 预算异常降级为关闭态，不 500 拖垮概览
+            self._send_json({"error": f"budget unavailable: {exc}"}, 500)
 
-        if path == "/api/insights":
-            # 规则即时计算（离线）；AI 只读缓存/按需生成（成功才写缓存）
-            date = self._valid_date(query)
-            if not date:
-                self._send_json({"error": "invalid date"}, 400)
-                return
-            config = _load_config_for_root(root, self.server.config_path)
-            try:
-                import insights  # noqa: PLC0415 —— 惰性导入
-                prev_day = (datetime.date.fromisoformat(date)
-                            - datetime.timedelta(days=1)).isoformat()
-                agg = report.aggregate(date, root)
-                prev_agg = report.aggregate(prev_day, root)
-                rules = insights.rule_insights(agg, config, prev_agg)
-                ins_cfg = config.get("insights") if isinstance(config.get("insights"), dict) else {}
-                ai_cfg = ins_cfg.get("ai") if isinstance(ins_cfg.get("ai"), dict) else {}
-                ai_enabled = bool(ins_cfg.get("enabled", True) and ai_cfg.get("enabled"))
-                ai = None
-                if ai_enabled:
-                    ai = insights.ai_insights(date, root, config, refresh=False)
-                    ai["provider"] = str(ai_cfg.get("provider") or "")
-                behavior = insights.behavior_insights(agg, config)
-                persona = insights.persona_insights(agg, config)
-                time_saved = insights.time_saved_insights(agg, config)
-                import git_insights  # noqa: PLC0415 —— 只读本地 Git 分析
-                git = git_insights.git_insights(config, date)
-                # v2.5：AI 会话质量卡片（纯离线派生；失败不影响既有洞察）
-                ai_quality = []
-                try:
-                    import ai_sessions as _ai_mod  # noqa: PLC0415
-                    ai_quality = insights.conversation_quality_insights(
-                        _ai_mod.collect(date, config))
-                except Exception:  # noqa: BLE001
-                    ai_quality = []
-                self._send_json({
-                    "date": date, "rules": rules,
-                    "ai_enabled": ai_enabled, "ai": ai,
-                    "behavior": behavior,
-                    "persona": persona,
-                    "time_saved": time_saved,
-                    "git": git,
-                    "ai_quality": ai_quality,
-                })
-            except Exception as exc:  # noqa: BLE001 —— 洞察失败不拖垮仪表盘
-                self._send_json({"error": f"insights unavailable: {exc}"}, 500)
+    # ------------------------------------------------------------------
+    # 洞察（规则 / AI / 行为 / 人格 / 设置 / Ollama）
+    # ------------------------------------------------------------------
+    def _api_insights(self, query: dict, root: str) -> None:
+        """/api/insights?date=：规则即时计算（离线）；AI 只读缓存（成功才写缓存）。"""
+        date = self._valid_date(query)
+        if not date:
+            self._send_json({"error": "invalid date"}, 400)
             return
-
-        if path == "/api/insights/settings":
-            # AI 设置（可选功能开关 + provider 预设 + 自定义端点）；预设含 ai_custom.json 自定义项
-            config = _load_config_for_root(root, self.server.config_path)
-            try:
-                import insights  # noqa: PLC0415
-                custom = insights.load_ai_custom(root)
-                ins_cfg = config.get("insights") if isinstance(config.get("insights"), dict) else {}
-                ai_cfg = ins_cfg.get("ai") if isinstance(ins_cfg.get("ai"), dict) else {}
-                ai_enabled = bool(ins_cfg.get("enabled", True) and ai_cfg.get("enabled"))
-                self._send_json({
-                    "ai": _ai_settings_view(config),
-                    "ai_enabled": ai_enabled,
-                    "presets": insights.list_provider_presets(custom.get("providers")),
-                })
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": f"insights settings unavailable: {exc}"}, 500)
-            return
-
-        if path == "/api/insights/ai":
-            # AI 洞察：refresh=1 强制重生成；未开启时返回可展示的错误态
-            date = self._valid_date(query)
-            if not date:
-                self._send_json({"error": "invalid date"}, 400)
-                return
-            config = _load_config_for_root(root, self.server.config_path)
-            try:
-                import insights  # noqa: PLC0415
-                ins_cfg = config.get("insights") if isinstance(config.get("insights"), dict) else {}
-                ai_cfg = ins_cfg.get("ai") if isinstance(ins_cfg.get("ai"), dict) else {}
-                ai_enabled = bool(ins_cfg.get("enabled", True) and ai_cfg.get("enabled"))
-                if not ai_enabled:
-                    self._send_json({
-                        "date": date, "ai_enabled": False,
-                        "ai": {
-                            "generated_at": None, "model": None, "insights": None,
-                            "error": "AI 洞察未开启（config.json: insights.ai.enabled=false）",
-                            "provider": str(ai_cfg.get("provider") or ""),
-                        },
-                    })
-                    return
-                refresh = query.get("refresh", [""])[0] in ("1", "true", "yes")
-                ai = insights.ai_insights(date, root, config, refresh=refresh)
-                ai["provider"] = str(ai_cfg.get("provider") or "")
-                self._send_json({"date": date, "ai_enabled": True, "ai": ai})
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": f"insights ai unavailable: {exc}"}, 500)
-            return
-
-        if path == "/api/insights/ollama/models":
-            # 读取 Ollama 本地模型列表（供设置页下拉/校验；失败返回可展示错误）
-            config = _load_config_for_root(root, self.server.config_path)
-            try:
-                import insights  # noqa: PLC0415
-                ins_cfg = config.get("insights") if isinstance(config.get("insights"), dict) else {}
-                ai_cfg = ins_cfg.get("ai") if isinstance(ins_cfg.get("ai"), dict) else {}
-                base_url = str(ai_cfg.get("base_url") or "").strip()
-                models = insights.ollama_models(base_url or None)
-                self._send_json({"models": models, "error": None})
-            except Exception as exc:  # noqa: BLE001 —— 连接失败不拖垮设置页
-                self._send_json({"models": [], "error": str(exc)})
-            return
-
-        if path == "/api/ai/module":
-            # AI 洞察客制化模块（自定义 provider + 提示词定制），持久化于 <root>/ai_custom.json
-            try:
-                import insights  # noqa: PLC0415
-                custom = insights.load_ai_custom(root)
-                self._send_json({
-                    "custom": custom,
-                    "sections": insights.PROMPT_SECTION_ITEMS,
-                    "presets": insights.list_provider_presets(custom.get("providers")),
-                })
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": f"ai module unavailable: {exc}"}, 500)
-            return
-
-        if path == "/api/ai/module/export":
-            # 导出 AI 客制化模块配置（ai_custom.json 完整内容）
-            try:
-                import insights  # noqa: PLC0415
-                custom = insights.load_ai_custom(root)
-                data = json.dumps(custom, ensure_ascii=False, indent=2).encode("utf-8")
-                self._send_blob(data, "application/json; charset=utf-8", "ai_custom.json")
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": f"ai module export failed: {exc}"}, 500)
-            return
-
-        if path == "/api/pricing":
-            # AI 模型定价：内置默认计数 + 用户 <root>/ai_pricing.json 覆盖（USD/百万 Token）
-            try:
-                import ai_sessions  # noqa: PLC0415
-                builtin = dict(ai_sessions._DEFAULT_PRICING)
-                custom: dict = {}
-                fp = os.path.join(root, "ai_pricing.json")
-                if os.path.isfile(fp):
-                    try:
-                        with open(fp, "r", encoding="utf-8-sig") as fh:
-                            loaded = json.load(fh)
-                        if isinstance(loaded, dict):
-                            custom = loaded
-                    except Exception:  # noqa: BLE001
-                        custom = {}
-                self._send_json({
-                    "builtin_count": len(builtin),
-                    "builtin": {k: list(v) for k, v in sorted(builtin.items())},
-                    "custom": custom,
-                })
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": f"pricing read failed: {exc}"}, 500)
-            return
-
-        if path == "/api/update/check":
-            # 新版本检测（GitHub Releases API，结果缓存 5 分钟）
-            config = _load_config_for_root(root, self.server.config_path)
-            try:
-                import updater  # noqa: PLC0415 —— 惰性导入
-                now = time.monotonic()
-                if now - _UPDATE_CHECK_CACHE["ts"] > 300 or _UPDATE_CHECK_CACHE["result"] is None:
-                    _UPDATE_CHECK_CACHE["result"] = updater.check_for_update(
-                        api_base=_update_api_base(config), timeout=8.0)
-                    _UPDATE_CHECK_CACHE["ts"] = now
-                self._send_json(dict(_UPDATE_CHECK_CACHE["result"]))
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({
-                    "current": version.VERSION, "latest": "", "has_update": False,
-                    "notes": "", "published_at": "", "url": "", "asset": None,
-                    "error": f"检查更新失败：{exc}",
-                })
-            return
-
-        if path == "/api/update/status":
-            # 更新下载/应用状态（前端轮询）
-            try:
-                import updater  # noqa: PLC0415
-                frozen = updater.is_frozen()
-            except Exception:  # noqa: BLE001
-                frozen = False
-            with _UPDATE_LOCK:
-                state = dict(_UPDATE_STATE)
-            self._send_json({
-                "current": version.VERSION,
-                "frozen": frozen,
-                "dev": not frozen,
-                "state": state["state"],
-                "downloaded": state["downloaded"],
-                "total": state["total"],
-                "latest": state["latest"],
-                "error": state["error"],
-            })
-            return
-
-        if path == "/api/hourly":
-            date = self._valid_date(query)
-            if not date:
-                self._send_json({"error": "invalid date"}, 400)
-                return
+        config = _load_config_for_root(root, self.server.config_path)
+        try:
+            import insights  # noqa: PLC0415 —— 惰性导入
+            prev_day = (datetime.date.fromisoformat(date)
+                        - datetime.timedelta(days=1)).isoformat()
             agg = report.aggregate(date, root)
-            self._send_json({"date": date, "hourly_ms": agg.get("hourly_ms", [0] * 24)})
-            return
-
-        if path == "/api/urls":
-            date = self._valid_date(query)
-            if not date:
-                self._send_json({"error": "invalid date"}, 400)
-                return
+            prev_agg = report.aggregate(prev_day, root)
+            rules = insights.rule_insights(agg, config, prev_agg)
+            # v2.7「简单学习」：个性化基线异常（Welford/z-score，越用越准）
             try:
-                import browser_history  # noqa: PLC0415 —— 惰性导入
-                config = browser_history.classifier.load_config()
-                data = browser_history.collect(date, root, config)
-                visits = data.get("visits", [])[:_URL_MAX_ROWS]
-                self._send_json({
-                    "date": date,
-                    "count": data.get("count", 0),
-                    "total_duration_s": data.get("total_duration_s", 0),
-                    "by_category_duration_s": data.get("by_category_duration_s", {}),
-                    "by_domain_duration_s": data.get("by_domain_duration_s", {}),
-                    "visits": visits,
-                })
-            except Exception:  # noqa: BLE001 —— 浏览器数据失败不影响页面其他部分
-                self._send_json({"date": date, "count": 0, "total_duration_s": 0,
-                                 "by_category_duration_s": {}, "by_domain_duration_s": {}, "visits": []})
-            return
-
-        if path == "/api/report":
-            date = self._valid_date(query)
-            if not date:
-                self._send_json({"error": "invalid date"}, 400)
-                return
-            md_path = os.path.join(root, date, "report.md")
-            if os.path.isfile(md_path):
-                try:
-                    with open(md_path, "r", encoding="utf-8-sig") as fh:
-                        self._send_json({"date": date, "exists": True, "markdown": fh.read()})
-                        return
-                except OSError:
-                    pass
-            self._send_json({"date": date, "exists": False, "markdown": ""})
-            return
-
-        if path == "/api/week":
-            # 周报：最近 7 个有数据日聚合（复用 report._aggregate_days/_report_from_agg）
-            a, days = self._week_aggregate(root)
-            payload = {
-                "days": days,
-                "total_ms": a["total_active_ms"],
-                "count": a["session_count"],
-                "aggregate": a,
-                "markdown": self._render_week_md(a),
-            }
-            self._send_json(payload)
-            return
-
-        if path == "/api/month":
-            month = self._valid_month(query)
-            if not month:
-                self._send_json({"error": "invalid month"}, 400)
-                return
-            a = self._month_aggregate(root, month)
-            if a is None:
-                self._send_json({"month": month, "exists": False,
-                                 "markdown": "", "aggregate": None})
-                return
+                rules.extend(insights.baseline_insights(root, date, agg, config))
+            except Exception:  # noqa: BLE001
+                pass
+            ins_cfg = config.get("insights") if isinstance(config.get("insights"), dict) else {}
+            ai_cfg = ins_cfg.get("ai") if isinstance(ins_cfg.get("ai"), dict) else {}
+            ai_enabled = bool(ins_cfg.get("enabled", True) and ai_cfg.get("enabled"))
+            ai = None
+            if ai_enabled:
+                ai = insights.ai_insights(date, root, config, refresh=False)
+                ai["provider"] = str(ai_cfg.get("provider") or "")
+            behavior = insights.behavior_insights(agg, config)
+            persona = insights.persona_insights(agg, config)
+            time_saved = insights.time_saved_insights(agg, config)
+            import git_insights  # noqa: PLC0415 —— 只读本地 Git 分析
+            git = git_insights.git_insights(config, date)
+            # v2.5：AI 会话质量卡片（纯离线派生；失败不影响既有洞察）
+            ai_quality = []
+            try:
+                import ai_sessions as _ai_mod  # noqa: PLC0415
+                ai_quality = insights.conversation_quality_insights(
+                    _ai_mod.collect(date, config))
+            except Exception:  # noqa: BLE001
+                ai_quality = []
             self._send_json({
-                "month": month, "exists": True,
-                "total_ms": a["total_active_ms"],
-                "active_days": len(a.get("per_day", [])),
-                "count": a["session_count"],
-                "aggregate": a,
-                "markdown": self._render_month_md(a),
+                "date": date, "rules": rules,
+                "ai_enabled": ai_enabled, "ai": ai,
+                "behavior": behavior,
+                "persona": persona,
+                "time_saved": time_saved,
+                "git": git,
+                "ai_quality": ai_quality,
             })
-            return
+        except Exception as exc:  # noqa: BLE001 —— 洞察失败不拖垮仪表盘
+            self._send_json({"error": f"insights unavailable: {exc}"}, 500)
 
-        if path == "/api/export":
-            self._handle_export(query, root)
-            return
+    def _api_insights_settings(self, query: dict, root: str) -> None:
+        """/api/insights/settings：AI 设置视图（开关 + provider 预设 + 自定义端点）。"""
+        config = _load_config_for_root(root, self.server.config_path)
+        try:
+            import insights  # noqa: PLC0415
+            custom = insights.load_ai_custom(root)
+            ins_cfg = config.get("insights") if isinstance(config.get("insights"), dict) else {}
+            ai_cfg = ins_cfg.get("ai") if isinstance(ins_cfg.get("ai"), dict) else {}
+            ai_enabled = bool(ins_cfg.get("enabled", True) and ai_cfg.get("enabled"))
+            self._send_json({
+                "ai": _ai_settings_view(config),
+                "ai_enabled": ai_enabled,
+                "presets": insights.list_provider_presets(custom.get("providers")),
+            })
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"insights settings unavailable: {exc}"}, 500)
 
-        if path == "/api/backup":
-            if not os.path.isdir(root):
-                self._send_json({"error": "no data"}, 404)
-                return
-            try:
-                data = _backup_zip(root)
-                stamp = datetime.date.today().isoformat()
-                self._send_blob(data, "application/zip", f"usagemonitor_backup_{stamp}.zip")
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": f"backup failed: {exc}"}, 500)
-            return
+    def _api_insights_ai(self, query: dict, root: str) -> None:
+        """/api/insights/ai?date=：读取 AI 洞察缓存（只读，绝不触发付费生成）。
 
-        if path == "/api/heatmap":
-            # 热力图数据：最近 N 天（默认 84 = 12 周）的每日总活跃 + 24 小时分布
-            try:
-                n = max(7, min(90, int(query.get("days", ["84"])[0])))
-            except ValueError:
-                n = 84
-            days = _available_days(root)[-n:]
-            out = []
-            for d in days:
-                # 单日聚合失败不拖垮热力图/总活跃（以 0 兜底，时间轴保持连续）
-                try:
-                    agg = report.aggregate(d, root)
-                    out.append({
-                        "date": d,
-                        "total_ms": agg["total_active_ms"],
-                        "hourly_ms": agg.get("hourly_ms", [0] * 24),
-                    })
-                except Exception:  # noqa: BLE001
-                    out.append({"date": d, "total_ms": 0, "hourly_ms": [0] * 24})
-            self._send_json({"days": out})
+        安全约定：GET 一律 refresh=False——强制重生成走 POST（_api_insights_ai_refresh），
+        防止跨站 GET 触发付费 API 调用（成本型 CSRF）与意外重复计费。
+        """
+        date = self._valid_date(query)
+        if not date:
+            self._send_json({"error": "invalid date"}, 400)
             return
-
-        if path == "/api/log":
-            # 统一运行日志 + 最近几天 errors.log（仪表盘「日志」视图）
-            try:
-                n = max(10, min(500, int(query.get("n", ["200"])[0])))
-            except ValueError:
-                n = 200
-            try:
-                import applog  # noqa: PLC0415
-                entries = applog.read_recent(root, n)
-                err_days = _available_days(root)[-3:]
-                errors = applog.read_errors(root, err_days, n)
-            except Exception:  # noqa: BLE001
-                entries, errors = [], []
-            self._send_json({"entries": entries, "errors": errors})
-            return
-
-        if path == "/api/groups":
-            # 应用分组管理：内置+自定义分组、全部已知应用及其当前分类
-            try:
-                import classifier as _clf  # noqa: PLC0415
-                config = _clf.load_config()
-                config["data_root"] = root
-                groups = _clf.load_app_groups(root)
-                groups = _clf.sanitize_groups(config, groups)  # 剔除孤儿分组（如遗留的 AI工具）
-                cats = _clf.all_categories(config, groups)
-                known = _collect_known_apps(root)
-                custom_names = groups.get("app_names", {})
-                entries = []
-                for exe, name in sorted(known.items(), key=lambda kv: kv[1].lower()):
-                    entries.append({
-                        "exe": exe,
-                        "app": custom_names.get(exe) or name,
-                        "category": _clf.classify_category(exe, "", config),
-                        "overridden": exe in groups["exe_groups"],
-                    })
+        config = _load_config_for_root(root, self.server.config_path)
+        try:
+            import insights  # noqa: PLC0415
+            ins_cfg = config.get("insights") if isinstance(config.get("insights"), dict) else {}
+            ai_cfg = ins_cfg.get("ai") if isinstance(ins_cfg.get("ai"), dict) else {}
+            ai_enabled = bool(ins_cfg.get("enabled", True) and ai_cfg.get("enabled"))
+            if not ai_enabled:
                 self._send_json({
-                    "exe_groups": groups["exe_groups"],
-                    "custom_categories": groups["custom_categories"],
-                    "app_names": groups.get("app_names", {}),
-                    "group_meta": groups.get("group_meta", {}),
-                    "categories": cats,
-                    "apps": entries,
+                    "date": date, "ai_enabled": False,
+                    "ai": {
+                        "generated_at": None, "model": None, "insights": None,
+                        "error": "AI 洞察未开启（config.json: insights.ai.enabled=false）",
+                        "provider": str(ai_cfg.get("provider") or ""),
+                    },
                 })
-            except Exception:  # noqa: BLE001
-                self._send_json({"error": "groups unavailable"}, 500)
+                return
+            ai = insights.ai_insights(date, root, config, refresh=False)
+            ai["provider"] = str(ai_cfg.get("provider") or "")
+            self._send_json({"date": date, "ai_enabled": True, "ai": ai})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"insights ai unavailable: {exc}"}, 500)
+
+    def _api_ollama_models(self, query: dict, root: str) -> None:
+        """/api/insights/ollama/models：Ollama 本地模型列表（设置页下拉/校验）。"""
+        config = _load_config_for_root(root, self.server.config_path)
+        try:
+            import insights  # noqa: PLC0415
+            ins_cfg = config.get("insights") if isinstance(config.get("insights"), dict) else {}
+            ai_cfg = ins_cfg.get("ai") if isinstance(ins_cfg.get("ai"), dict) else {}
+            base_url = str(ai_cfg.get("base_url") or "").strip()
+            models = insights.ollama_models(base_url or None)
+            self._send_json({"models": models, "error": None})
+        except Exception as exc:  # noqa: BLE001 —— 连接失败不拖垮设置页
+            self._send_json({"models": [], "error": str(exc)})
+
+    # ------------------------------------------------------------------
+    # AI 客制化模块 / 定价
+    # ------------------------------------------------------------------
+    def _api_ai_module(self, query: dict, root: str) -> None:
+        """/api/ai/module：AI 洞察客制化模块（持久化于 <root>/ai_custom.json）。"""
+        try:
+            import insights  # noqa: PLC0415
+            custom = insights.load_ai_custom(root)
+            self._send_json({
+                "custom": custom,
+                "sections": insights.PROMPT_SECTION_ITEMS,
+                "presets": insights.list_provider_presets(custom.get("providers")),
+            })
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"ai module unavailable: {exc}"}, 500)
+
+    def _api_ai_module_export(self, query: dict, root: str) -> None:
+        """/api/ai/module/export：导出 AI 客制化模块配置（ai_custom.json 完整内容）。"""
+        try:
+            import insights  # noqa: PLC0415
+            custom = insights.load_ai_custom(root)
+            data = json.dumps(custom, ensure_ascii=False, indent=2).encode("utf-8")
+            self._send_blob(data, "application/json; charset=utf-8", "ai_custom.json")
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"ai module export failed: {exc}"}, 500)
+
+    def _api_pricing_get(self, query: dict, root: str) -> None:
+        """/api/pricing：内置模型定价 + 用户 <root>/ai_pricing.json 覆盖。"""
+        try:
+            import ai_sessions  # noqa: PLC0415
+            builtin = dict(ai_sessions._DEFAULT_PRICING)
+            custom: dict = {}
+            fp = os.path.join(root, "ai_pricing.json")
+            if os.path.isfile(fp):
+                try:
+                    with open(fp, "r", encoding="utf-8-sig") as fh:
+                        loaded = json.load(fh)
+                    if isinstance(loaded, dict):
+                        custom = loaded
+                except Exception:  # noqa: BLE001
+                    custom = {}
+            self._send_json({
+                "builtin_count": len(builtin),
+                "builtin": {k: list(v) for k, v in sorted(builtin.items())},
+                "custom": custom,
+            })
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"pricing read failed: {exc}"}, 500)
+
+    # ------------------------------------------------------------------
+    # 更新
+    # ------------------------------------------------------------------
+    def _api_update_check(self, query: dict, root: str) -> None:
+        """/api/update/check：新版本检测（GitHub Releases API，结果缓存 5 分钟）。"""
+        config = _load_config_for_root(root, self.server.config_path)
+        try:
+            import updater  # noqa: PLC0415 —— 惰性导入
+            now = time.monotonic()
+            if now - _UPDATE_CHECK_CACHE["ts"] > 300 or _UPDATE_CHECK_CACHE["result"] is None:
+                _UPDATE_CHECK_CACHE["result"] = updater.check_for_update(
+                    api_base=_update_api_base(config), timeout=8.0)
+                _UPDATE_CHECK_CACHE["ts"] = now
+            self._send_json(dict(_UPDATE_CHECK_CACHE["result"]))
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({
+                "current": version.VERSION, "latest": "", "has_update": False,
+                "notes": "", "published_at": "", "url": "", "asset": None,
+                "error": f"检查更新失败：{exc}",
+            })
+
+    def _api_update_status(self, query: dict, root: str) -> None:
+        """/api/update/status：更新下载/应用状态（前端轮询）。"""
+        try:
+            import updater  # noqa: PLC0415
+            frozen = updater.is_frozen()
+        except Exception:  # noqa: BLE001
+            frozen = False
+        with _UPDATE_LOCK:
+            state = dict(_UPDATE_STATE)
+        self._send_json({
+            "current": version.VERSION,
+            "frozen": frozen,
+            "dev": not frozen,
+            "state": state["state"],
+            "downloaded": state["downloaded"],
+            "total": state["total"],
+            "latest": state["latest"],
+            "error": state["error"],
+        })
+
+    # ------------------------------------------------------------------
+    # 浏览器明细 / 日志 / 分组
+    # ------------------------------------------------------------------
+    def _api_urls(self, query: dict, root: str) -> None:
+        """/api/urls?date=：浏览器 URL 明细（最多 _URL_MAX_ROWS 条）。"""
+        date = self._valid_date(query)
+        if not date:
+            self._send_json({"error": "invalid date"}, 400)
             return
+        try:
+            import browser_history  # noqa: PLC0415 —— 惰性导入
+            # 与其他端点一致：按 data_root/--config 取配置（而非全局默认路径）
+            config = _load_config_for_root(root, self.server.config_path)
+            data = browser_history.collect(date, root, config)
+            visits = data.get("visits", [])[:_URL_MAX_ROWS]
+            self._send_json({
+                "date": date,
+                "count": data.get("count", 0),
+                "total_duration_s": data.get("total_duration_s", 0),
+                "by_category_duration_s": data.get("by_category_duration_s", {}),
+                "by_domain_duration_s": data.get("by_domain_duration_s", {}),
+                "visits": visits,
+            })
+        except Exception:  # noqa: BLE001 —— 浏览器数据失败不影响页面其他部分
+            self._send_json({"date": date, "count": 0, "total_duration_s": 0,
+                             "by_category_duration_s": {}, "by_domain_duration_s": {}, "visits": []})
 
-        if path == "/api/groups/export":
-            # 导出应用分组配置（app_groups.json 完整内容，含分组/显示名/元数据）
-            try:
-                import classifier as _clf  # noqa: PLC0415
-                groups = _clf.load_app_groups(root)
-                data = json.dumps(groups, ensure_ascii=False, indent=2).encode("utf-8")
-                self._send_blob(data, "application/json; charset=utf-8", "app_groups.json")
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": f"export failed: {exc}"}, 500)
-            return
+    def _api_log(self, query: dict, root: str) -> None:
+        """/api/log?n=200：统一运行日志 + 最近几天 errors.log（「日志」视图）。"""
+        try:
+            n = max(10, min(500, int(query.get("n", ["200"])[0])))
+        except ValueError:
+            n = 200
+        try:
+            import applog  # noqa: PLC0415
+            entries = applog.read_recent(root, n)
+            err_days = _available_days(root)[-3:]
+            errors = applog.read_errors(root, err_days, n)
+        except Exception:  # noqa: BLE001
+            entries, errors = [], []
+        self._send_json({"entries": entries, "errors": errors})
 
-        if path == "/favicon.ico":
-            self.send_response(204)
-            self.end_headers()
-            return
+    def _api_groups(self, query: dict, root: str) -> None:
+        """/api/groups：内置+自定义分组、全部已知应用及其当前分类。"""
+        try:
+            import classifier as _clf  # noqa: PLC0415
+            config = _clf.load_config()
+            config["data_root"] = root
+            groups = _clf.load_app_groups(root)
+            groups = _clf.sanitize_groups(config, groups)  # 剔除孤儿分组（如遗留的 AI工具）
+            cats = _clf.all_categories(config, groups)
+            known = _collect_known_apps(root)
+            custom_names = groups.get("app_names", {})
+            entries = []
+            for exe, name in sorted(known.items(), key=lambda kv: kv[1].lower()):
+                entries.append({
+                    "exe": exe,
+                    "app": custom_names.get(exe) or name,
+                    "category": _clf.classify_category(exe, "", config),
+                    "overridden": exe in groups["exe_groups"],
+                })
+            self._send_json({
+                "exe_groups": groups["exe_groups"],
+                "custom_categories": groups["custom_categories"],
+                "app_names": groups.get("app_names", {}),
+                "group_meta": groups.get("group_meta", {}),
+                "categories": cats,
+                "apps": entries,
+            })
+        except Exception:  # noqa: BLE001
+            self._send_json({"error": "groups unavailable"}, 500)
 
-        self._send_json({"error": "not found"}, 404)
+    def _api_groups_export(self, query: dict, root: str) -> None:
+        """/api/groups/export：导出应用分组配置（app_groups.json 完整内容）。"""
+        try:
+            import classifier as _clf  # noqa: PLC0415
+            groups = _clf.load_app_groups(root)
+            data = json.dumps(groups, ensure_ascii=False, indent=2).encode("utf-8")
+            self._send_blob(data, "application/json; charset=utf-8", "app_groups.json")
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"export failed: {exc}"}, 500)
 
+    # ------------------------------------------------------------------
+    # POST 端点
+    # ------------------------------------------------------------------
     def do_POST(self):  # noqa: N802
+        """POST 分发：同源/口令校验 → 二进制恢复分支 → JSON 体解析 → 路由表。"""
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        query = urllib.parse.parse_qs(parsed.query)
         root = self.server.data_root
         # 同源校验（与 GET 一致）
         if not self._origin_allowed(self.headers):
@@ -1206,26 +1333,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "unauthorized"}, 401)
             return
 
-        # 恢复上传：二进制 zip（Content-Type: application/octet-stream）
+        # 恢复上传：二进制 zip（Content-Type: application/octet-stream），先于 JSON 解析
         if path == "/api/backup/restore":
-            try:
-                length = int(self.headers.get("Content-Length", 0))
-            except ValueError:
-                length = 0
-            if length <= 0 or length > 200 * 1024 * 1024:
-                self._send_json({"error": "bad body"}, 400)
-                return
-            data = self.rfile.read(length)
-            tmp_dir = None
-            try:
-                tmp_dir = _safe_extract_zip(root, data)
-                result = _merge_restore(root, tmp_dir)
-                self._send_json({"ok": True, "days": result["days"], "files": result["files"]})
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": f"restore failed: {exc}"}, 400)
-            finally:
-                if tmp_dir:
-                    shutil.rmtree(tmp_dir, ignore_errors=True)
+            self._api_backup_restore(root)
             return
 
         # 其余 POST 为 JSON 请求体
@@ -1240,240 +1350,382 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             body = {}
 
+        # classifier 可用性预检（分组等 POST 端点依赖；失败统一 500，不在各端点重复处理）
         try:
-            import classifier as _clf  # noqa: PLC0415
+            import classifier as _clf  # noqa: F401,PLC0415 —— 预检导入，成功即可用
         except Exception:  # noqa: BLE001
             self._send_json({"error": "unavailable"}, 500)
             return
 
-        if path == "/api/insights/settings":
-            # AI 可选功能设置：开关 + provider 预设 + 自定义端点（API Key 空=保留原值）
-            enabled = bool(body.get("enabled"))
-            provider = str(body.get("provider") or "").strip()
-            base_url = str(body.get("base_url") or "").strip()
-            model = str(body.get("model") or "").strip()
+        handler = _POST_ROUTES.get(path)
+        if handler is None:
+            self._send_json({"error": "method not allowed"}, 405)
+            return
+        handler(self, query, body, root)
+
+    def _api_backup_restore(self, root: str) -> None:
+        """/api/backup/restore：恢复上传（二进制 zip，防 zip-slip + 配置净化）。"""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = 0
+        if length <= 0 or length > _RESTORE_MAX_BYTES:
+            # 拒绝前先有界排空请求体并关闭连接：直接回 400 不读 body 的话，
+            # keep-alive 会把残留字节当新请求解析，客户端读到 RST/ConnectionAborted。
             try:
-                import insights  # noqa: PLC0415
-                custom = insights.load_ai_custom(root)
-                preset_map = {p["id"]: p for p in
-                              insights.list_provider_presets(custom.get("providers"))}
-                preset = preset_map.get(provider.lower(), {})
-                eff_base = base_url or preset.get("base_url") or ""
-                eff_model = model or preset.get("model") or ""
-                if enabled and (not eff_base or not eff_model):
-                    self._send_json({
-                        "error": "开启 AI 需要可用的 Base URL 和 Model（请选择预设或填写自定义端点）",
-                    }, 400)
-                    return
-                ai = _save_ai_settings(root, self.server.config_path, body)
+                if length > 0:
+                    self.rfile.read(min(length, 1 << 20))  # 有界排空（防超大 body 拖死）
+            except Exception:  # noqa: BLE001 —— 排空失败也照常拒绝
+                pass
+            self.close_connection = True
+            self._send_json({"error": "bad body"}, 400)
+            return
+        data = self.rfile.read(length)
+        tmp_dir = None
+        try:
+            tmp_dir = _safe_extract_zip(root, data)
+            result = _merge_restore(root, tmp_dir)
+            self._send_json({"ok": True, "days": result["days"], "files": result["files"]})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"restore failed: {exc}"}, 400)
+        finally:
+            if tmp_dir:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def _api_insights_settings_save(self, query: dict, body: dict, root: str) -> None:
+        """POST /api/insights/settings：AI 开关 + provider 预设 + 自定义端点（Key 空=保留）。"""
+        enabled = bool(body.get("enabled"))
+        provider = str(body.get("provider") or "").strip()
+        base_url = str(body.get("base_url") or "").strip()
+        model = str(body.get("model") or "").strip()
+        try:
+            import insights  # noqa: PLC0415
+            custom = insights.load_ai_custom(root)
+            preset_map = {p["id"]: p for p in
+                          insights.list_provider_presets(custom.get("providers"))}
+            preset = preset_map.get(provider.lower(), {})
+            eff_base = base_url or preset.get("base_url") or ""
+            eff_model = model or preset.get("model") or ""
+            if enabled and (not eff_base or not eff_model):
                 self._send_json({
-                    "ok": True, "ai": ai,
-                    "presets": insights.list_provider_presets(custom.get("providers")),
-                })
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": f"save failed: {exc}"}, 400)
-            return
+                    "error": "开启 AI 需要可用的 Base URL 和 Model（请选择预设或填写自定义端点）",
+                }, 400)
+                return
+            ai = _save_ai_settings(root, self.server.config_path, body)
+            self._send_json({
+                "ok": True, "ai": ai,
+                "presets": insights.list_provider_presets(custom.get("providers")),
+            })
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"save failed: {exc}"}, 400)
 
-        if path == "/api/pricing":
-            # 保存用户模型定价覆盖到 <root>/ai_pricing.json（{model:[in,out]} 或 {model:{input,output}}）
-            data = body.get("pricing") if isinstance(body.get("pricing"), dict) else body
-            clean: dict = {}
-            for k, v in (data or {}).items():
-                if isinstance(v, (list, tuple)) and len(v) >= 2:
-                    try:
-                        clean[str(k)] = [float(v[0]), float(v[1])]
-                    except (TypeError, ValueError):
-                        pass
-                elif isinstance(v, dict) and "input" in v and "output" in v:
-                    try:
-                        clean[str(k)] = {"input": float(v["input"]), "output": float(v["output"])}
-                    except (TypeError, ValueError):
-                        pass
-            try:
-                fp = os.path.join(root, "ai_pricing.json")
-                tmp = fp + ".tmp"
-                with open(tmp, "w", encoding="utf-8") as fh:
-                    json.dump(clean, fh, ensure_ascii=False, indent=2)
-                os.replace(tmp, fp)
-                self._send_json({"ok": True, "count": len(clean)})
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": f"pricing save failed: {exc}"}, 400)
-            return
+    def _api_pricing_save(self, query: dict, body: dict, root: str) -> None:
+        """POST /api/pricing：保存用户模型定价覆盖到 <root>/ai_pricing.json。"""
+        data = body.get("pricing") if isinstance(body.get("pricing"), dict) else body
+        clean: dict = {}
+        for k, v in (data or {}).items():
+            if isinstance(v, (list, tuple)) and len(v) >= 2:
+                try:
+                    clean[str(k)] = [float(v[0]), float(v[1])]
+                except (TypeError, ValueError):
+                    pass
+            elif isinstance(v, dict) and "input" in v and "output" in v:
+                try:
+                    clean[str(k)] = {"input": float(v["input"]), "output": float(v["output"])}
+                except (TypeError, ValueError):
+                    pass
+        try:
+            fp = os.path.join(root, "ai_pricing.json")
+            tmp = fp + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(clean, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, fp)
+            self._send_json({"ok": True, "count": len(clean)})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"pricing save failed: {exc}"}, 400)
 
-        if path == "/api/ai/module":
-            # 保存 AI 洞察客制化模块（providers + prompt 定制）
-            if not (isinstance(body.get("providers"), list)
-                    or isinstance(body.get("prompt"), dict)):
-                self._send_json({"error": "invalid ai module payload"}, 400)
-                return
-            try:
-                import insights  # noqa: PLC0415
-                custom = insights.save_ai_custom(root, body)
-                self._send_json({
-                    "ok": True, "custom": custom,
-                    "sections": insights.PROMPT_SECTION_ITEMS,
-                    "presets": insights.list_provider_presets(custom.get("providers")),
-                })
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": f"save failed: {exc}"}, 400)
+    def _api_ai_module_save(self, query: dict, body: dict, root: str) -> None:
+        """POST /api/ai/module：保存 AI 洞察客制化模块（providers + prompt 定制）。"""
+        if not (isinstance(body.get("providers"), list)
+                or isinstance(body.get("prompt"), dict)):
+            self._send_json({"error": "invalid ai module payload"}, 400)
             return
+        try:
+            import insights  # noqa: PLC0415
+            custom = insights.save_ai_custom(root, body)
+            self._send_json({
+                "ok": True, "custom": custom,
+                "sections": insights.PROMPT_SECTION_ITEMS,
+                "presets": insights.list_provider_presets(custom.get("providers")),
+            })
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"save failed: {exc}"}, 400)
 
-        if path == "/api/ai/module/import":
-            # 导入 AI 洞察客制化模块：可传 {"custom": {...}} 或直接传 ai_custom.json 对象
-            data = body.get("custom") if isinstance(body.get("custom"), dict) else body
-            if not (isinstance(data, dict)
-                    and (isinstance(data.get("providers"), list)
-                         or isinstance(data.get("prompt"), dict))):
-                self._send_json({"error": "invalid ai module payload"}, 400)
-                return
-            try:
-                import insights  # noqa: PLC0415
-                custom = insights.save_ai_custom(root, data)
-                self._send_json({
-                    "ok": True, "custom": custom,
-                    "sections": insights.PROMPT_SECTION_ITEMS,
-                    "presets": insights.list_provider_presets(custom.get("providers")),
-                })
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": f"import failed: {exc}"}, 400)
+    def _api_ai_module_import(self, query: dict, body: dict, root: str) -> None:
+        """POST /api/ai/module/import：导入客制化模块（{"custom":{...}} 或直接对象）。"""
+        data = body.get("custom") if isinstance(body.get("custom"), dict) else body
+        if not (isinstance(data, dict)
+                and (isinstance(data.get("providers"), list)
+                     or isinstance(data.get("prompt"), dict))):
+            self._send_json({"error": "invalid ai module payload"}, 400)
             return
+        try:
+            import insights  # noqa: PLC0415
+            custom = insights.save_ai_custom(root, data)
+            self._send_json({
+                "ok": True, "custom": custom,
+                "sections": insights.PROMPT_SECTION_ITEMS,
+                "presets": insights.list_provider_presets(custom.get("providers")),
+            })
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"import failed: {exc}"}, 400)
 
-        if path == "/api/update/download":
-            # 下载最新版 exe 到 %TEMP%（后台线程，前端轮询 /api/update/status）
-            config = _load_config_for_root(root, self.server.config_path)
-            with _UPDATE_LOCK:
-                if _UPDATE_STATE["state"] == "downloading":
-                    self._send_json({"error": "正在下载中，请稍候"}, 409)
-                    return
-            try:
-                import updater  # noqa: PLC0415
-                result = updater.check_for_update(api_base=_update_api_base(config), timeout=8.0)
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": f"检查更新失败：{exc}"}, 400)
+    def _api_update_download(self, query: dict, body: dict, root: str) -> None:
+        """POST /api/update/download：后台线程下载最新 exe（前端轮询 status）。"""
+        config = _load_config_for_root(root, self.server.config_path)
+        with _UPDATE_LOCK:
+            if _UPDATE_STATE["state"] == "downloading":
+                self._send_json({"error": "正在下载中，请稍候"}, 409)
                 return
-            if result.get("error"):
-                self._send_json({"error": result["error"]}, 400)
-                return
-            if not result.get("has_update") or not result.get("asset"):
-                self._send_json({"error": "已是最新版本，无需下载"}, 400)
-                return
-            asset = result["asset"]
-            dest_dir = os.path.join(tempfile.gettempdir(), "usagemonitor-update")
-            dest = os.path.join(dest_dir, f"VibeTrace-{result['latest']}.exe")
-            with _UPDATE_LOCK:
-                _UPDATE_STATE.update(state="downloading", downloaded=0, total=0,
-                                     path=None, error=None, latest=str(result["latest"]))
-            threading.Thread(target=_run_download, args=(asset, dest), daemon=True).start()
-            self._send_json({"ok": True})
+        try:
+            import updater  # noqa: PLC0415
+            result = updater.check_for_update(api_base=_update_api_base(config), timeout=8.0)
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"检查更新失败：{exc}"}, 400)
             return
+        if result.get("error"):
+            self._send_json({"error": result["error"]}, 400)
+            return
+        if not result.get("has_update") or not result.get("asset"):
+            self._send_json({"error": "已是最新版本，无需下载"}, 400)
+            return
+        asset = result["asset"]
+        dest_dir = os.path.join(tempfile.gettempdir(), "usagemonitor-update")
+        dest = os.path.join(dest_dir, f"VibeTrace-{result['latest']}.exe")
+        with _UPDATE_LOCK:
+            _UPDATE_STATE.update(state="downloading", downloaded=0, total=0,
+                                 path=None, error=None, latest=str(result["latest"]))
+        threading.Thread(target=_run_download, args=(asset, dest, _update_api_base(config)), daemon=True).start()
+        self._send_json({"ok": True})
 
-        if path == "/api/update/apply":
-            # 应用已下载的更新：写信号让 monitor 优雅退出，启动更新脚本替换 exe 并重启。
-            # dryrun=true（仅测试/预览）只生成脚本不执行。
-            dryrun = bool(body.get("dryrun"))
-            with _UPDATE_LOCK:
-                state = dict(_UPDATE_STATE)
-            if state.get("state") != "ready" or not state.get("path"):
-                self._send_json({"error": "没有已下载的更新（请先下载）"}, 400)
-                return
-            try:
-                import updater  # noqa: PLC0415
-                if not dryrun:
-                    updater.request_update(root)  # 通知 monitor 优雅退出
-                result = updater.apply_update(state["path"], dry_run=dryrun)
-            except Exception as exc:  # noqa: BLE001
-                self._send_json({"error": f"应用更新失败：{exc}"}, 400)
-                return
+    def _api_update_apply(self, query: dict, body: dict, root: str) -> None:
+        """POST /api/update/apply：写信号优雅退出 monitor，更新脚本替换 exe 并重启。"""
+        # dryrun=true（仅测试/预览）只生成脚本不执行。
+        dryrun = bool(body.get("dryrun"))
+        with _UPDATE_LOCK:
+            state = dict(_UPDATE_STATE)
+        if state.get("state") != "ready" or not state.get("path"):
+            self._send_json({"error": "没有已下载的更新（请先下载）"}, 400)
+            return
+        try:
+            import updater  # noqa: PLC0415
             if not dryrun:
-                with _UPDATE_LOCK:
-                    _UPDATE_STATE.update(state="applying")
-                # 响应发出后关闭仪表盘服务（更新脚本会等待全部进程退出后替换 exe）
-                threading.Timer(2.5, lambda: self.server.shutdown()).start()
-            self._send_json({"ok": True, "dry_run": dryrun, "script": result.get("script", "")})
+                updater.request_update(root)  # 通知 monitor 优雅退出
+            result = updater.apply_update(state["path"], dry_run=dryrun)
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"应用更新失败：{exc}"}, 400)
             return
+        if not dryrun:
+            with _UPDATE_LOCK:
+                _UPDATE_STATE.update(state="applying")
+            # 响应发出后关闭仪表盘服务（更新脚本会等待全部进程退出后替换 exe）
+            threading.Timer(2.5, lambda: self.server.shutdown()).start()
+        self._send_json({"ok": True, "dry_run": dryrun, "script": result.get("script", "")})
 
-        if path == "/api/groups/set":
-            # 设置/移出应用分组：{"exe": "steam.exe", "category": "游戏"}；category 为空=移出（自动分类）
-            exe = str(body.get("exe", "")).lower()
-            cat = str(body.get("category", "")).strip()
-            if not exe:
-                self._send_json({"error": "exe required"}, 400)
-                return
-            groups = _clf.load_app_groups(root)
-            if cat:
-                groups["exe_groups"][exe] = cat
-                # 未知分组自动登记为自定义分组
-                if cat not in _clf.all_categories(_clf.load_config(), groups):
-                    groups["custom_categories"].append(cat)
-            else:
-                groups["exe_groups"].pop(exe, None)
+    def _api_groups_set(self, query: dict, body: dict, root: str) -> None:
+        """POST /api/groups/set：设置/移出应用分组（category 空=移出，自动分类）。"""
+        import classifier as _clf  # noqa: PLC0415
+        exe = str(body.get("exe", "")).lower()
+        cat = str(body.get("category", "")).strip()
+        if not exe:
+            self._send_json({"error": "exe required"}, 400)
+            return
+        groups = _clf.load_app_groups(root)
+        if cat:
+            groups["exe_groups"][exe] = cat
+            # 未知分组自动登记为自定义分组
+            if cat not in _clf.all_categories(_clf.load_config(), groups):
+                groups["custom_categories"].append(cat)
+        else:
+            groups["exe_groups"].pop(exe, None)
+        _clf.save_app_groups(groups, root)
+        self._send_json({"ok": True})
+
+    def _api_groups_rename(self, query: dict, body: dict, root: str) -> None:
+        """POST /api/groups/rename：客制化显示名（display_name 空=恢复默认）。"""
+        import classifier as _clf  # noqa: PLC0415
+        exe = str(body.get("exe", "")).lower()
+        display_name = str(body.get("display_name", "")).strip()
+        if not exe:
+            self._send_json({"error": "exe required"}, 400)
+            return
+        groups = _clf.load_app_groups(root)
+        groups.setdefault("app_names", {})
+        if display_name:
+            groups["app_names"][exe] = display_name
+        else:
+            groups["app_names"].pop(exe, None)
+        _clf.save_app_groups(groups, root)
+        self._send_json({"ok": True, "app": display_name})
+
+    def _api_groups_import(self, query: dict, body: dict, root: str) -> None:
+        """POST /api/groups/import：导入分组配置（剔除孤儿分组保证自洽）。"""
+        import classifier as _clf  # noqa: PLC0415
+        data = body.get("groups") if isinstance(body.get("groups"), dict) else body
+        if not isinstance(data, dict):
+            self._send_json({"error": "invalid groups payload"}, 400)
+            return
+        groups = {
+            "exe_groups": data.get("exe_groups", {}),
+            "custom_categories": data.get("custom_categories", []),
+            "app_names": data.get("app_names", {}),
+            "group_meta": data.get("group_meta", {}),
+        }
+        # 导入时同样剔除孤儿分组，保证分组系统自洽
+        config = _clf.load_config()
+        config["data_root"] = root
+        groups = _clf.sanitize_groups(config, groups)
+        _clf.save_app_groups(groups, root)
+        self._send_json({"ok": True, "groups": _clf.load_app_groups(root)})
+
+    def _api_groups_add(self, query: dict, body: dict, root: str) -> None:
+        """POST /api/groups/add：新增自定义分组。"""
+        import classifier as _clf  # noqa: PLC0415
+        name = str(body.get("name", "")).strip()
+        if not name:
+            self._send_json({"error": "name required"}, 400)
+            return
+        groups = _clf.load_app_groups(root)
+        cats = _clf.all_categories(_clf.load_config(), groups)
+        if name not in cats:
+            groups["custom_categories"].append(name)
             _clf.save_app_groups(groups, root)
-            self._send_json({"ok": True})
-            return
+        self._send_json({"ok": True, "categories": _clf.all_categories(_clf.load_config(), groups)})
 
-        if path == "/api/groups/rename":
-            # 客制化显示名：{"exe":"steam.exe","display_name":"Steam 自定义名"}；display_name 为空=恢复默认
-            exe = str(body.get("exe", "")).lower()
-            display_name = str(body.get("display_name", "")).strip()
-            if not exe:
-                self._send_json({"error": "exe required"}, 400)
+    def _api_groups_delete(self, query: dict, body: dict, root: str) -> None:
+        """POST /api/groups/delete：删除自定义分组（含组内应用的覆盖关系）。"""
+        import classifier as _clf  # noqa: PLC0415
+        name = str(body.get("name", "")).strip()
+        if not name:
+            self._send_json({"error": "name required"}, 400)
+            return
+        groups = _clf.load_app_groups(root)
+        groups["custom_categories"] = [x for x in groups["custom_categories"] if x != name]
+        groups["exe_groups"] = {k: v for k, v in groups["exe_groups"].items() if v != name}
+        _clf.save_app_groups(groups, root)
+        self._send_json({"ok": True})
+
+    def _api_insights_ai_refresh(self, query: dict, body: dict, root: str) -> None:
+        """POST /api/insights/ai：强制重生成 AI 洞察（body {"refresh": true}）。
+
+        仅 POST 允许触发付费生成：跨站伪造请求已被同源校验拦截，
+        把成本型 CSRF 的触发面从 GET 收敛到显式动作。
+        """
+        date = self._valid_date(query)
+        if not date:
+            self._send_json({"error": "invalid date"}, 400)
+            return
+        config = _load_config_for_root(root, self.server.config_path)
+        try:
+            import insights  # noqa: PLC0415
+            ins_cfg = config.get("insights") if isinstance(config.get("insights"), dict) else {}
+            ai_cfg = ins_cfg.get("ai") if isinstance(ins_cfg.get("ai"), dict) else {}
+            ai_enabled = bool(ins_cfg.get("enabled", True) and ai_cfg.get("enabled"))
+            if not ai_enabled:
+                self._send_json({
+                    "date": date, "ai_enabled": False,
+                    "ai": {
+                        "generated_at": None, "model": None, "insights": None,
+                        "error": "AI 洞察未开启（config.json: insights.ai.enabled=false）",
+                        "provider": str(ai_cfg.get("provider") or ""),
+                    },
+                })
                 return
-            groups = _clf.load_app_groups(root)
-            groups.setdefault("app_names", {})
-            if display_name:
-                groups["app_names"][exe] = display_name
-            else:
-                groups["app_names"].pop(exe, None)
-            _clf.save_app_groups(groups, root)
-            self._send_json({"ok": True, "app": display_name})
-            return
+            refresh = bool(body.get("refresh")) or query.get("refresh", [""])[0] in ("1", "true", "yes")
+            ai = insights.ai_insights(date, root, config, refresh=refresh)
+            ai["provider"] = str(ai_cfg.get("provider") or "")
+            self._send_json({"date": date, "ai_enabled": True, "ai": ai})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"insights ai unavailable: {exc}"}, 500)
 
-        if path == "/api/groups/import":
-            # 导入应用分组配置：可传 {"groups": {...}} 或直接传 app_groups.json 对象
-            data = body.get("groups") if isinstance(body.get("groups"), dict) else body
-            if not isinstance(data, dict):
-                self._send_json({"error": "invalid groups payload"}, 400)
-                return
-            groups = {
-                "exe_groups": data.get("exe_groups", {}),
-                "custom_categories": data.get("custom_categories", []),
-                "app_names": data.get("app_names", {}),
-                "group_meta": data.get("group_meta", {}),
-            }
-            # 导入时同样剔除孤儿分组，保证分组系统自洽
-            config = _clf.load_config()
-            config["data_root"] = root
-            groups = _clf.sanitize_groups(config, groups)
-            _clf.save_app_groups(groups, root)
-            self._send_json({"ok": True, "groups": _clf.load_app_groups(root)})
-            return
+    def _api_goals(self, query: dict, root: str) -> None:
+        """/api/goals?date=：每日目标进度 + streak（可选功能，关闭时返回空态）。
 
-        if path == "/api/groups/add":
-            name = str(body.get("name", "")).strip()
-            if not name:
-                self._send_json({"error": "name required"}, 400)
-                return
-            groups = _clf.load_app_groups(root)
-            cats = _clf.all_categories(_clf.load_config(), groups)
-            if name not in cats:
-                groups["custom_categories"].append(name)
-                _clf.save_app_groups(groups, root)
-            self._send_json({"ok": True, "categories": _clf.all_categories(_clf.load_config(), groups)})
-            return
+        date 缺省取今天；纯派生只读，不产生任何数据。
+        """
+        date = self._valid_date(query) or datetime.date.today().isoformat()
+        config = _load_config_for_root(root, self.server.config_path)
+        try:
+            import goals  # noqa: PLC0415 —— 惰性导入
+            self._send_json(goals.today_progress(date, root, config))
+        except Exception as exc:  # noqa: BLE001 —— 目标失败不拖垮概览
+            self._send_json({"error": f"goals unavailable: {exc}"}, 500)
 
-        if path == "/api/groups/delete":
-            name = str(body.get("name", "")).strip()
-            if not name:
-                self._send_json({"error": "name required"}, 400)
-                return
-            groups = _clf.load_app_groups(root)
-            groups["custom_categories"] = [x for x in groups["custom_categories"] if x != name]
-            groups["exe_groups"] = {k: v for k, v in groups["exe_groups"].items() if v != name}
-            _clf.save_app_groups(groups, root)
-            self._send_json({"ok": True})
-            return
+    def _api_goals_settings_save(self, query: dict, body: dict, root: str) -> None:
+        """POST /api/goals/settings：保存每日目标设置（enabled + 两类分钟数）。"""
+        try:
+            section = _save_goals_settings(root, self.server.config_path, body)
+            self._send_json({"ok": True, "goals": section})
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"error": f"save failed: {exc}"}, 400)
 
-        self._send_json({"error": "method not allowed"}, 405)
+
+# ---------------------------------------------------------------------------
+# 路由表：路径 → Handler 方法（plain function，调用时显式传 self）。
+# 新增端点：实现 _api_xxx 方法后在此登记即可，do_GET/do_POST 无需改动。
+# ---------------------------------------------------------------------------
+_GET_ROUTES: dict[str, Callable] = {
+    "/favicon.ico": Handler._api_favicon,
+    "/api/dates": Handler._api_dates,
+    "/api/days": Handler._api_days,
+    "/api/day": Handler._api_day,
+    "/api/hourly": Handler._api_hourly,
+    "/api/heatmap": Handler._api_heatmap,
+    "/api/report": Handler._api_report,
+    "/api/week": Handler._api_week,
+    "/api/month": Handler._api_month,
+    "/api/export": Handler._api_export,
+    "/api/backup": Handler._api_backup,
+    "/api/ai-sessions": Handler._api_ai_sessions,
+    "/api/timeline": Handler._api_timeline,
+    "/api/trend": Handler._api_trend,
+    "/api/growth": Handler._api_trend,
+    "/api/ai-compare": Handler._api_ai_compare,
+    "/api/tool-compare": Handler._api_ai_compare,
+    "/api/query": Handler._api_query,
+    "/api/budget": Handler._api_budget,
+    "/api/insights": Handler._api_insights,
+    "/api/insights/settings": Handler._api_insights_settings,
+    "/api/insights/ai": Handler._api_insights_ai,
+    "/api/goals": Handler._api_goals,
+    "/api/insights/ollama/models": Handler._api_ollama_models,
+    "/api/ai/module": Handler._api_ai_module,
+    "/api/ai/module/export": Handler._api_ai_module_export,
+    "/api/pricing": Handler._api_pricing_get,
+    "/api/update/check": Handler._api_update_check,
+    "/api/update/status": Handler._api_update_status,
+    "/api/urls": Handler._api_urls,
+    "/api/log": Handler._api_log,
+    "/api/groups": Handler._api_groups,
+    "/api/groups/export": Handler._api_groups_export,
+}
+
+_POST_ROUTES: dict[str, Callable] = {
+    "/api/insights/settings": Handler._api_insights_settings_save,
+    "/api/insights/ai": Handler._api_insights_ai_refresh,
+    "/api/goals/settings": Handler._api_goals_settings_save,
+    "/api/pricing": Handler._api_pricing_save,
+    "/api/ai/module": Handler._api_ai_module_save,
+    "/api/ai/module/import": Handler._api_ai_module_import,
+    "/api/update/download": Handler._api_update_download,
+    "/api/update/apply": Handler._api_update_apply,
+    "/api/groups/set": Handler._api_groups_set,
+    "/api/groups/rename": Handler._api_groups_rename,
+    "/api/groups/import": Handler._api_groups_import,
+    "/api/groups/add": Handler._api_groups_add,
+    "/api/groups/delete": Handler._api_groups_delete,
+}
+
 
 
 # ---------------------------------------------------------------------------

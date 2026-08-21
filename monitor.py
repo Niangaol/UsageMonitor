@@ -146,6 +146,15 @@ def _run_balloon_scheduler(data_root: str) -> None:
         stop_event.wait(60)
 
 
+def _run_alerts_scheduler(data_root: str, config_path: str | None = None) -> None:
+    """告警调度线程入口（v2.7 行动闭环）：预算/连续工作提醒，托盘气泡通知。
+
+    依赖注入见 alerts.run_alert_loop；此处传 paused_fn 与主循环暂停状态联动。
+    """
+    import alerts  # noqa: PLC0415 —— 惰性导入
+    alerts.run_alert_loop(stop_event, data_root, config_path, paused_fn=is_paused)
+
+
 def _run_update_checker(data_root: str, config: dict, delay: float = 15.0) -> None:
     """启动后延迟检查一次新版本；发现更新且托盘就绪时气泡提示。
 
@@ -783,6 +792,10 @@ def main(argv: list[str] | None = None) -> int:
             # 日报生成托盘通知调度：独立守护线程，每 60 秒检测 report.md
             threading.Thread(
                 target=_run_balloon_scheduler, args=(data_root,), daemon=True
+            ).start()
+            # 告警调度（v2.7 行动闭环）：预算接近/超支 + 连续工作休息提醒
+            threading.Thread(
+                target=_run_alerts_scheduler, args=(data_root, hot_reload_path), daemon=True
             ).start()
             # 启动后延迟检查新版本（有更新时托盘气泡提示）
             threading.Thread(

@@ -100,7 +100,9 @@ def test_pricing_get_and_post_roundtrip(tmp_path):
     try:
         st_get, j = _req(p, "GET", "/api/pricing")
         assert st_get == 200
-        assert j["builtin_count"] > 0, "内置价目表不应为空"
+        # 内置表完整返回，且数量与代码内置一致（设置页据此渲染可编辑行）
+        assert j["builtin_count"] == len(ai_sessions._DEFAULT_PRICING), (
+            j["builtin_count"], len(ai_sessions._DEFAULT_PRICING))
         assert isinstance(j["custom"], dict)
         # 保存覆盖
         st_post, jp = _req(p, "POST", "/api/pricing",
