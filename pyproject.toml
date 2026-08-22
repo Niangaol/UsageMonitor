@@ -25,7 +25,8 @@ source = [
     "monitor", "classifier", "report", "dashboard",
     "browser_history", "inventory", "win32core", "paths",
     "applog", "tray", "insights", "updater",
-    "sqlite_store", "ai_sessions", "git_insights", "timeline", "budget", "growth", "tool_compare", "adoption", "query"
+    "sqlite_store", "ai_sessions", "git_insights", "timeline", "budget", "growth", "tool_compare", "adoption", "query",
+    "learn", "alerts", "goals"
 ]
 omit = [
     "test_all.py",
@@ -42,7 +43,7 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:"
 ]
-fail_under = 65
+fail_under = 70
 show_missing = true
 skip_covered = false
 

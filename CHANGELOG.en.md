@@ -8,6 +8,25 @@ Release flow: `git tag vX.Y.Z` → CI builds and publishes the Release automatic
 
 > 简体中文版: [CHANGELOG.md](CHANGELOG.md)
 
+## [2.8.0] - 2026-08-23
+
+> Theme: engineering wrap-up & test pyramid completion (dashboard split / frontend·e2e tests / coverage gate 70) + Git-side adoption proxy metrics + constrained query template expansion.
+
+### Added (v2.8.0)
+
+- **Git-side adoption proxy metrics** (`adoption.py` converged + `/api/adoption?date=`): per the ADOPTION_SPIKE conclusion, the AI-side per-file attribution is dropped (0% join hit on real data); only read-only Git proxies remain — `retention` = lines_added/(lines_added+lines_deleted), `reworked_ratio` = lines_deleted/(lines_added+lines_deleted). A failing repo is skipped; whole-source failure returns an empty 200 contract, never 500. Mandatory disclaimer; shown collapsed + greyed-out in the insights view; confidence never equals "high"
+- **Constrained query template expansion** (`query.py`): added q6 "period output comparison" / q7 "best-focus day" / q8 "cost trend" templates, following the existing regex-whitelist + period-words + empty-200 + notice constrained contract, plus "today/yesterday" period aliases
+
+### Engineering (v2.8.0 · maintainability & tests)
+
+- **`dashboard.py` split**: HTTP-unrelated pure functions/constants (`_agg_to_csv`, `_backup_zip`, `_safe_extract_zip`, `_available_days`, `_collect_known_apps`, the days-cache group, etc.) moved to the new `dashboard_util.py`; behavior unchanged and re-exported so `dashboard.<name>` stays compatible; dashboard.py 1917→1714 lines; 13 new unit tests
+- **Test pyramid completion**: added `tests/frontend/test_frontend_smoke.py` (4 cases: nav↔section↔loader↔TITLES wiring, all 24 frontend `/api/*` calls resolved on backend routes, template structural gaps) and `tests/e2e/test_smoke.py` (2 cases: root HTML + seeded data → `/api/day` → `/api/trend` full-chain smoke)
+- **Coverage gate 65 → 70**: coverage source now includes `learn`/`alerts`/`goals`; measured quick-set is 73%; `pyproject.toml` / `ci-fast.yml` / `build.yml` all set to 70 consistently
+
+### Docs (v2.8.0)
+
+- `TODO.md` / `docs/ROADMAP.md` synced to the actual release state (v2.5.x / v2.7.0 released, v2.5.3 noted as tag-less, adoption marked "needs plugin event source"); `.gitignore` now ignores `.agent-teams/` (AgentTeams team state dir)
+
 ## [2.7.0] - 2026-08-21
 
 > Theme: alert loop + daily goals + global performance optimization (fingerprint caches for AI sessions / browser history / SQLite) + real-usage-first tokens with weighted estimation.
@@ -432,6 +451,7 @@ Pure standard library with zero third-party dependencies; static CPU < 0.1%, mem
 - Tests: test_all adds 11 dashboard API tests (endpoints / 403 / security headers / error codes / path traversal);
   post-build `UsageMonitor.exe --version` smoke test; all 125 assertions pass the gate.
 
+[2.8.0]: https://github.com/Niangaol/VibeTrace/releases/tag/v2.8.0
 [2.7.0]: https://github.com/Niangaol/VibeTrace/releases/tag/v2.7.0
 [2.2.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.2.0
 [2.1.1]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.1

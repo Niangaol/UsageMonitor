@@ -1,6 +1,6 @@
 # VibeTrace 项目规划文档：AI 编程深度追踪
 
-> **文档版本**：v1.0 | **更新日期**：2026-08-20 | **状态**：规划中
+> **文档版本**：v1.1 | **更新日期**：2026-08-21 | **状态**：已落地至 v2.7.0（2026-08-21）
 
 ## 一、项目定位与愿景
 
@@ -35,11 +35,22 @@
 - ✅ 可选 SQLite 后端与一致性校验（JSONL 仍为原始事实源）
 - ✅ 纯 Python + ctypes，零第三方运行时依赖
 - ✅ 打包为独立 exe，支持安装/卸载、应用内更新
-- ✅ 268 项断言测试覆盖
+- ✅ 336 项断言测试覆盖（test_all.py 无头兜底；另 pytest 396 项）
 - ✅ ROADMAP Phase 1：对话轮次 / Token 估算 / 按模型·项目拆分 / 会话详情面板与日报章节
 - ✅ ROADMAP Phase 3：按模型费用估算 / 按项目成本分摊 / 成本面板与日报成本章节（+ 周/月汇总成本账本）
 - ✅ ROADMAP Phase 4：死循环检测 + 专注度评分 + Vibe 编程人格分析（洞察页面板与日报今日建议）
 - ✅ ROADMAP Phase 2：Git 代码变更分析（`git_insights.py` 只读本地提交，代码产出/修改率）
+- ✅ AI 会话质量评分（`ai_sessions.quality_score`：提问含金量/返工/稳定性/上下文健康度四因子加权 0–100 分档）
+- ✅ Vibe 时间轴回放（`timeline.py` + `/api/timeline`）
+- ✅ 成本预算告警（`budget.py` + `/api/budget`）
+- ✅ 多工具横向对比（`tool_compare.py` + `/api/ai-compare`）
+- ✅ 能力成长曲线（`growth.py` + `/api/trend`）
+- ✅ 受限模板查询（`query.py` + `/api/query`，正则白名单不嵌大模型）
+- ✅ 告警闭环（`alerts.py`：预算 warn/exceed + 连续工作休息提醒，托盘气泡）
+- ✅ 每日目标 streak（`goals.py`：总活跃/编码时长目标 + 连续达成天数）
+- ✅ 个性化基线（`learn.py`：滑动窗口 + z-score 常态检测）
+- ✅ 性能指纹缓存（ai_sessions / browser_history / sqlite_store 提速）
+- ✅ 覆盖率门禁 65%（pytest 396 项 + test_all 336 项）
 
 ## 三、AI 功能深化方向（路线图）
 
@@ -65,8 +76,8 @@
 
 | 功能点 | 描述 | 实现思路 |
 |--------|------|----------|
-| **采纳率 (Acceptance Rate)** | 统计 AI 建议被接受的比例 | 结合 IDE 插件 API 或检测编辑器中的“接受建议”快捷键事件 |
-| **代码留存率 (Retention Rate)** | 统计 AI 生成的代码在最终提交中的保留比例 | 分析 Git diff 历史，对比 commit 前后的代码变更；参考 [GitHub Next 的 Copilot 研究](https://githubnext.com/projects/copilot-metrics) |
+| **采纳率 (Acceptance Rate)** | 统计 AI 建议被接受的比例（**待插件事件源**） | 结合 IDE 插件 API 或检测编辑器中的“接受建议”快捷键事件（需 IDE 插件提供采纳事件源） |
+| **代码留存率 (Retention Rate)** | 统计 AI 生成的代码在最终提交中的保留比例（**待插件事件源**） | 分析 Git diff 历史，对比 commit 前后的代码变更（需 IDE 插件事件源）；参考 [GitHub Next 的 Copilot 研究](https://githubnext.com/projects/copilot-metrics) |
 | **修改率 (Modification Rate)** | 统计 AI 生成代码被手动修改的比例 | 结合编辑器的撤销/重做记录或 Git 逐行分析 |
 | **Git 代码变更分析** ✅ | 衡量代码产出与改写/返工 | 配置 `insights.git.projects` 后用 `git log --numstat` 统计当日提交/增删行/改动文件，“修改率”=删除/变更（Phase 2 已落地） |
 | **任务完成率** | 统计开启 AI 会话后，任务被标记为“完成”的比例 | 结合 IDE 中的任务管理插件或自定义标记 |
@@ -110,7 +121,7 @@
 - [x] 仪表盘新增“AI 会话详情”面板（+ 日报「AI 会话深度」章节）
 
 ### v2.0（预计 2027 Q1）— 质量与成本
-- [ ] 采纳率/留存率分析（需 IDE 插件支持）
+- [ ] 采纳率/留存率分析（**待插件事件源**：需 IDE 插件提供采纳/留存事件源）
 - [x] API 成本追踪与报表（AI 会话费用估算已落地，Phase 3）
 - [x] Git 集成（代码变更分析）
 
@@ -118,7 +129,8 @@
 - [x] 死循环检测与提醒
 - [x] 专注度评分
 - [x] Vibe Coding 人格分析（趣味功能）
-- [ ] 自然语言查询（嵌入本地小模型，如 Qwen Coder）
+- [x] 受限模板查询（`query.py` + `/api/query`，正则白名单不嵌大模型；v2.5.0 已落地）
+- [ ] 自然语言查询（嵌入本地小模型，如 Qwen Coder，仍需外部模型/事件源）
 
 ## 五、技术架构扩展建议
 
@@ -129,7 +141,7 @@
 
 ### 5.2 IDE 插件扩展
 
-为实现“采纳率/留存率”分析，需要开发 IDE 插件：
+为实现“采纳率/留存率”分析，需要开发 IDE 插件（**待插件事件源**：采纳率/留存率需 IDE 插件提供事件源后方可落地）：
 - **VS Code**：通过 [VS Code API](https://code.visualstudio.com/api) 监听 `vscode.workspace.onDidChangeTextDocument` 等事件。
 - **JetBrains 系列**：通过 [IntelliJ Platform Plugin SDK](https://plugins.jetbrains.com/docs/intellij/welcome.html) 实现类似功能。
 

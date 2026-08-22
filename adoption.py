@@ -1,32 +1,29 @@
 # -*- coding: utf-8 -*-
-"""adoption.py — v3.0 · P9 无插件采纳率/留存率近似归因（SPIKE 骨架）。
+"""adoption.py — v3.0 · P9 采纳率「Git 侧」代理指标（只读，折叠+免责展示）。
 
-对应 docs/VIBECODING_IMPLEMENTATION_GUIDE.md §6.1 与 docs/ADOPTION_SPIKE.md。
+对应 docs/ADOPTION_SPIKE.md（§5 结论）与 docs/VIBECODING_IMPLEMENTATION_GUIDE.md §6.1。
 
-**先 spike，失败就砍**：精确采纳率/留存率在无插件事件时**物理做不到**——既有会话文件
-只带消息时间窗，没有「哪次编辑由谁/哪条消息生成」的 IDE 事件。本模块只做**近似归因**，
-且**必须**显著标注误差（notice/disclaimer，UI 折叠展示），绝不声称精确。
+**背景（spike 结论）**：无 IDE 插件事件时「AI 侧」per-file 归因（mtime × AI 会话窗）在
+真实数据上 join 命中率 = 0%，判砍。本模块**只保留 Git 侧代理指标**，不掺 AI 会话时间窗、
+不读取文件 mtime、不产生任何 AI 生成行归因。所有数值都是「当日 Git 变更的粗代理」，
+不是真实采纳率，必须带强制免责声明，UI 折叠 + 灰色降权展示，confidence 永不等于 "high"。
 
-**三信号启发式**（adoption_stats 判一个文件今天「疑似 AI 生成」）：
-  1. `git_insights`：真实 Git 产出（当日 repo / file 级 added/deleted/churn、modify_ratio）；
-  2. `ai_sessions.collect`：当日 AI 会话（conversations 带 first/last 时间窗 + project 归口、
-     total.generated_lines 生成量估算——该值本身是换行数启发式，误差会传导到本模块）；
-  3. **文件 mtime**：工作区文件最后写入时间；落在任一匹配项目的 AI 会话窗内 → 判为 AI 触碰。
+**指标（每仓库 / 每日 global 口径）**：
+  - `retention`（保留率粗代理）= lines_added / (lines_added + lines_deleted)；
+  - `reworked_ratio`（返工粗代理）= lines_deleted / (lines_added + lines_deleted)
+    == git_insights.modify_ratio；
+两者互补且恒 ∈ [0,1]；churn == 0（如纯二进制提交）→ 该仓库两值为 None。
 
-**派生指标（全部「仅参考」）**：
-  - per-file `ai_generated_ratio`：文件疑似 AI 生成行 / 文件新增行（项目 AI 行按会话 turns
-    占比从 total.generated_lines 分摊，窗口内文件按 added 占比再分摊；added=0 → None）；
-  - per-file `reworked_ratio`：deleted / (added + deleted)（「返工/重写」近似代理，逐文件
-    modify_ratio 口径）；
-  - per-project `approximate_retention` = lines_added / max(proj_ai_lines, 1)（AI 产出
-    落进提交的比例；分母为 0 → None）；
-  - per-project `approximate_acceptance` = 1 - modify_ratio（提交中未被删除的比例）。
+**数据来源**：只读复用 `git_insights.analyze_repo`（内部走 `git log --numstat` /
+`_parse_numstat`），聚合口径总是全量（lines_added/lines_deleted 不受 top_files 限制），
+`top_files` 仅限制每仓库 per-file 明细条数。
 
-**confidence 判定**：无 AI 数据 → "low"；join_rate（窗口内文件占比）≥ min_join_rate 且
-AI 行估计 > 0 → "medium"；永远不给 "high"（缺 IDE 事件，物理天花板）。所有近似值强约束。
+**confidence 规则**：found 且当日确有文本变更（总 churn > 0）→ "medium"（git 记录真实、
+公式透明）；无数据/关闭/全部仓库跳过 → "low"。**永不返回 "high"**（缺 IDE 事件，物理天花板）。
 
-**铁律**：只读 import ai_sessions / git_insights，不修改任何既有模块；不写
-usage.jsonl / usage.db；任何单源失败 → best-effort 降级（契约空态 200 可展示，绝不 500）。
+**铁律**：只读 import git_insights，不改任何既有模块、不写 usage.jsonl/usage.db；
+`git_config` 或整源失败 → 契约空态（found=False，200 可展示，绝不 500）；
+单仓库失败仅跳过该仓库（best-effort）。本模块不 import ai_sessions。
 
 依赖：仅项目内模块 + Python 标准库（零第三方运行时依赖）。
 
@@ -36,28 +33,25 @@ CLI：python adoption.py --day 2026-08-20 [--config path] [--data-root path] [--
 from __future__ import annotations
 
 import argparse
-import datetime
 import json
 import os
 import sys
 
-import ai_sessions  # 只读复用（collect → 会话窗 / generated_lines）
-import git_insights  # 只读复用（analyze_repo → 真实 Git 变更）
+import git_insights  # 只读复用（analyze_repo → 当日真实 Git 变更）
 
 # ---------------------------------------------------------------------------
 # 默认配置（读 config.adoption；风格对齐 git_insights.git_config）
 # ---------------------------------------------------------------------------
 _DEFAULT_ADOPTION = {
     "enabled": True,
-    "window_slack_s": 600,       # AI 会话窗前后宽容秒数（mtime 与消息时间的合理偏移）
-    "top_files": 1_000_000,      # per-repo 全量文件（spike 需全量 numstat，不受 insights.git.top_files 限制）
-    "min_join_rate": 0.30,       # join_rate 阈值：低于 → confidence=low（spike 判砍参考线）
+    "top_files": 100,  # 每仓库 per-file 明细展示上限（聚合口径不受限，总是全量）
 }
 
-# 近似归因强制免责声明（UI / 报告必须原样展示）
+# 代理指标强制免责声明（UI / 报告必须原样展示）
 _NOTICE = (
-    "无插件近似归因：非真实采纳率/留存率；基于 Git 当日变更 × AI 会话时间窗 × 文件 mtime "
-    "启发式估算，误差可能很大，仅供参考。"
+    "无插件 Git 侧代理指标（非真实采纳率）：仅按当日 Git 变更全局口径估算 "
+    "「保留率 = 新增行/(新增+删除)」与「返工代理 = 删除行/(新增+删除)」，"
+    "未关联 AI 会话/文件归属，误差可能很大，仅供参考。"
 )
 
 
@@ -68,53 +62,29 @@ def adoption_config(config: dict) -> dict:
     out = dict(_DEFAULT_ADOPTION)
     out["enabled"] = bool(sec.get("enabled", _DEFAULT_ADOPTION["enabled"]))
     try:
-        out["window_slack_s"] = max(0.0, float(sec.get("window_slack_s",
-                                                       _DEFAULT_ADOPTION["window_slack_s"])))
-    except (TypeError, ValueError):
-        pass
-    try:
         out["top_files"] = max(1, int(sec.get("top_files", _DEFAULT_ADOPTION["top_files"])))
-    except (TypeError, ValueError):
-        pass
-    try:
-        out["min_join_rate"] = max(0.0, min(1.0, float(sec.get("min_join_rate",
-                                                               _DEFAULT_ADOPTION["min_join_rate"]))))
     except (TypeError, ValueError):
         pass
     return out
 
 
-def _empty_result(date: str) -> dict:
+def _empty_result(date: str, enabled: bool = True, notice: str = _NOTICE) -> dict:
     """契约空态（200 可展示，非 500）。"""
     return {
         "date": date,
-        "enabled": True,
+        "enabled": enabled,
         "found": False,
-        "notice": _NOTICE,
-        "summary": {"projects": 0, "files": 0, "ai_windows": 0, "join_rate": 0.0,
-                    "approximate_retention": None, "approximate_acceptance": None},
+        "notice": notice,
+        "confidence": "low",
+        "summary": {"projects": 0, "files": 0, "commit_count": 0,
+                    "lines_added": 0, "lines_deleted": 0, "churn": 0,
+                    "retention": None, "reworked_ratio": None},
         "projects": [],
     }
 
 
-def _seconds(ts: str) -> float | None:
-    """ISO 时间戳（YYYY-MM-DD[THH:MM:SS]）→ 本地 epoch 秒；解析失败返回 None。"""
-    if not ts:
-        return None
-    try:
-        return datetime.datetime.fromisoformat(ts.strip().replace("Z", "+00:00")).timestamp()
-    except (ValueError, TypeError):
-        return None
-
-
-def _fuzzy_match(a: str, b: str) -> bool:
-    """双向子串匹配（大小写不敏感）：a 或 b 互为对方的子串。"""
-    x, y = (a or "").strip().lower(), (b or "").strip().lower()
-    return bool(x) and bool(y) and (x in y or y in x)
-
-
 def _clamp01(v: float) -> float:
-    """夹到 [0, 1]。"""
+    """夹到 [0, 1] 并保留 4 位小数。"""
     if v <= 0:
         return 0.0
     if v >= 1:
@@ -122,219 +92,139 @@ def _clamp01(v: float) -> float:
     return round(v, 4)
 
 
-def _collect_ai(date: str, config: dict) -> tuple[dict, list[dict]]:
-    """best-effort 拉取当日 AI 会话数据。
+def _repo_stats(repo: dict, date: str, cfg: dict) -> dict | None:
+    """只读拉取单个仓库当日 Git 统计；非仓库 / git 缺失 / 超时 / 异常 → None。
 
-    返回 (total, windows)；任一失败 → (空 total, [])，不抛异常。
-    windows = [{project, first, last, first_sec, last_sec, turns}]（collect 截断后的会话）。
+    调用方据此**仅跳过该仓库**，不影响其他仓库。
     """
     try:
-        col = ai_sessions.collect(date, config)
-    except Exception:  # noqa: BLE001 —— 会话目录缺失/文件损坏等一律降级
-        return {}, []
-    total = col.get("total") or {}
-    windows: list[dict] = []
-    for conv in total.get("conversations") or []:
-        first_s = _seconds(conv.get("first") or "")
-        last_s = _seconds(conv.get("last") or "")
-        if first_s is None or last_s is None:
-            continue
-        windows.append({
-            "project": str(conv.get("project") or "未识别"),
-            "first": conv.get("first") or "",
-            "last": conv.get("last") or "",
-            "first_sec": min(first_s, last_s),
-            "last_sec": max(first_s, last_s),
-            "turns": int(conv.get("turns") or 0),
-        })
-    return total, windows
-
-
-def _in_window(mtime_s: float, windows: list[dict], slack_s: float) -> bool:
-    """文件 mtime 是否落在任一会话窗 [first-slack, last+slack] 内。"""
-    for w in windows:
-        if (w["first_sec"] - slack_s) <= mtime_s <= (w["last_sec"] + slack_s):
-            return True
-    return False
-
-
-def _repo_files(repo: dict, day: str, cfg: dict) -> list[dict]:
-    """该仓库当天变更的全量文件（numstat，忽略/二进制不统计的自动跳过）。
-
-    直接复用 git_insights.analyze_repo 并把 top_files 放到全量，避免重复实现
-    git log 解析；非仓库 / git 缺失 / 超时 / 当天无提交 → 返回 []。
-    """
-    try:
-        stats = git_insights.analyze_repo(
-            repo, day, float(cfg.get("timeout_s", 10)), int(cfg.get("top_files", 1_000_000)))
-    except Exception:  # noqa: BLE001
-        return []
-    if not stats:
-        return []
-    return [dict(f) for f in (stats.get("top_files") or [])]
-
-
-def _file_mtime(repo_path: str, rel: str) -> float | None:
-    """仓库内文件的最后写入时间（本地 epoch）；文件不存在/IO 错误 → None。"""
-    try:
-        return os.path.getmtime(os.path.join(repo_path, rel.replace("/", os.sep)))
-    except (OSError, ValueError):
-        return None
-
-
-def _file_mtime_iso(repo_path: str, rel: str) -> str | None:
-    sec = _file_mtime(repo_path, rel)
-    if sec is None:
-        return None
-    try:
-        return datetime.datetime.fromtimestamp(sec).isoformat(timespec="seconds")
-    except (OSError, ValueError, OverflowError):
+        return git_insights.analyze_repo(
+            repo, date, float(cfg.get("timeout_s", 10)), int(cfg.get("top_files", 100)))
+    except Exception:  # noqa: BLE001 —— 单仓库失败仅跳过
         return None
 
 
 def adoption_stats(date: str, data_root: str, config: dict) -> dict:
-    """无插件采纳率/留存率近似归因（SPIKE 主入口）。
+    """Git 侧采纳率代理指标（SPIKE §5.3 收敛后的主入口）。
 
-    返回 docs/ADOPTION_SPIKE.md §3 契约的 dict：
+    返回契约：
     {
       date, enabled, found,
-      notice(强制免责声明),
-      summary: {projects, files, ai_windows, join_rate,
-                approximate_retention(None=无AI数据), approximate_acceptance},
+      notice(强制免责声明), confidence(仅 low/medium，永不 high),
+      summary: {projects, files, commit_count, lines_added, lines_deleted, churn,
+                retention(None=无文本变更), reworked_ratio},
       projects: [{
-        project, repo, approximate_retention, approximate_acceptance, confidence,
-        ai_generated_lines, lines_added, join_rate,
-        files: [{path, added, deleted, churn, mtime, in_ai_window,
-                 ai_generated_ratio, reworked_ratio}]
+        project, repo, commit_count, lines_added, lines_deleted, churn, files,
+        retention, reworked_ratio, confidence,
+        top_files: [{path, added, deleted, churn, reworked_ratio}]
       }]
     }
 
-    best-effort：git 数据失败 → 契约空态；AI 数据失败 → 仅 Git 侧（ratio 全 0/None，
-    confidence=low）；单仓库失败仅跳过该仓库。绝不抛异常。
+    best-effort：git_config 失败/未配置仓库 → 契约空态；单仓库失败仅跳过该仓库；
+    当日无有效提交 → 契约空态。绝不抛异常（端点侧也不会 500）。
     """
     cfg = adoption_config(config)
     empty = _empty_result(date)
-    if not cfg.get("enabled"):
+    if not cfg["enabled"]:
         empty["enabled"] = False
-        empty["notice"] = "近似归因已关闭（adoption.enabled=false）。"
+        empty["notice"] = "Git 侧采纳率代理指标已关闭（adoption.enabled=false）。"
         return empty
 
-    # 1) Git 侧（真实产出；失败 → 空态）
+    # 只读 Git 侧（单源失败 → 空态 200，绝不 500）
     try:
         gc = git_insights.git_config(config)
-        repos = gc.get("projects") or []
-        repos = [r for r in repos if isinstance(r, dict) and r.get("path")]
+        repos = [r for r in (gc.get("projects") or []) if isinstance(r, dict) and r.get("path")]
     except Exception:  # noqa: BLE001
         return empty
     if not repos:
-        empty["notice"] += " 未配置 Git 仓库（insights.git.projects）。"
+        empty["notice"] = _NOTICE + " 未配置 Git 仓库（insights.git.projects），无法计算代理指标。"
         return empty
 
-    # 2) AI 侧（会话窗 + 生成量估算；失败只降级不中断）
-    total, windows = _collect_ai(date, config)
-    total_turns = sum(w.get("turns") or 0 for w in windows)
-    total_generated = int(total.get("generated_lines") or 0)
-
     projects: list[dict] = []
-    files_total = 0
-    in_window_total = 0
+    totals = {"files": 0, "commits": 0, "added": 0, "deleted": 0, "churn": 0}
     ret_vals: list[float] = []
-    acc_vals: list[float] = []
+    rework_vals: list[float] = []
 
     for repo in repos:
         name = str(repo.get("name") or os.path.basename(repo.get("path", "").rstrip("\\/")))
-        repo_path = str(repo.get("path") or "")
-        files = _repo_files(repo, date, cfg)
-        if not files:
+        stats = _repo_stats(repo, date, cfg)
+        # 单仓库失败 / 当天无提交 → 仅跳过该仓库
+        if not stats or int(stats.get("commit_count") or 0) <= 0:
             continue
-        # 项目归口：仓库名与 AI 会话 project 双向子串匹配
-        repo_windows = [w for w in windows if _fuzzy_match(name, w.get("project"))]
-        proj_turns = sum(w.get("turns") or 0 for w in repo_windows)
-        proj_ai_lines = (total_generated * proj_turns / total_turns) if total_turns > 0 else 0
-        added_all = sum(int(f.get("added") or 0) for f in files)
-        deleted_all = sum(int(f.get("deleted") or 0) for f in files)
-        churn_all = added_all + deleted_all
 
-        with_windows = [f for f in files if _in_window(
-            _file_mtime(repo_path, str(f.get("path") or "")) or -1.0, repo_windows, cfg["window_slack_s"])]
-        sum_added_win = sum(int(f.get("added") or 0) for f in with_windows)
-        files_total += len(files)
-        in_window_total += len(with_windows)
+        added = int(stats.get("lines_added") or 0)
+        deleted = int(stats.get("lines_deleted") or 0)
+        churn = added + deleted
+        n_files = int(stats.get("files") or 0)
+        commits = int(stats.get("commit_count") or 0)
 
-        per_files: list[dict] = []
-        for f in files:
-            rel = str(f.get("path") or "")
-            added, deleted = int(f.get("added") or 0), int(f.get("deleted") or 0)
-            churn = added + deleted
-            mtime_s = _file_mtime(repo_path, rel)
-            in_win = bool(mtime_s is not None and _in_window(mtime_s, repo_windows, cfg["window_slack_s"]))
-            # ai_generated_ratio：窗口内文件按 added 占比分摊项目 AI 行；added=0 → None
-            if added <= 0:
-                ratio = None
-            elif in_win and proj_ai_lines > 0 and sum_added_win > 0:
-                ratio = _clamp01(proj_ai_lines * added / sum_added_win / added)
-            else:
-                ratio = 0.0
-            per_files.append({
-                "path": rel,
-                "added": added,
-                "deleted": deleted,
-                "churn": churn,
-                "mtime": _file_mtime_iso(repo_path, rel),
-                "in_ai_window": in_win,
-                "ai_generated_ratio": ratio,
-                # 返工近似：deleted/(added+deleted)，逐文件口径同 modify_ratio
-                "reworked_ratio": _clamp01(deleted / churn) if churn > 0 else 0.0,
-            })
+        retention = _clamp01(added / churn) if churn > 0 else None
+        reworked = _clamp01(deleted / churn) if churn > 0 else None
 
-        join_rate = len(with_windows) / len(files) if files else 0.0
-        retention = (added_all / proj_ai_lines) if proj_ai_lines > 0 else None
-        acceptance = 1.0 - (deleted_all / churn_all) if churn_all > 0 else None
-        # confidence：永远不给 high（缺 IDE 事件）；无 AI 或 join 低 → low
-        if proj_ai_lines > 0 and files and join_rate >= cfg["min_join_rate"]:
-            confidence = "medium"
-        else:
-            confidence = "low"
-        if retention is not None and 0.0 <= retention <= 10.0:
+        totals["files"] += n_files
+        totals["commits"] += commits
+        totals["added"] += added
+        totals["deleted"] += deleted
+        totals["churn"] += churn
+        if retention is not None:
             ret_vals.append(retention)
-        if acceptance is not None:
-            acc_vals.append(acceptance)
+        if reworked is not None:
+            rework_vals.append(reworked)
+
+        top_files: list[dict] = []
+        for f in stats.get("top_files") or []:
+            pa, pd = int(f.get("added") or 0), int(f.get("deleted") or 0)
+            pc = pa + pd
+            top_files.append({
+                "path": str(f.get("path") or ""),
+                "added": pa,
+                "deleted": pd,
+                "churn": pc,
+                "reworked_ratio": _clamp01(pd / pc) if pc > 0 else 0.0,
+            })
 
         projects.append({
             "project": name,
-            "repo": repo_path,
-            "approximate_retention": round(retention, 4) if retention is not None else None,
-            "approximate_acceptance": round(acceptance, 4) if acceptance is not None else None,
-            "confidence": confidence,
-            "ai_generated_lines": int(round(proj_ai_lines)),
-            "lines_added": added_all,
-            "join_rate": round(join_rate, 4),
-            "files": per_files,
+            "repo": str(stats.get("path") or repo.get("path") or ""),
+            "commit_count": commits,
+            "lines_added": added,
+            "lines_deleted": deleted,
+            "churn": churn,
+            "files": n_files,
+            "retention": retention,
+            "reworked_ratio": reworked,
+            "confidence": "medium" if churn > 0 else "low",
+            "top_files": top_files,
         })
 
     if not projects:
+        empty["notice"] = _NOTICE + " 已配置 Git 仓库，但当日无有效提交（或全部仓库读取失败），无法计算代理指标。"
         return empty
 
+    total_churn = totals["churn"]
     summary = {
         "projects": len(projects),
-        "files": files_total,
-        "ai_windows": len(windows),
-        "join_rate": round(in_window_total / files_total, 4) if files_total else 0.0,
-        "approximate_retention": round(sum(ret_vals) / len(ret_vals), 4) if ret_vals else None,
-        "approximate_acceptance": round(sum(acc_vals) / len(acc_vals), 4) if acc_vals else None,
+        "files": totals["files"],
+        "commit_count": totals["commits"],
+        "lines_added": totals["added"],
+        "lines_deleted": totals["deleted"],
+        "churn": total_churn,
+        "retention": round(sum(ret_vals) / len(ret_vals), 4) if ret_vals else None,
+        "reworked_ratio": round(sum(rework_vals) / len(rework_vals), 4) if rework_vals else None,
     }
     return {
         "date": date,
         "enabled": True,
         "found": True,
         "notice": _NOTICE,
+        "confidence": "medium" if total_churn > 0 else "low",
         "summary": summary,
         "projects": projects,
     }
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="无插件采纳率近似归因（SPIKE · 只读）")
+    ap = argparse.ArgumentParser(description="Git 侧采纳率代理指标（只读 · SPIKE §5.3）")
     ap.add_argument("--day", required=True, help="日期 YYYY-MM-DD")
     ap.add_argument("--config", default=git_insights.DEFAULT_CONFIG, help="config.json 路径")
     ap.add_argument("--data-root", default="", help="数据根目录（当前仅契约占位）")
@@ -349,12 +239,13 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         s = result["summary"]
-        print(f"found={result['found']} projects={s['projects']} files={s['files']} "
-              f"join_rate={s['join_rate']} retention={s['approximate_retention']} "
-              f"acceptance={s['approximate_acceptance']}")
+        print(f"found={result['found']} confidence={result['confidence']} "
+              f"projects={s['projects']} files={s['files']} commits={s['commit_count']} "
+              f"+{s['lines_added']}/-{s['lines_deleted']} churn={s['churn']} "
+              f"retention={s['retention']} reworked={s['reworked_ratio']}")
         for p in result["projects"]:
-            print(f"  {p['project']}: confidence={p['confidence']} join_rate={p['join_rate']} "
-                  f"retention={p['approximate_retention']} acceptance={p['approximate_acceptance']}")
+            print(f"  {p['project']}: confidence={p['confidence']} "
+                  f"retention={p['retention']} reworked={p['reworked_ratio']}")
     return 0
 
 

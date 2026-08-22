@@ -48,7 +48,7 @@ _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # ---------------------------------------------------------------------------
 # 周期词表（受限白名单）与「今天」注入点
 # ---------------------------------------------------------------------------
-_P_DAY = r"(?:今天|昨天|前天)"
+_P_DAY = r"(?:今天|今日|昨天|昨日|前天)"
 _P_WEEK = r"(?:本周|这周|上周)"
 _P_MONTH = r"(?:本月|这个月|上月|上个月)"
 _P_RECENT = r"最近\s*\d{1,4}\s*天"
@@ -100,9 +100,9 @@ def _resolve_period(text: str, today: datetime.date, cfg: dict) -> tuple[list[st
     """
     t = re.sub(r"\s+", "", text or "")
     max_days = max(1, cfg.get("max_days", 92))
-    if t == "今天":
-        return _dlist(today, today), t
-    if t == "昨天":
+    if t in ("今天", "今日"):
+        return _dlist(today, today), "今天"
+    if t in ("昨天", "昨日"):
         d = today - datetime.timedelta(days=1)
         return _dlist(d, d), "昨天"
     if t == "前天":
@@ -279,6 +279,50 @@ TEMPLATES: list[dict] = [
             re.compile(rf"^{_PERIOD_RE}\s*AI\s*活跃\s*(?:情况|分钟|时间)?$"),
         ],
     },
+    {
+        "id": "q6",
+        "title": "产出对比（两周期）",
+        "scope": "compare",
+        "notice": _NOTICE_OUTPUT,
+        "examples": ["今日产出 vs 昨日", "今天和昨天产出对比", "本周产出比上周多吗"],
+        "patterns": [
+            # 今日产出 vs 昨日 / 本周 AI 产出 vs 上周
+            re.compile(rf"^{_PERIOD_RE}\s*(?:的)?\s*(?:AI\s*)?(?:产出|生成|写了?)\s*"
+                       rf"(?:vs|VS|和|与|对比)\s*(?P<cmp>{_P_DAY}|{_P_WEEK}|{_P_MONTH}|{_P_RECENT})$"),
+            # 今天和昨天产出对比 / 本周与上周 AI 产出对比
+            re.compile(rf"^{_PERIOD_RE}\s*(?:和|与)\s*(?P<cmp>{_P_DAY}|{_P_WEEK}|{_P_MONTH}|{_P_RECENT})"
+                       r"\s*(?:的)?\s*(?:AI\s*)?产出\s*对比$"),
+            # 本周产出比上周多吗 / 今日产出对比昨日
+            re.compile(rf"^{_PERIOD_RE}\s*产出\s*(?:比|对比)\s*(?P<cmp>{_P_DAY}|{_P_WEEK}|{_P_MONTH}|{_P_RECENT})"
+                       r"\s*(?:多|少|高|低|多吗|少吗)?$"),
+        ],
+    },
+    {
+        "id": "q7",
+        "title": "专注度最佳日",
+        "scope": "focus_best",
+        "notice": _NOTICE_FOCUS,
+        "examples": ["本周专注度最好的一天", "上周哪天专注度最高", "本月专注度最好的日子"],
+        "patterns": [
+            re.compile(rf"^{_PERIOD_RE}\s*(?:专注度|专注)\s*(?:最好|最高|最佳|最高分)"
+                       r"\s*的\s*(?:一天|日子|日)$"),
+            re.compile(rf"^{_PERIOD_RE}\s*(?:哪|哪天|哪一天|哪些天)\s*(?:的)?\s*专注度"
+                       r"\s*(?:最好|最高|最佳)$"),
+            re.compile(rf"^{_PERIOD_RE}\s*专注度\s*(?:最高|最好)\s*(?:的|的是)\s*哪天$"),
+        ],
+    },
+    {
+        "id": "q8",
+        "title": "成本趋势",
+        "scope": "cost_trend",
+        "notice": _NOTICE,
+        "examples": ["本周成本趋势", "最近 7 天 AI 成本变化", "本周费用走势"],
+        "patterns": [
+            re.compile(rf"^{_PERIOD_RE}\s*(?:AI\s*)?(?:成本|费用|开销)\s*"
+                       r"(?:趋势|变化|走势|波动)(?:怎么样|如何)?$"),
+            re.compile(rf"^{_PERIOD_RE}\s*AI\s*成本\s*是\s*怎么\s*变化的?$"),
+        ],
+    },
 ]
 
 _ID_TO_TPL = {t["id"]: t for t in TEMPLATES}
@@ -407,14 +451,8 @@ def _resolve_top(days: list[str], params: dict, data_root: str, config: dict) ->
             "top_n": ranking[:n] if ranking else [], "source": source, "notice": notice}
 
 
-def _resolve_focus(days: list[str], params: dict, data_root: str, config: dict) -> dict:
-    """T3：专注度趋势（复用 insights.behavior_insights + growth.growth_snapshot 周快照）。
-
-    逐日 focus_score（仅 total_active_ms>0 的天计平均）；趋势 = 首尾有数据样本的相对变化；
-    weekly 为 growth 周均值快照中与区间重叠的周（best-effort，缺失忽略）。
-    """
-    cfg = query_config(config)
-    flat = float(cfg.get("flat_threshold", 0.03))
+def _focus_per_day(days: list[str], data_root: str, config: dict) -> list[dict]:
+    """逐日 focus_score（仅 total_active_ms>0 的天计分；q3 / q7 共用）。"""
     rows: list[dict] = []
     for day in days:
         agg = _agg(day, data_root)
@@ -425,6 +463,18 @@ def _resolve_focus(days: list[str], params: dict, data_root: str, config: dict) 
             except Exception:  # noqa: BLE001
                 focus = 0
         rows.append({"date": day, "focus_score": focus})
+    return rows
+
+
+def _resolve_focus(days: list[str], params: dict, data_root: str, config: dict) -> dict:
+    """T3：专注度趋势（复用 insights.behavior_insights + growth.growth_snapshot 周快照）。
+
+    逐日 focus_score（仅 total_active_ms>0 的天计平均）；趋势 = 首尾有数据样本的相对变化；
+    weekly 为 growth 周均值快照中与区间重叠的周（best-effort，缺失忽略）。
+    """
+    cfg = query_config(config)
+    flat = float(cfg.get("flat_threshold", 0.03))
+    rows = _focus_per_day(days, data_root, config)
     vals = [r["focus_score"] for r in rows if int(r["focus_score"]) > 0]
     stats: dict = {"days_with_data": len(vals), "avg": 0, "min": 0, "max": 0,
                    "latest": rows[-1]["focus_score"] if rows else 0,
@@ -533,12 +583,98 @@ def _resolve_activity(days: list[str], params: dict, data_root: str, config: dic
             "by_tool": by_tool, "notice": _NOTICE_ACTIVITY}
 
 
+def _resolve_compare(days: list[str], params: dict, data_root: str, config: dict) -> dict:
+    """T6：产出对比（两周期）—— 复用 T4 的 AI/Git 产出统计，比较 base 与对比周期。
+
+    cmp_days/cmp_label 由 run_query 解析周期后注入 params；对比周期缺失时按空态处理。
+    返回 {start, end, days, compare_*, base, compare, delta_*, notice}。
+    """
+    cmp_days = params.get("cmp_days") or []
+    base = _resolve_output(days, params, data_root, config)
+    cmp = _resolve_output(cmp_days, params, data_root, config)
+    bt, ct = base.get("totals") or {}, cmp.get("totals") or {}
+
+    def _pick(src: dict) -> dict:
+        return {"ai_lines": int(src.get("ai_lines") or 0),
+                "ai_chars": int(src.get("ai_chars") or 0),
+                "git_lines": int(src.get("git_lines") or 0),
+                "git_commits": int(src.get("git_commits") or 0)}
+
+    b, c = _pick(bt), _pick(ct)
+    return {
+        "start": days[0] if days else "", "end": days[-1] if days else "",
+        "days": len(days),
+        "compare_start": cmp_days[0] if cmp_days else "",
+        "compare_end": cmp_days[-1] if cmp_days else "",
+        "compare_days": len(cmp_days),
+        "compare_label": params.get("cmp_label") or "对比周期",
+        "base": b, "compare": c,
+        "delta_ai_lines": b["ai_lines"] - c["ai_lines"],
+        "delta_git_lines": b["git_lines"] - c["git_lines"],
+        "notice": _NOTICE_OUTPUT,
+    }
+
+
+def _resolve_focus_best(days: list[str], params: dict, data_root: str, config: dict) -> dict:
+    """T7：专注度最佳日 —— 逐日 focus_score，取最高的一天（并列取最早）。
+
+    仅 total_active_ms>0 的天计入；无数据 → best=None 空态（200 可展示，不 500）。
+    """
+    rows = _focus_per_day(days, data_root, config)
+    with_data = [r for r in rows if int(r.get("focus_score") or 0) > 0]
+    best = None
+    if with_data:
+        # 并列取日期最早：分数降序、日期升序
+        best = max(with_data, key=lambda r: (int(r["focus_score"]), -int(r["date"].replace("-", ""))))
+    return {
+        "start": days[0] if days else "", "end": days[-1] if days else "",
+        "days": len(days),
+        "rows": with_data,
+        "days_with_data": len(with_data),
+        "best": best,
+        "notice": _NOTICE_FOCUS,
+    }
+
+
+def _resolve_cost_trend(days: list[str], params: dict, data_root: str, config: dict) -> dict:
+    """T8：成本趋势 —— 逐日成本/ tokens，趋势=首尾有成本样本的相对方向，含单日最高。
+
+    全零 → rows=[] 空态（200 可展示，不 500）。
+    """
+    rows: list[dict] = []
+    for day in days:
+        col = _collect(day, config)
+        total = (col or {}).get("total") or {}
+        cost = float(total.get("cost_total") or 0)
+        tokens = int(total.get("tokens_total") or 0)
+        rows.append({"date": day, "cost": round(cost, 2), "tokens": tokens})
+    costed = [r for r in rows if r["cost"] > 0 or r["tokens"] > 0]
+    if not costed:
+        rows = []  # 全零 → 空态
+    totals = {"cost": round(sum(r["cost"] for r in rows), 2),
+              "tokens": sum(r["tokens"] for r in rows)}
+    trend = "flat"
+    if len(costed) >= 2:
+        first, last = costed[0]["cost"], costed[-1]["cost"]
+        if last > first:
+            trend = "up"
+        elif last < first:
+            trend = "down"
+    top_day = max(costed, key=lambda r: (r["cost"], r["tokens"])) if costed else None
+    return {"start": days[0] if days else "", "end": days[-1] if days else "",
+            "days": len(days), "rows": rows, "totals": totals,
+            "trend": trend, "top_day": top_day, "notice": _NOTICE}
+
+
 _RESOLVERS = {
     "cost": _resolve_cost,
     "top": _resolve_top,
     "focus": _resolve_focus,
     "output": _resolve_output,
     "activity": _resolve_activity,
+    "compare": _resolve_compare,
+    "focus_best": _resolve_focus_best,
+    "cost_trend": _resolve_cost_trend,
 }
 
 
@@ -605,12 +741,52 @@ def _answer_activity(data: dict, params: dict, label: str) -> str:
     return f"{label}AI 活跃约 {minutes:.0f} 分钟、{sessions} 次会话（{tools} 个工具）"
 
 
+def _answer_compare(data: dict, params: dict, label: str) -> str:
+    b = data.get("base") or {}
+    c = data.get("compare") or {}
+    cmp_label = data.get("compare_label") or "对比周期"
+    if not any(b.get(k) or 0 for k in ("ai_lines", "git_lines")) and \
+            not any(c.get(k) or 0 for k in ("ai_lines", "git_lines")):
+        return f"{label}与{cmp_label}均未找到产出数据"
+    ai, cai = int(b.get("ai_lines") or 0), int(c.get("ai_lines") or 0)
+    git, cgit = int(b.get("git_lines") or 0), int(c.get("git_lines") or 0)
+    s = f"{label} AI 生成 {ai:,} 行（{cmp_label} {cai:,} 行，差 {ai - cai:+,}）"
+    if git or cgit:
+        s += f"；Git 新增 {git:,} 行（{cmp_label} {cgit:,} 行，差 {git - cgit:+,}）"
+    else:
+        s += "；Git 未配置/无提交"
+    return s
+
+
+def _answer_focus_best(data: dict, params: dict, label: str) -> str:
+    best = data.get("best")
+    if not best:
+        return f"{label}未找到专注度数据（周期内无有效活跃记录）"
+    return (f"{label}专注度最好的一天是 {best.get('date')}"
+            f"（{best.get('focus_score')} 分，共 {data.get('days_with_data', 0)} 天有数据）")
+
+
+def _answer_cost_trend(data: dict, params: dict, label: str) -> str:
+    t = data.get("totals") or {}
+    if not (t.get("cost") or t.get("tokens")):
+        return f"{label}未找到 AI 成本数据（周期内无 AI 会话记录）"
+    trend = {"up": "上升", "down": "下降", "flat": "平稳"}.get(data.get("trend"), "平稳")
+    s = f"{label} AI 成本共约 {_fmt_money(t.get('cost'))}，趋势{trend}"
+    top = data.get("top_day")
+    if top:
+        s += f"，单日最高约 {_fmt_money(top.get('cost'))}（{top.get('date')}）"
+    return s
+
+
 _ANSWERS = {
     "cost": _answer_cost,
     "top": _answer_top,
     "focus": _answer_focus,
     "output": _answer_output,
     "activity": _answer_activity,
+    "compare": _answer_compare,
+    "focus_best": _answer_focus_best,
+    "cost_trend": _answer_cost_trend,
 }
 
 
@@ -677,6 +853,14 @@ def run_query(q, data_root: str, config: dict,
                 "scope": gd.get("scope") or "工具",
                 "n": int(gd.get("n") or 1) if gd.get("n") else 1,
             }
+            # 双周期模板（q6 产出对比）：把对比周期一并解析进 params
+            if gd.get("cmp"):
+                try:
+                    cmp_days, cmp_label = _resolve_period(gd["cmp"], today, cfg)
+                except ValueError as exc:
+                    return {"ok": False, "error": f"invalid period: {exc}"}
+                params["cmp_days"] = cmp_days
+                params["cmp_label"] = cmp_label
             return _run_resolver(tpl, days, params, data_root, config)
     return {"ok": False, "error": "unsupported question"}
 

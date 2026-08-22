@@ -277,6 +277,18 @@
     background:linear-gradient(90deg,var(--accent),var(--surface-2),var(--accent));background-size:200% 100%}
   @keyframes expSlide{0%{background-position:200% 0}100%{background-position:-200% 0}}
 
+  /* 采纳率代理指标（Git 侧）：折叠 + 灰色降权，绝不与真实指标并列（ADOPTION_SPIKE §5.2） */
+  .adoption-proxy{filter:grayscale(1);opacity:.72}
+  .adoption-proxy summary{display:flex;align-items:center;gap:8px;cursor:pointer;
+    font-size:12px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--faint);
+    list-style:none;user-select:none}
+  .adoption-proxy summary::-webkit-details-marker{display:none}
+  .adoption-proxy summary::before{content:"▸";display:inline-block;transition:transform .15s var(--ease)}
+  .adoption-proxy[open] summary::before{transform:rotate(90deg)}
+  .adoption-proxy .proxy-card{border:1px dashed var(--border-strong);border-radius:10px;
+    padding:10px 12px;margin-bottom:8px;color:var(--dim)}
+  .adoption-proxy .proxy-warn{color:var(--faint);font-size:11.5px;line-height:1.6}
+
 </style>
 </head>
 <body>
@@ -371,7 +383,7 @@
       <div class="panel" id="qPanel" style="display:none">
         <h2>快速提问 <span class="hint">固定模板·本地计算·不调用大模型</span></h2>
         <div class="controls">
-          <input type="text" id="qInput" autocomplete="off" placeholder="如：昨天 opencode 花了多少钱 / 本周哪个项目成本最高" style="flex:1;min-width:260px">
+          <input type="text" id="qInput" autocomplete="off" placeholder="如：昨天 opencode 花了多少钱 / 本周哪个项目成本最高 / 今日产出 vs 昨日 / 本周成本趋势" style="flex:1;min-width:260px">
           <button class="btn primary" id="qGo">查询</button>
         </div>
         <div id="qAnswer" style="margin-top:10px"></div>
@@ -566,6 +578,11 @@
         <h2>代码产出（Git） <span class="hint">只读本地提交 · 离线 · Phase 2</span></h2>
         <div id="inGit"></div>
       </div>
+      <details class="panel adoption-proxy" id="adoptionPanel">
+        <summary>采纳率代理指标（Git 侧 · 仅供参考）</summary>
+        <div class="proxy-warn" style="margin:8px 0 10px">无插件近似归因：非真实采纳率，仅当日 Git 变更全局口径粗代理，未关联 AI 会话/文件归属，误差可能很大。</div>
+        <div id="inAdoption"></div>
+      </details>
       <div class="panel">
         <h2>AI 洞察 <span class="hint">可选 · OpenAI 兼容 API · 默认关闭</span></h2>
         <div class="controls" style="margin-bottom:12px">
@@ -1932,7 +1949,7 @@ async function runQuery(){
     box.innerHTML = html;
   } catch(err){
     box.innerHTML = '<div class="set-note" style="color:var(--danger)">查询失败：' + esc(err.message) +
-      '（仅支持固定模板，如“昨天 opencode 花了多少钱”“本周哪个项目成本最高”）</div>';
+      '（仅支持固定模板，如“昨天 opencode 花了多少钱”“本周哪个项目成本最高”“今日产出 vs 昨日”“本周成本趋势”）</div>';
   }
 }
 function bindQueryControls(){
@@ -2131,6 +2148,7 @@ async function loadInsights(){
   renderBehavior(d.behavior, d.persona);
   renderTimeSaved(d.time_saved);
   renderGit(d.git);
+  loadAdoption().catch(() => { /* 代理指标失败不影响其余洞察 */ });
   loadAiModule().catch(() => { /* 模块面板加载失败不影响规则/AI 展示 */ });
 }
 function aiStatCard(label, val, extra){
@@ -2336,6 +2354,57 @@ function renderGit(g){
     html += '</div>';
   }
   html += '<div class="hint" style="margin-top:2px">数据来自你在 config.json 配置的本地 Git 仓库（insights.git.projects），只读、不上传。修改率 = 删除行 / (新增+删除)，作为「返工」近似指标。</div>';
+  el.innerHTML = html;
+}
+
+/* 采纳率代理指标（Git 侧）：折叠 + 灰色降权，独立于真实指标（ADOPTION_SPIKE §5.2） */
+async function loadAdoption(){
+  const el = $("#inAdoption");
+  if(!el) return;
+  el.innerHTML = skeleton(2);
+  let a;
+  try{
+    a = await api("/api/adoption?date=" + state.day);
+  }catch(err){
+    el.innerHTML = '<div class="empty">代理指标加载失败：' + esc(err.message) + '</div>';
+    return;
+  }
+  renderAdoption(a);
+}
+function renderAdoption(a){
+  const el = $("#inAdoption");
+  if(!el) return;
+  a = a || {};
+  if(a.enabled === false){
+    el.innerHTML = '<div class="empty">' + esc(a.notice || "代理指标已关闭") + '</div>';
+    return;
+  }
+  if(!a.found){
+    el.innerHTML = '<div class="empty">' + esc(a.notice || "当日无有效 Git 变更，无法计算代理指标") + '</div>';
+    return;
+  }
+  const s = a.summary || {};
+  const fmtN2 = v => (Number(v)||0).toLocaleString("en-US");
+  const pct = v => (v == null ? "—" : Math.round(v*100) + "%");
+  let html = '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 10px">'+
+    aiStatCard("保留率(粗代理)", pct(s.retention), "新增行/(新增+删除)")+
+    aiStatCard("返工(粗代理)", pct(s.reworked_ratio), "删除行/(新增+删除)")+
+    aiStatCard("新增行", fmtN2(s.lines_added), "当日")+
+    aiStatCard("删除行", fmtN2(s.lines_deleted), "当日")+
+    aiStatCard("变更量", fmtN2(s.churn), "add+del")+
+    '</div>';
+  for(const p of (a.projects||[])){
+    html += '<div class="proxy-card">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px">'+
+        '<b style="color:var(--text)">'+esc(p.project)+'</b>'+
+        '<span style="font-size:11px">保留 '+pct(p.retention)+' · 返工 '+pct(p.reworked_ratio)+
+          ' · +'+fmtN2(p.lines_added)+'/-'+fmtN2(p.lines_deleted)+'（churn '+fmtN2(p.churn)+'）'+
+          ' · '+fmtN2(p.files)+' 文件 · '+fmtN2(p.commit_count)+' commits</span>'+
+      '</div>'+
+      '<div class="proxy-warn" style="margin-top:4px">confidence='+esc(p.confidence)+'</div>'+
+    '</div>';
+  }
+  html += '<div class="proxy-warn" style="margin-top:6px">'+esc(a.notice)+'</div>';
   el.innerHTML = html;
 }
 

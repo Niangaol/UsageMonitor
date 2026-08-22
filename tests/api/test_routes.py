@@ -33,6 +33,7 @@ _GET_PARAMS = {
     "/api/ai-sessions": f"?date={_DAY}",
     "/api/timeline": f"?date={_DAY}",
     "/api/insights": f"?date={_DAY}",
+    "/api/adoption": f"?date={_DAY}",
     "/api/insights/ai": f"?date={_DAY}",
     "/api/urls": f"?date={_DAY}",
     "/api/month": f"?month={_MONTH}",

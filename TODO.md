@@ -2,8 +2,8 @@
 
 > 交接时间：2026-08-20 · 项目：VibeTrace（刻迹）（VibeTrace）
 > 远程仓库：https://github.com/Niangaol/VibeTrace（master 分支）
-> 当前版本：v2.4.0（已完成，待发布；version.py = 2.4.0）
-> 当前提交：e62afba（2026-08-18）
+> 当前版本：v2.7.0（已发布，2026-08-21）
+> 当前提交：1e76d94
 
 ---
 
@@ -22,8 +22,12 @@
 | v2.1.1 | ✅ 已发布 | SQLite 一致性校验、周聚合快速路径、updater/更新 API 测试、SHA256 资产、覆盖率扩展 |
 | v2.2.0 | ✅ 已发布 | UWP 识别、管理员模式、Firefox 停留时长、更新供应链安全、更多应用适配 |
 | v2.3.0 | ✅ 已发布 | AI 会话深度（Phase 1）+ 成本与 ROI（Phase 3）+ 概览整合 / AI 洞察独立 |
-| v2.4.0 | ✅ 已完成（2026-08-20） | 测试流程金字塔（docs/TEST_WORKFLOW.md + pytest 85项 + CI fast/full + 覆盖率 56%）；Phase 3 时间节省估算（insights.time_saved）落地；前端 6 项细节修补；配置漂移修复；应用白名单补齐 |
-| v2.7.0 | ✅ 已完成（待发布） | 行动与目标：告警闭环（alerts.py · 预算 warn/exceed + 连续工作休息提醒，托盘气泡）；每日目标与 streak（goals.py · 可选默认关闭，/api/goals + 概览进度面板 + 设置开关组） |
+| v2.4.0 | ✅ 已发布 | 测试流程金字塔（docs/TEST_WORKFLOW.md + pytest 85项 + CI fast/full + 覆盖率 56%）；Phase 3 时间节省估算（insights.time_saved）落地；前端 6 项细节修补；配置漂移修复；应用白名单补齐 |
+| v2.5.0 | ✅ 已发布 | Vibe Coding 分析平台主线：AI 会话质量评分、时间轴回放、成本预算告警、多工具横向对比、能力成长曲线、受限模板查询；前端模板外抽 |
+| v2.5.1 | ✅ 已发布 | 修复真实使用中的前端/数据层缺陷（导出 400、成长/对比按钮、模型识别与成本）+ AI 模型价格设置（/api/pricing） |
+| v2.5.2 | ✅ 已发布 | 精炼 AI 会话模型识别：会话级模型仅统计 assistant 消息已知模型，「未识别」大幅减少 |
+| v2.5.3 | ⚠️ 无 tag/Release | 仅在 CHANGELOG 有记录，未打 tag（AI 价格设置可用 + 导出进度反馈） |
+| v2.7.0 | ✅ 已发布 | 行动与目标：告警闭环（alerts.py · 预算 warn/exceed + 连续工作休息提醒，托盘气泡）；每日目标与 streak（goals.py · 可选默认关闭，/api/goals + 概览进度面板 + 设置开关组）；全局性能优化（AI/浏览器历史指纹缓存、SQLite 提速、Token 真实用量优先与加权估算、learn.py 基线） |
 
 ---
 

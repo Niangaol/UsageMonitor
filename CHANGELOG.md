@@ -8,6 +8,25 @@
 
 > 🌐 English version: [CHANGELOG.en.md](CHANGELOG.en.md)
 
+## [2.8.0] - 2026-08-23
+
+> 主题：工程收尾与测试补位（dashboard 拆分 / frontend·e2e 测试 / 覆盖率门禁 70）+ Git 侧采纳率代理指标 + 受限查询模板扩充。
+
+### 新增（v2.8.0）
+
+- **Git 侧采纳率代理指标**（`adoption.py` 收敛 + `/api/adoption?date=`）：按 ADOPTION_SPIKE 结论弃用 AI 侧 per-file 归因（真实数据 join 命中率 0%），只保留只读 Git 代理——`retention` = 新增行/(新增+删除)、`reworked_ratio` = 删除行/(新增+删除)；单仓库失败仅跳过、单源失败契约空态 200 不 500；带强制免责声明，洞察页折叠 + 灰色降权展示，confidence 永不等于 high
+- **受限查询模板扩充**（`query.py`）：新增 q6「产出对比（两周期）」/ q7「专注度最佳日」/ q8「成本趋势」三个模板，沿用正则白名单 + 周期词 + 空态 200 + notice 的受限契约，并补「今日/昨日」周期别名
+
+### 工程（v2.8.0 · 可维护性与测试）
+
+- **`dashboard.py` 拆分**：把与 HTTP 无关的纯函数/常量（`_agg_to_csv`、`_backup_zip`、`_safe_extract_zip`、`_available_days`、`_collect_known_apps` 与 days-cache 组等）外置到新模块 `dashboard_util.py`，行为不变、re-export 保持 `dashboard.<name>` 兼容；dashboard.py 1917→1714 行，新增 13 项单测
+- **测试金字塔补位**：新增 `tests/frontend/test_frontend_smoke.py`（4 项：nav↔section↔loader↔TITLES 接线、前端 24 个 `/api/*` 全部落在后端路由、模板结构缺口）与 `tests/e2e/test_smoke.py`（2 项：根路径 HTML + 造数→`/api/day`→`/api/trend` 全链路冒烟）
+- **覆盖率门禁 65 → 70**：coverage source 补 `learn`/`alerts`/`goals`；实测快集 73%，`pyproject.toml` / `ci-fast.yml` / `build.yml` 三处同步设为 70
+
+### 文档（v2.8.0）
+
+- `TODO.md` / `docs/ROADMAP.md` 同步到实际发布状态（v2.5.x / v2.7.0 已发布、v2.5.3 无 tag 注明、采纳率标「待插件事件源」）；`.gitignore` 忽略 `.agent-teams/`（AgentTeams 团队状态目录）
+
 ## [2.7.0] - 2026-08-21
 
 > 主题：告警闭环 + 每日目标 + 全局性能优化（AI 会话 / 浏览器历史 / SQLite 指纹缓存）+ Token 真实用量优先与加权估算。
@@ -450,6 +469,7 @@
 - 测试：test_all 新增 11 项 dashboard API 测试（端点 / 403 / 安全头 / 错误码 / 路径穿越），
   构建后 `UsageMonitor.exe --version` 冒烟，全量 125 项门禁通过。
 
+[2.8.0]: https://github.com/Niangaol/VibeTrace/releases/tag/v2.8.0
 [2.7.0]: https://github.com/Niangaol/VibeTrace/releases/tag/v2.7.0
 [2.2.0]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.2.0
 [2.1.1]: https://github.com/Niangaol/UsageMonitor/releases/tag/v2.1.1

@@ -20,8 +20,8 @@ jobs:
         timeout-minutes: 10
       - name: Legacy compatibility suite (test_all.py, no coverage gate)
         run: python test_all.py
-      - name: Coverage report (gate >= 65)
-        run: coverage report -m --fail-under=65
+      - name: Coverage report (gate >= 70)
+        run: coverage report -m --fail-under=70
       - name: Generate coverage.xml
         run: coverage xml -o coverage.xml
       - name: Upload coverage report

@@ -28,4 +28,4 @@ jobs:
         run: coverage run -m pytest tests/unit tests/integration tests/api tests/security tests/performance -q
         timeout-minutes: 10
       - name: Coverage report
-        run: coverage report -m --fail-under=65
+        run: coverage report -m --fail-under=70

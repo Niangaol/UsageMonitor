@@ -123,7 +123,9 @@ def _clean_mods():
 def test_parse_period_forms():
     cfg = query.query_config({})
     assert query._resolve_period("今天", TODAY, cfg)[0] == ["2099-01-05"]
+    assert query._resolve_period("今日", TODAY, cfg)[0] == ["2099-01-05"]  # 别名
     assert query._resolve_period("昨天", TODAY, cfg)[0] == ["2099-01-04"]
+    assert query._resolve_period("昨日", TODAY, cfg)[0] == ["2099-01-04"]  # 别名
     assert query._resolve_period("前天", TODAY, cfg)[0] == ["2099-01-03"]
     # 本周（周一起）
     assert query._resolve_period("本周", TODAY, cfg)[0] == ["2099-01-05"]
@@ -330,6 +332,155 @@ def test_q5_activity(monkeypatch):
     json.dumps(r, ensure_ascii=False)
 
 
+def test_q6_compare_two_periods(monkeypatch):
+    """今日产出 vs 昨日 → q6：两周期产出对比，delta 正确。"""
+    def collect(day, config):
+        if day == "2099-01-05":  # 今日
+            return make_collect(day, tools={"opencode": {"cost": 1.0, "tokens": 1000,
+                                                          "generated_lines": 60}})
+        return make_collect(day, tools={"opencode": {"cost": 1.0, "tokens": 1000,
+                                                      "generated_lines": 20}})
+    monkeypatch.setattr(query.ai_sessions, "collect", collect)
+    monkeypatch.setattr(query.report, "aggregate", lambda day, root: make_agg(day))
+    monkeypatch.setattr(query.git_insights, "git_insights",
+                        lambda config, day: {"enabled": True, "found": True,
+                                             "total": {"commit_count": 2, "lines_added": 500,
+                                                       "lines_deleted": 100, "churn": 600,
+                                                       "modify_ratio": 0.17}})
+    r = query.run_query("今日产出 vs 昨日", "root", {}, today=TODAY)
+    assert r["ok"] and r["tpl"] == "q6"
+    d = r["data"]
+    assert d["start"] == d["end"] == "2099-01-05"
+    assert d["compare_start"] == d["compare_end"] == "2099-01-04"
+    assert d["base"]["ai_lines"] == 60
+    assert d["compare"]["ai_lines"] == 20
+    assert d["delta_ai_lines"] == 40
+    assert d["delta_git_lines"] == 0
+    assert "60" in r["answer"] and "40" in r["answer"]
+    json.dumps(r, ensure_ascii=False)
+
+
+def test_q6_compare_phrase_variants(monkeypatch):
+    """q6 三种措辞均命中：今天和昨天产出对比 / 本周产出比上周多吗。"""
+    monkeypatch.setattr(query.ai_sessions, "collect", lambda day, config: make_collect(day))
+    monkeypatch.setattr(query.report, "aggregate", lambda day, root: make_agg(day))
+    monkeypatch.setattr(query.git_insights, "git_insights",
+                        lambda config, day: {"enabled": True, "found": True,
+                                             "total": {"commit_count": 2, "lines_added": 500,
+                                                       "lines_deleted": 100, "churn": 600,
+                                                       "modify_ratio": 0.17}})
+    r1 = query.run_query("今天和昨天产出对比", "root", {}, today=TODAY)
+    assert r1["ok"] and r1["tpl"] == "q6"
+    assert r1["data"]["compare_label"] == "昨天"
+    r2 = query.run_query("本周产出比上周多吗", "root", {}, today=TODAY)
+    assert r2["ok"] and r2["tpl"] == "q6"
+    assert r2["data"]["compare_label"] == "上周"
+    assert r2["data"]["days"] == 1  # 本周（周一）= 仅今天
+    json.dumps(r1, ensure_ascii=False)
+    json.dumps(r2, ensure_ascii=False)
+
+
+def test_q6_compare_empty(monkeypatch):
+    """两周期均无产出 → q6 空态（ok=True + 未找到文案，不 500）。"""
+    monkeypatch.setattr(query.ai_sessions, "collect",
+                        lambda day, config: make_collect(day, tools={"opencode": {
+                            "cost": 0.0, "tokens": 0, "generated_lines": 0}}))
+    monkeypatch.setattr(query.report, "aggregate", lambda day, root: make_agg(day))
+    monkeypatch.setattr(query.git_insights, "git_insights",
+                        lambda config, day: {"enabled": True, "found": False,
+                                             "total": {"commit_count": 0, "lines_added": 0,
+                                                       "churn": 0, "modify_ratio": 0.0}})
+    r = query.run_query("今日产出 vs 昨日", "root", {}, today=TODAY)
+    assert r["ok"] and r["tpl"] == "q6"
+    assert "未找到产出数据" in r["answer"]
+    assert r["data"]["base"]["ai_lines"] == 0
+
+
+def test_q7_focus_best_day(monkeypatch):
+    """最近 3 天专注度最好的一天 → q7：取分数最高日。"""
+    focus_by_day = {"2099-01-02": 50, "2099-01-03": 80, "2099-01-04": 75}
+    monkeypatch.setattr(query.insights, "behavior_insights",
+                        lambda agg, config=None: {"focus_score": focus_by_day.get((agg or {}).get("date"), 60)})
+    monkeypatch.setattr(query.report, "aggregate", lambda day, root: make_agg(day))
+    r = query.run_query("最近 3 天专注度最好的一天", "root", {}, today=TODAY)
+    assert r["ok"] and r["tpl"] == "q7"
+    d = r["data"]
+    assert d["best"]["date"] == "2099-01-03"
+    assert d["best"]["focus_score"] == 80
+    assert d["days_with_data"] == 3
+    assert "2099-01-03" in r["answer"] and "80" in r["answer"]
+    json.dumps(r, ensure_ascii=False)
+
+
+def test_q7_focus_best_tie_prefers_earlier(monkeypatch):
+    """分数并列 → 取最早日期。"""
+    focus_by_day = {"2099-01-02": 80, "2099-01-03": 80, "2099-01-04": 70}
+    monkeypatch.setattr(query.insights, "behavior_insights",
+                        lambda agg, config=None: {"focus_score": focus_by_day.get((agg or {}).get("date"), 60)})
+    monkeypatch.setattr(query.report, "aggregate", lambda day, root: make_agg(day))
+    r = query.run_query("最近 3 天专注度最好的一天", "root", {}, today=TODAY)
+    assert r["ok"] and r["tpl"] == "q7"
+    assert r["data"]["best"]["date"] == "2099-01-02"
+
+
+def test_q7_focus_best_empty(monkeypatch):
+    """周期内无有效活跃日 → q7 空态（best=None + 未找到文案）。"""
+    monkeypatch.setattr(query.report, "aggregate",
+                        lambda day, root: make_agg(day, minutes_ms=0))
+    monkeypatch.setattr(query.insights, "behavior_insights",
+                        lambda agg, config=None: {"focus_score": 60})
+    r = query.run_query("本周专注度最好的一天", "root", {}, today=TODAY)
+    assert r["ok"] and r["tpl"] == "q7"
+    assert r["data"]["best"] is None
+    assert r["data"]["days_with_data"] == 0
+    assert "未找到专注度数据" in r["answer"]
+
+
+def test_q8_cost_trend(monkeypatch):
+    """最近 3 天成本趋势 → q8：趋势 up、单日最高、总计。"""
+    costs = {"2099-01-02": 1.0, "2099-01-03": 2.0, "2099-01-04": 3.0}
+    monkeypatch.setattr(query.ai_sessions, "collect",
+                        lambda day, config: make_collect(
+                            day, tools={"opencode": {"cost": costs.get(day, 0.0),
+                                                     "tokens": int(costs.get(day, 0.0) * 1000)}}))
+    monkeypatch.setattr(query.report, "aggregate", lambda day, root: make_agg(day))
+    r = query.run_query("最近 3 天成本趋势", "root", {}, today=TODAY)
+    assert r["ok"] and r["tpl"] == "q8"
+    d = r["data"]
+    assert d["trend"] == "up"
+    assert d["totals"]["cost"] == pytest.approx(6.0)
+    assert d["top_day"]["date"] == "2099-01-04"
+    assert d["top_day"]["cost"] == pytest.approx(3.0)
+    assert "上升" in r["answer"] and "$6.00" in r["answer"]
+    json.dumps(r, ensure_ascii=False)
+
+
+def test_q8_cost_trend_down_phrase(monkeypatch):
+    """最近 3 天费用走势 措辞命中 q8，下降趋势。"""
+    costs = {"2099-01-02": 3.0, "2099-01-03": 2.0, "2099-01-04": 1.0}
+    monkeypatch.setattr(query.ai_sessions, "collect",
+                        lambda day, config: make_collect(
+                            day, tools={"opencode": {"cost": costs.get(day, 0.0),
+                                                     "tokens": int(costs.get(day, 0.0) * 1000)}}))
+    monkeypatch.setattr(query.report, "aggregate", lambda day, root: make_agg(day))
+    r = query.run_query("最近 3 天费用走势", "root", {}, today=TODAY)
+    assert r["ok"] and r["tpl"] == "q8"
+    assert r["data"]["trend"] == "down"
+    assert "下降" in r["answer"]
+
+
+def test_q8_cost_trend_empty(monkeypatch):
+    """周期内无 AI 会话 → q8 空态（rows=[] + 未找到文案）。"""
+    monkeypatch.setattr(query.ai_sessions, "collect",
+                        lambda day, config: make_collect(day, tools={"opencode": {"cost": 0.0, "tokens": 0}}))
+    monkeypatch.setattr(query.report, "aggregate", lambda day, root: make_agg(day))
+    r = query.run_query("本周成本趋势", "root", {}, today=TODAY)
+    assert r["ok"] and r["tpl"] == "q8"
+    assert r["data"]["rows"] == []
+    assert r["data"]["trend"] == "flat"
+    assert "未找到 AI 成本数据" in r["answer"]
+
+
 # ---------------------------------------------------------------------------
 # 拒绝路径：未命中 / 空 / 注入
 # ---------------------------------------------------------------------------
@@ -338,7 +489,11 @@ def test_unsupported_and_injection_rejected(monkeypatch):
     for q in ("今天天气怎么样", "帮我写个爬虫", "SELECT * FROM usage",
               "昨天 opencode 花了多少钱 OR 1=1",
               "'; DROP TABLE usage;--", "本周哪个项目成本最高 UNION SELECT 1",
-              "上周专注度趋势 NULL"):
+              "上周专注度趋势 NULL",
+              # 新模板注入/残渣：周期不完整、尾部垃圾一律拒绝
+              "今日产出 vs 上周四", "今天产出对比 NULL",
+              "本周成本趋势; DROP TABLE usage", "专注度最好的一天 OR 1=1",
+              "本周成本变化, DELETE FROM usage"):
         r = query.run_query(q, "root", {}, today=TODAY)
         assert not r["ok"], f"应拒绝：{q!r}"
         assert r.get("error") == "unsupported question", r
@@ -414,7 +569,7 @@ def test_run_template_project_and_scope(monkeypatch):
 # ---------------------------------------------------------------------------
 def test_template_list():
     meta = query.template_list()
-    assert [m["id"] for m in meta] == ["q1", "q2", "q3", "q4", "q5"]
+    assert [m["id"] for m in meta] == ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8"]
     for m in meta:
         assert m["title"] and m["notice"] and m["examples"]
     # 模板 ID 唯一、解析器/文案齐全
@@ -447,7 +602,8 @@ def test_all_results_json_serializable(monkeypatch):
     monkeypatch.setattr(query, "_MODS", {"tool_compare": fake_cmp, "growth": fake_growth})
     _patch_sources(monkeypatch)
     for q in ("昨天 opencode 花了多少钱", "本周哪个项目成本最高",
-              "最近 3 天专注度趋势", "上周 AI vs Git", "本周 AI 会话情况"):
+              "最近 3 天专注度趋势", "上周 AI vs Git", "本周 AI 会话情况",
+              "今日产出 vs 昨日", "最近 3 天专注度最好的一天", "本周成本趋势"):
         r = query.run_query(q, "root", {}, today=TODAY)
         assert r["ok"], q
         json.dumps(r, ensure_ascii=False)  # 不抛 TypeError 即通过
